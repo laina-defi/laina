@@ -1,8 +1,7 @@
 use crate::error::LoanManagerError;
 use crate::oracle::{self, Asset};
-use crate::positions;
-use crate::storage_types::{
-    Loan, LoansDataKey, POSITIONS_BUMP_AMOUNT, POSITIONS_LIFETIME_THRESHOLD,
+use crate::storage::{
+    self, Loan, LoanManagerDataKey, POSITIONS_BUMP_AMOUNT, POSITIONS_LIFETIME_THRESHOLD,
 };
 
 use soroban_sdk::{
@@ -27,11 +26,13 @@ struct LoanManager;
 impl LoanManager {
     /// Set the admin that's allowed to upgrade the wasm.
     pub fn initialize(e: Env, admin: Address) -> Result<(), LoanManagerError> {
-        if e.storage().persistent().has(&LoansDataKey::Admin) {
+        if e.storage().persistent().has(&LoanManagerDataKey::Admin) {
             return Err(LoanManagerError::AlreadyInitialized);
         }
 
-        e.storage().persistent().set(&LoansDataKey::Admin, &admin);
+        e.storage()
+            .persistent()
+            .set(&LoanManagerDataKey::Admin, &admin);
         e.events()
             .publish((symbol_short!("admin"), symbol_short!("added")), admin);
         Ok(())
@@ -52,7 +53,7 @@ impl LoanManager {
             .with_current_contract(salt)
             .deploy_v2(wasm_hash, ());
 
-        let admin: Option<Address> = e.storage().persistent().get(&LoansDataKey::Admin);
+        let admin: Option<Address> = e.storage().persistent().get(&LoanManagerDataKey::Admin);
 
         if let Some(admin) = admin {
             admin.require_auth();
@@ -61,14 +62,14 @@ impl LoanManager {
             let mut pool_addresses: Vec<Address> = e
                 .storage()
                 .persistent()
-                .get(&LoansDataKey::PoolAddresses)
+                .get(&LoanManagerDataKey::PoolAddresses)
                 .unwrap_or(vec![&e]);
             pool_addresses.push_back(deployed_address.clone());
             e.storage()
                 .persistent()
-                .set(&LoansDataKey::PoolAddresses, &pool_addresses);
+                .set(&LoanManagerDataKey::PoolAddresses, &pool_addresses);
             e.events().publish(
-                (LoansDataKey::PoolAddresses, symbol_short!("added")),
+                (LoanManagerDataKey::PoolAddresses, symbol_short!("added")),
                 &deployed_address,
             );
 
@@ -100,12 +101,12 @@ impl LoanManager {
         let admin: Address = e
             .storage()
             .persistent()
-            .get(&LoansDataKey::Admin)
+            .get(&LoanManagerDataKey::Admin)
             .ok_or(LoanManagerError::AdminNotFound)?;
         admin.require_auth();
         e.storage()
             .persistent()
-            .get(&LoansDataKey::PoolAddresses)
+            .get(&LoanManagerDataKey::PoolAddresses)
             .unwrap_or(vec![&e])
             .iter()
             .for_each(|pool| {
@@ -132,7 +133,7 @@ impl LoanManager {
 
         if e.storage()
             .persistent()
-            .has(&LoansDataKey::Loan(user.clone()))
+            .has(&LoanManagerDataKey::Loan(user.clone()))
         {
             return Err(LoanManagerError::LoanAlreadyExists);
         }
@@ -178,7 +179,7 @@ impl LoanManager {
             last_accrual: borrow_pool_client.get_accrual(),
         };
 
-        positions::init_loan(&e, user.clone(), loan);
+        storage::write_loan(&e, user.clone(), loan);
 
         Ok(())
     }
@@ -313,7 +314,7 @@ impl LoanManager {
     }
 
     pub fn get_loan(e: &Env, addr: Address) -> Loan {
-        if let Some(loan) = positions::read_positions(e, addr) {
+        if let Some(loan) = storage::read_loan(e, addr) {
             loan
         } else {
             panic!() // TODO: It should be panic_with_error or something and give out detailed error.

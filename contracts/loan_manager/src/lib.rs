@@ -4,5 +4,4 @@
 mod contract;
 mod error;
 mod oracle;
-mod positions;
-mod storage_types;
+mod storage;
