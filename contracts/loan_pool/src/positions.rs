@@ -1,5 +1,7 @@
-use crate::pool::Error;
-use crate::storage_types::{extend_persistent, PoolDataKey, Positions};
+use crate::{
+    error::LoanPoolError,
+    storage_types::{extend_persistent, PoolDataKey, Positions},
+};
 use soroban_sdk::{Address, Env, IntoVal, Val};
 
 pub fn read_positions(e: &Env, addr: &Address) -> Positions {
@@ -39,7 +41,7 @@ pub fn increase_positions(
     receivables: i128,
     liabilities: i128,
     collateral: i128,
-) -> Result<(), Error> {
+) -> Result<(), LoanPoolError> {
     let positions = read_positions(e, &addr);
 
     let receivables_now: i128 = positions.receivable_shares;
@@ -50,13 +52,13 @@ pub fn increase_positions(
         addr,
         receivables_now
             .checked_add(receivables)
-            .ok_or(Error::OverOrUnderFlow)?,
+            .ok_or(LoanPoolError::OverOrUnderFlow)?,
         liabilities_now
             .checked_add(liabilities)
-            .ok_or(Error::OverOrUnderFlow)?,
+            .ok_or(LoanPoolError::OverOrUnderFlow)?,
         collateral_now
             .checked_add(collateral)
-            .ok_or(Error::OverOrUnderFlow)?,
+            .ok_or(LoanPoolError::OverOrUnderFlow)?,
     );
     Ok(())
 }
@@ -67,7 +69,7 @@ pub fn decrease_positions(
     receivables: i128,
     liabilities: i128,
     collateral: i128,
-) -> Result<(), Error> {
+) -> Result<(), LoanPoolError> {
     let positions = read_positions(e, &addr);
 
     // TODO: Might need to use get rather than get_unchecked and convert from Option<V> to V
@@ -89,13 +91,13 @@ pub fn decrease_positions(
         addr,
         receivables_now
             .checked_sub(receivables)
-            .ok_or(Error::OverOrUnderFlow)?,
+            .ok_or(LoanPoolError::OverOrUnderFlow)?,
         liabilities_now
             .checked_sub(liabilities)
-            .ok_or(Error::OverOrUnderFlow)?,
+            .ok_or(LoanPoolError::OverOrUnderFlow)?,
         collateral_now
             .checked_sub(collateral)
-            .ok_or(Error::OverOrUnderFlow)?,
+            .ok_or(LoanPoolError::OverOrUnderFlow)?,
     );
     Ok(())
 }

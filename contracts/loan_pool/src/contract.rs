@@ -1,6 +1,7 @@
 use crate::dto::PoolState;
+use crate::error::LoanPoolError;
 use crate::interest::{self, get_interest};
-use crate::pool::{Currency, Error};
+use crate::pool::Currency;
 use crate::positions;
 use crate::storage_types::PoolDataKey;
 use crate::{pool, storage_types::Positions};
@@ -39,7 +40,7 @@ impl LoanPoolContract {
         pool::change_interest_rate_multiplier(&e, 1); // Temporary parameter
     }
 
-    pub fn upgrade(e: Env, new_wasm_hash: BytesN<32>) -> Result<(), Error> {
+    pub fn upgrade(e: Env, new_wasm_hash: BytesN<32>) -> Result<(), LoanPoolError> {
         let loan_manager_addr = pool::read_loan_manager_addr(&e)?;
         loan_manager_addr.require_auth();
 
@@ -47,7 +48,7 @@ impl LoanPoolContract {
         Ok(())
     }
 
-    pub fn change_interest_rate_multiplier(e: Env, multiplier: i128) -> Result<(), Error> {
+    pub fn change_interest_rate_multiplier(e: Env, multiplier: i128) -> Result<(), LoanPoolError> {
         let loan_manager_addr = pool::read_loan_manager_addr(&e)?;
         loan_manager_addr.require_auth();
 
@@ -56,10 +57,10 @@ impl LoanPoolContract {
     }
 
     /// Deposits token. Also, mints pool shares for the "user" Identifier.
-    pub fn deposit(e: Env, user: Address, amount: i128) -> Result<i128, Error> {
+    pub fn deposit(e: Env, user: Address, amount: i128) -> Result<i128, LoanPoolError> {
         user.require_auth();
         if amount <= 0 {
-            Err(Error::NegativeDeposit)
+            Err(LoanPoolError::NegativeDeposit)
         } else {
             Self::add_interest_to_accrual(e.clone())?;
 
@@ -84,7 +85,7 @@ impl LoanPoolContract {
     }
 
     /// Transfers share tokens back, burns them and gives corresponding amount of tokens back to user. Returns amount of tokens withdrawn
-    pub fn withdraw(e: Env, user: Address, amount: i128) -> Result<PoolState, Error> {
+    pub fn withdraw(e: Env, user: Address, amount: i128) -> Result<PoolState, LoanPoolError> {
         user.require_auth();
 
         Self::add_interest_to_accrual(e.clone())?;
@@ -96,27 +97,29 @@ impl LoanPoolContract {
 
         // Check that user is not trying to move more than receivables (TODO: also include collateral?)
         if amount > receivable_shares {
-            return Err(Error::WithdrawIsNegative);
+            return Err(LoanPoolError::WithdrawIsNegative);
         }
 
         let available_balance_tokens = Self::get_available_balance(e.clone())?;
         if amount > available_balance_tokens {
-            return Err(Error::WithdrawOverBalance);
+            return Err(LoanPoolError::WithdrawOverBalance);
         }
         let total_balance_shares = Self::get_total_balance_shares(e.clone())?;
         let total_balance_tokens = Self::get_contract_balance(e.clone())?;
         let shares_to_decrease = amount
             .checked_mul(total_balance_shares)
-            .ok_or(Error::OverOrUnderFlow)?
+            .ok_or(LoanPoolError::OverOrUnderFlow)?
             .checked_div(total_balance_tokens)
-            .ok_or(Error::OverOrUnderFlow)?;
+            .ok_or(LoanPoolError::OverOrUnderFlow)?;
 
         let new_available_balance_tokens = pool::change_available_balance(
             &e,
-            amount.checked_neg().ok_or(Error::OverOrUnderFlow)?,
+            amount.checked_neg().ok_or(LoanPoolError::OverOrUnderFlow)?,
         )?;
-        let new_total_balance_tokens =
-            pool::change_total_balance(&e, amount.checked_neg().ok_or(Error::OverOrUnderFlow)?)?;
+        let new_total_balance_tokens = pool::change_total_balance(
+            &e,
+            amount.checked_neg().ok_or(LoanPoolError::OverOrUnderFlow)?,
+        )?;
         let new_total_balance_shares = pool::change_total_shares(&e, shares_to_decrease)?;
         let liabilities: i128 = 0;
         let collateral: i128 = 0;
@@ -145,7 +148,7 @@ impl LoanPoolContract {
     }
 
     /// Borrow tokens from the pool
-    pub fn borrow(e: Env, user: Address, amount: i128) -> Result<i128, Error> {
+    pub fn borrow(e: Env, user: Address, amount: i128) -> Result<i128, LoanPoolError> {
         /*
         Borrow should only be callable from the loans contract. This is as the loans contract will
         include the logic and checks that the borrowing can be actually done. Therefore we need to
@@ -163,7 +166,10 @@ impl LoanPoolContract {
             "Borrowed amount has to be less than available balance!"
         ); // Check that there is enough available balance
 
-        pool::change_available_balance(&e, amount.checked_neg().ok_or(Error::OverOrUnderFlow)?)?;
+        pool::change_available_balance(
+            &e,
+            amount.checked_neg().ok_or(LoanPoolError::OverOrUnderFlow)?,
+        )?;
 
         // Increase users position in pool as they deposit
         // as this is debt amount is added to liabilities and
@@ -180,7 +186,7 @@ impl LoanPoolContract {
     }
 
     /// Deposit tokens to the pool to be used as collateral
-    pub fn deposit_collateral(e: Env, user: Address, amount: i128) -> Result<i128, Error> {
+    pub fn deposit_collateral(e: Env, user: Address, amount: i128) -> Result<i128, LoanPoolError> {
         user.require_auth();
         assert!(amount > 0, "Amount must be positive!");
 
@@ -200,7 +206,7 @@ impl LoanPoolContract {
         Ok(amount)
     }
 
-    pub fn withdraw_collateral(e: Env, user: Address, amount: i128) -> Result<i128, Error> {
+    pub fn withdraw_collateral(e: Env, user: Address, amount: i128) -> Result<i128, LoanPoolError> {
         user.require_auth();
         Self::add_interest_to_accrual(e.clone())?;
 
@@ -222,7 +228,7 @@ impl LoanPoolContract {
         Ok(amount)
     }
 
-    pub fn add_interest_to_accrual(e: Env) -> Result<(), Error> {
+    pub fn add_interest_to_accrual(e: Env) -> Result<(), LoanPoolError> {
         const DECIMAL: i128 = 10000000;
         const SECONDS_IN_YEAR: u64 = 31_556_926;
 
@@ -231,27 +237,27 @@ impl LoanPoolContract {
         let accrual_last_update = pool::read_accrual_last_updated(&e)?;
         let ledgers_since_update = current_timestamp
             .checked_sub(accrual_last_update)
-            .ok_or(Error::OverOrUnderFlow)?;
+            .ok_or(LoanPoolError::OverOrUnderFlow)?;
         let ledger_ratio: i128 = (i128::from(ledgers_since_update))
             .checked_mul(DECIMAL)
-            .ok_or(Error::OverOrUnderFlow)?
+            .ok_or(LoanPoolError::OverOrUnderFlow)?
             .checked_div(i128::from(SECONDS_IN_YEAR))
-            .ok_or(Error::OverOrUnderFlow)?;
+            .ok_or(LoanPoolError::OverOrUnderFlow)?;
 
         let interest_rate: i128 = get_interest(e.clone())?;
         let interest_amount_in_year: i128 = accrual
             .checked_mul(interest_rate)
-            .ok_or(Error::OverOrUnderFlow)?
+            .ok_or(LoanPoolError::OverOrUnderFlow)?
             .checked_div(DECIMAL)
-            .ok_or(Error::OverOrUnderFlow)?;
+            .ok_or(LoanPoolError::OverOrUnderFlow)?;
         let interest_since_update: i128 = interest_amount_in_year
             .checked_mul(ledger_ratio)
-            .ok_or(Error::OverOrUnderFlow)?
+            .ok_or(LoanPoolError::OverOrUnderFlow)?
             .checked_div(DECIMAL)
-            .ok_or(Error::OverOrUnderFlow)?;
+            .ok_or(LoanPoolError::OverOrUnderFlow)?;
         let new_accrual: i128 = accrual
             .checked_add(interest_since_update)
-            .ok_or(Error::OverOrUnderFlow)?;
+            .ok_or(LoanPoolError::OverOrUnderFlow)?;
 
         pool::write_accrual_last_updated(&e, current_timestamp);
         e.events().publish(
@@ -267,11 +273,11 @@ impl LoanPoolContract {
         Ok(())
     }
 
-    pub fn get_accrual(e: &Env) -> Result<i128, Error> {
+    pub fn get_accrual(e: &Env) -> Result<i128, LoanPoolError> {
         pool::read_accrual(e)
     }
 
-    pub fn get_collateral_factor(e: &Env) -> Result<i128, Error> {
+    pub fn get_collateral_factor(e: &Env) -> Result<i128, LoanPoolError> {
         pool::read_collateral_factor(e)
     }
 
@@ -281,27 +287,27 @@ impl LoanPoolContract {
     }
 
     /// Get contract data entries
-    pub fn get_contract_balance(e: Env) -> Result<i128, Error> {
+    pub fn get_contract_balance(e: Env) -> Result<i128, LoanPoolError> {
         pool::read_total_balance(&e)
     }
 
-    pub fn get_total_balance_shares(e: Env) -> Result<i128, Error> {
+    pub fn get_total_balance_shares(e: Env) -> Result<i128, LoanPoolError> {
         pool::read_total_shares(&e)
     }
 
-    pub fn get_available_balance(e: Env) -> Result<i128, Error> {
+    pub fn get_available_balance(e: Env) -> Result<i128, LoanPoolError> {
         pool::read_available_balance(&e)
     }
 
-    pub fn get_currency(e: Env) -> Result<Currency, Error> {
+    pub fn get_currency(e: Env) -> Result<Currency, LoanPoolError> {
         pool::read_currency(&e)
     }
 
-    pub fn get_interest(e: Env) -> Result<i128, Error> {
+    pub fn get_interest(e: Env) -> Result<i128, LoanPoolError> {
         interest::get_interest(e)
     }
 
-    pub fn get_pool_state(e: Env) -> Result<PoolState, Error> {
+    pub fn get_pool_state(e: Env) -> Result<PoolState, LoanPoolError> {
         Ok(PoolState {
             total_balance_tokens: pool::read_total_balance(&e)?,
             available_balance_tokens: pool::read_available_balance(&e)?,
@@ -310,7 +316,7 @@ impl LoanPoolContract {
         })
     }
 
-    pub fn increase_liabilities(e: Env, user: Address, amount: i128) -> Result<(), Error> {
+    pub fn increase_liabilities(e: Env, user: Address, amount: i128) -> Result<(), LoanPoolError> {
         let loan_manager_addr = pool::read_loan_manager_addr(&e)?;
         loan_manager_addr.require_auth();
 
@@ -326,7 +332,12 @@ impl LoanPoolContract {
         Ok(())
     }
 
-    pub fn repay(e: Env, user: Address, amount: i128, unpaid_interest: i128) -> Result<(), Error> {
+    pub fn repay(
+        e: Env,
+        user: Address,
+        amount: i128,
+        unpaid_interest: i128,
+    ) -> Result<(), LoanPoolError> {
         let loan_manager_addr = pool::read_loan_manager_addr(&e)?;
         loan_manager_addr.require_auth();
 
@@ -340,7 +351,7 @@ impl LoanPoolContract {
 
         let amount_to_pool = amount
             .checked_sub(amount_to_admin)
-            .ok_or(Error::OverOrUnderFlow)?;
+            .ok_or(LoanPoolError::OverOrUnderFlow)?;
 
         let client = token::Client::new(&e, &pool::read_currency(&e)?.token_address);
         client.transfer(&user, &e.current_contract_address(), &amount_to_pool);
@@ -358,7 +369,7 @@ impl LoanPoolContract {
         borrowed_amount: i128,
         max_allowed_amount: i128,
         unpaid_interest: i128,
-    ) -> Result<(), Error> {
+    ) -> Result<(), LoanPoolError> {
         let loan_manager_addr = pool::read_loan_manager_addr(&e)?;
         loan_manager_addr.require_auth();
 
@@ -372,7 +383,7 @@ impl LoanPoolContract {
 
         let amount_to_user = max_allowed_amount
             .checked_sub(borrowed_amount)
-            .ok_or(Error::OverOrUnderFlow)?;
+            .ok_or(LoanPoolError::OverOrUnderFlow)?;
 
         let client = token::Client::new(&e, &pool::read_currency(&e)?.token_address);
         client.transfer(&user, &e.current_contract_address(), &max_allowed_amount);
@@ -396,7 +407,7 @@ impl LoanPoolContract {
         amount: i128,
         unpaid_interest: i128,
         loan_owner: Address,
-    ) -> Result<(), Error> {
+    ) -> Result<(), LoanPoolError> {
         let loan_manager_addr = pool::read_loan_manager_addr(&e)?;
         loan_manager_addr.require_auth();
 
@@ -410,7 +421,7 @@ impl LoanPoolContract {
 
         let amount_to_pool = amount
             .checked_sub(amount_to_admin)
-            .ok_or(Error::OverOrUnderFlow)?;
+            .ok_or(LoanPoolError::OverOrUnderFlow)?;
 
         let client = token::Client::new(&e, &pool::read_currency(&e)?.token_address);
         client.transfer(&user, &e.current_contract_address(), &amount_to_pool);
@@ -427,7 +438,7 @@ impl LoanPoolContract {
         user: Address,
         amount_collateral: i128,
         loan_owner: Address,
-    ) -> Result<(), Error> {
+    ) -> Result<(), LoanPoolError> {
         let loan_manager_addr = pool::read_loan_manager_addr(&e)?;
         loan_manager_addr.require_auth();
 

@@ -3,6 +3,7 @@
 
 mod contract;
 mod dto;
+mod error;
 mod interest;
 mod pool;
 mod positions;
