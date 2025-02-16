@@ -1,13 +1,15 @@
 use soroban_sdk::{contracttype, Address, Env};
 
-/* Ledger Thresholds */
-
-pub(crate) const DAY_IN_LEDGERS: u32 = 17280; // if ledger takes 5 seconds
-
-pub(crate) const POSITIONS_BUMP_AMOUNT: u32 = 30 * DAY_IN_LEDGERS;
-pub(crate) const POSITIONS_LIFETIME_THRESHOLD: u32 = POSITIONS_BUMP_AMOUNT - DAY_IN_LEDGERS;
-
 /* Storage Types */
+#[derive(Clone)]
+#[contracttype]
+pub enum LoanManagerDataKey {
+    Admin,
+    PoolAddresses,
+    Loan(Address),
+    LastUpdated,
+}
+
 #[derive(Clone)]
 #[contracttype]
 pub struct Loan {
@@ -21,18 +23,14 @@ pub struct Loan {
     pub last_accrual: i128,
 }
 
-#[derive(Clone)]
-#[contracttype]
-pub enum LoanManagerDataKey {
-    Admin,
-    PoolAddresses,
-    // Users positions in the pool
-    Loan(Address),
-    LastUpdated,
-}
+/* Ledger Thresholds */
+pub(crate) const DAY_IN_LEDGERS: u32 = 17280; // if ledger takes 5 seconds
 
-pub fn write_loan(e: &Env, addr: Address, loan: Loan) {
-    let key = LoanManagerDataKey::Loan(addr);
+pub(crate) const POSITIONS_BUMP_AMOUNT: u32 = 30 * DAY_IN_LEDGERS;
+pub(crate) const POSITIONS_LIFETIME_THRESHOLD: u32 = POSITIONS_BUMP_AMOUNT - DAY_IN_LEDGERS;
+
+pub fn write_loan(e: &Env, user: Address, loan: Loan) {
+    let key = LoanManagerDataKey::Loan(user);
 
     e.storage().persistent().set(&key, &loan);
 
@@ -43,10 +41,8 @@ pub fn write_loan(e: &Env, addr: Address, loan: Loan) {
     e.events().publish(("Loan", "created"), key);
 }
 
-pub fn read_loan(e: &Env, addr: Address) -> Option<Loan> {
-    let key = LoanManagerDataKey::Loan(addr);
-
-    let value: Option<Loan> = e.storage().persistent().get(&key)?;
-
-    value
+pub fn read_loan(e: &Env, user: Address) -> Option<Loan> {
+    e.storage()
+        .persistent()
+        .get(&LoanManagerDataKey::Loan(user))
 }

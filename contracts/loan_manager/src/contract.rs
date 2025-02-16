@@ -195,7 +195,7 @@ impl LoanManager {
             health_factor: _,
             unpaid_interest,
             last_accrual,
-        } = Self::get_loan(e, user.clone());
+        } = storage::read_loan(e, user.clone()).ok_or(LoanManagerError::LoanNotFound)?;
 
         let borrow_pool_client = loan_pool::Client::new(e, &borrowed_from);
         let collateral_pool_client = loan_pool::Client::new(e, &collateral_from);
@@ -251,14 +251,9 @@ impl LoanManager {
             last_accrual: current_accrual,
         };
 
-        let key = (Symbol::new(e, "Loan"), user.clone());
+        storage::write_loan(e, user.clone(), updated_loan.clone());
 
-        e.storage().persistent().set(&key, &updated_loan);
-        e.storage().persistent().extend_ttl(
-            &key,
-            POSITIONS_LIFETIME_THRESHOLD,
-            POSITIONS_BUMP_AMOUNT,
-        );
+        let key = (Symbol::new(e, "Loan"), user.clone());
         e.events()
             .publish((key, symbol_short!("updated")), updated_loan);
 
@@ -313,12 +308,8 @@ impl LoanManager {
         Ok(health_factor)
     }
 
-    pub fn get_loan(e: &Env, addr: Address) -> Loan {
-        if let Some(loan) = storage::read_loan(e, addr) {
-            loan
-        } else {
-            panic!() // TODO: It should be panic_with_error or something and give out detailed error.
-        }
+    pub fn get_loan(e: &Env, user: Address) -> Option<Loan> {
+        storage::read_loan(e, user)
     }
 
     pub fn get_price(e: &Env, token: Symbol) -> Result<i128, LoanManagerError> {
@@ -347,7 +338,7 @@ impl LoanManager {
             unpaid_interest,
             last_accrual,
             ..
-        } = Self::get_loan(e, user.clone());
+        } = storage::read_loan(e, user.clone()).ok_or(LoanManagerError::LoanNotFound)?;
 
         assert!(
             amount <= borrowed_amount,
@@ -420,7 +411,7 @@ impl LoanManager {
             health_factor: _,
             unpaid_interest,
             last_accrual: _,
-        } = Self::get_loan(e, user.clone());
+        } = storage::read_loan(e, user.clone()).ok_or(LoanManagerError::LoanNotFound)?;
 
         let borrow_pool_client = loan_pool::Client::new(e, &borrowed_from);
         borrow_pool_client.repay_and_close(
@@ -457,7 +448,7 @@ impl LoanManager {
             health_factor: _,
             unpaid_interest,
             last_accrual,
-        } = Self::get_loan(&e, borrower);
+        } = storage::read_loan(&e, borrower.clone()).ok_or(LoanManagerError::LoanNotFound)?;
 
         let key = (Symbol::new(&e, "Loan"), borrower.clone());
 
@@ -766,7 +757,7 @@ mod tests {
         // Create a loan.
         contract_client.create_loan(&user, &10_000, &loan_pool_id, &100_000, &collateral_pool_id);
 
-        let user_loan = contract_client.get_loan(&user);
+        let user_loan = contract_client.get_loan(&user).unwrap();
 
         assert_eq!(user_loan.borrowed_amount, 10_000);
         assert_eq!(collateral_token_client.balance(&user), 900_000);
@@ -788,7 +779,7 @@ mod tests {
 
         contract_client.add_interest(&user);
 
-        let user_loan = contract_client.get_loan(&user);
+        let user_loan = contract_client.get_loan(&user).unwrap();
 
         assert_eq!(user_loan.borrowed_amount, 12_998);
         assert_eq!(user_loan.health_factor, 61_547_930);
@@ -872,13 +863,13 @@ mod tests {
         assert_eq!(loan_token_client.balance(&user), 1_000);
         assert_eq!(collateral_token_client.balance(&user), 900_000);
 
-        let user_loan = contract_client.get_loan(&user);
+        let user_loan = contract_client.get_loan(&user).unwrap();
 
         assert_eq!(user_loan.borrowed_amount, 1_000);
         assert_eq!(user_loan.collateral_amount, 100_000);
 
         contract_client.repay(&user, &100);
-        let user_loan = contract_client.get_loan(&user);
+        let user_loan = contract_client.get_loan(&user).unwrap();
         assert_eq!(user_loan.borrowed_amount, 920);
 
         assert_eq!((920, 820), contract_client.repay(&user, &100));
@@ -966,7 +957,7 @@ mod tests {
         assert_eq!(loan_token_client.balance(&user), 1_050);
         assert_eq!(collateral_token_client.balance(&user), 900_000);
 
-        let user_loan = contract_client.get_loan(&user);
+        let user_loan = contract_client.get_loan(&user).unwrap();
 
         assert_eq!(user_loan.borrowed_amount, 1_000);
         assert_eq!(user_loan.collateral_amount, 100_000);
@@ -1103,7 +1094,7 @@ mod tests {
         // Create a loan.
         contract_client.create_loan(&user, &10_000, &loan_pool_id, &12_505, &collateral_pool_id);
 
-        let user_loan = contract_client.get_loan(&user);
+        let user_loan = contract_client.get_loan(&user).unwrap();
 
         assert_eq!(user_loan.borrowed_amount, 10_000);
 
@@ -1125,7 +1116,7 @@ mod tests {
 
         contract_client.add_interest(&user);
 
-        let user_loan = contract_client.get_loan(&user);
+        let user_loan = contract_client.get_loan(&user).unwrap();
 
         assert_eq!(user_loan.borrowed_amount, 12_998);
         assert_eq!(user_loan.health_factor, 7_696_568);
@@ -1140,7 +1131,7 @@ mod tests {
 
         contract_client.liquidate(&admin, &user, &5000);
 
-        let user_loan = contract_client.get_loan(&user);
+        let user_loan = contract_client.get_loan(&user).unwrap();
 
         assert_eq!(user_loan.borrowed_amount, 7_998);
         assert_eq!(user_loan.health_factor, 7_256_814);

@@ -10,4 +10,5 @@ pub enum LoanManagerError {
     OverOrUnderFlow = 4,
     NoLastPrice = 5,
     AddressNotFound = 6,
+    LoanNotFound = 7,
 }
