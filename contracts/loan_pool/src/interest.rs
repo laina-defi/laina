@@ -1,4 +1,4 @@
-use crate::{error::LoanPoolError, pool};
+use crate::{error::LoanPoolError, storage};
 use soroban_sdk::Env;
 
 #[allow(dead_code)]
@@ -8,13 +8,11 @@ pub const INTEREST_RATE_AT_PANIC: i128 = 1_000_000; // 10%
 pub const MAX_INTEREST_RATE: i128 = 3_000_000; // 30%
 pub const PANIC_BASE_RATE: i128 = -17_000_000;
 
-#[allow(dead_code, unused_variables)]
-
 pub fn get_interest(e: Env) -> Result<i128, LoanPoolError> {
-    let interest_rate_multiplier = pool::read_interest_rate_multiplier(&e)?;
+    let interest_rate_multiplier = storage::read_interest_rate_multiplier(&e)?;
     const PANIC_RATES_THRESHOLD: i128 = 90_000_000;
-    let available = pool::read_available_balance(&e)?;
-    let total = pool::read_total_balance(&e)?;
+    let available = storage::read_available_balance(&e)?;
+    let total = storage::read_total_balance(&e)?;
 
     if total > 0 {
         let slope_before_panic = (INTEREST_RATE_AT_PANIC
