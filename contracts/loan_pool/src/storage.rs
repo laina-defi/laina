@@ -74,13 +74,10 @@ pub fn write_loan_manager_addr(e: &Env, loan_manager_addr: Address) {
 }
 
 pub fn read_loan_manager_addr(e: &Env) -> Result<Address, LoanPoolError> {
-    let key = PoolDataKey::LoanManagerAddress;
-
-    if let Some(loan_manager_address) = e.storage().persistent().get(&key) {
-        loan_manager_address
-    } else {
-        Err(LoanPoolError::LoanManager)
-    }
+    e.storage()
+        .persistent()
+        .get(&PoolDataKey::LoanManagerAddress)
+        .ok_or(LoanPoolError::LoanManager)
 }
 
 pub fn write_currency(e: &Env, currency: Currency) {
@@ -91,13 +88,10 @@ pub fn write_currency(e: &Env, currency: Currency) {
 }
 
 pub fn read_currency(e: &Env) -> Result<Currency, LoanPoolError> {
-    let key = PoolDataKey::Currency;
-
-    if let Some(currency) = e.storage().persistent().get(&key) {
-        currency
-    } else {
-        Err(LoanPoolError::Currency)
-    }
+    e.storage()
+        .persistent()
+        .get(&PoolDataKey::Currency)
+        .ok_or(LoanPoolError::Currency)
 }
 
 pub fn write_liquidation_threshold(e: &Env, threshold: i128) {
@@ -108,23 +102,20 @@ pub fn write_liquidation_threshold(e: &Env, threshold: i128) {
 }
 
 pub fn write_total_shares(e: &Env, amount: i128) {
-    let key: PoolDataKey = PoolDataKey::TotalBalanceShares;
+    let key = PoolDataKey::TotalBalanceShares;
 
     e.storage().persistent().set(&key, &amount);
     extend_persistent(e, &key);
 }
 
 pub fn read_total_shares(e: &Env) -> Result<i128, LoanPoolError> {
-    let key: PoolDataKey = PoolDataKey::TotalBalanceShares;
-
-    if let Some(total_shares) = e.storage().persistent().get(&key) {
-        total_shares
-    } else {
-        Err(LoanPoolError::TotalShares)
-    }
+    e.storage()
+        .persistent()
+        .get(&PoolDataKey::TotalBalanceShares)
+        .ok_or(LoanPoolError::TotalShares)
 }
 
-pub fn change_total_shares(e: &Env, amount: i128) -> Result<i128, LoanPoolError> {
+pub fn increase_total_shares(e: &Env, amount: i128) -> Result<i128, LoanPoolError> {
     let current_balance = read_total_shares(e)?;
 
     let new_amount = amount
@@ -142,13 +133,10 @@ pub fn write_total_balance(e: &Env, amount: i128) {
 }
 
 pub fn read_total_balance(e: &Env) -> Result<i128, LoanPoolError> {
-    let key: PoolDataKey = PoolDataKey::TotalBalanceTokens;
-
-    if let Some(total_balance) = e.storage().persistent().get(&key) {
-        total_balance
-    } else {
-        Err(LoanPoolError::TotalBalance)
-    }
+    e.storage()
+        .persistent()
+        .get(&PoolDataKey::TotalBalanceTokens)
+        .ok_or(LoanPoolError::TotalBalance)
 }
 
 pub fn change_total_balance(e: &Env, amount: i128) -> Result<i128, LoanPoolError> {
@@ -169,13 +157,10 @@ pub fn write_available_balance(e: &Env, amount: i128) {
 }
 
 pub fn read_available_balance(e: &Env) -> Result<i128, LoanPoolError> {
-    let key: PoolDataKey = PoolDataKey::AvailableBalanceTokens;
-
-    if let Some(available_balance) = e.storage().persistent().get(&key) {
-        available_balance
-    } else {
-        Err(LoanPoolError::AvailableBalance)
-    }
+    e.storage()
+        .persistent()
+        .get(&PoolDataKey::AvailableBalanceTokens)
+        .ok_or(LoanPoolError::AvailableBalance)
 }
 
 pub fn change_available_balance(e: &Env, amount: i128) -> Result<i128, LoanPoolError> {
@@ -216,13 +201,10 @@ pub fn write_accrual_last_updated(e: &Env, sequence: u64) -> u64 {
 }
 
 pub fn read_accrual_last_updated(e: &Env) -> Result<u64, LoanPoolError> {
-    let key = PoolDataKey::AccrualLastUpdate;
-
-    if let Some(accrual_last_updated) = e.storage().persistent().get(&key) {
-        accrual_last_updated
-    } else {
-        Err(LoanPoolError::AccrualLastUpdated)
-    }
+    e.storage()
+        .persistent()
+        .get(&PoolDataKey::AccrualLastUpdate)
+        .ok_or(LoanPoolError::AccrualLastUpdated)
 }
 
 pub fn change_interest_rate_multiplier(e: &Env, multiplier: i128) {

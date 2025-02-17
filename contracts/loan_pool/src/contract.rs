@@ -66,7 +66,7 @@ impl LoanPoolContract {
             client.transfer(&user, &e.current_contract_address(), &amount);
 
             storage::change_available_balance(&e, amount)?;
-            storage::change_total_shares(&e, amount)?;
+            storage::increase_total_shares(&e, amount)?;
             storage::change_total_balance(&e, amount)?;
 
             // Increase users position in storage as they deposit
@@ -114,7 +114,7 @@ impl LoanPoolContract {
             &e,
             amount.checked_neg().ok_or(LoanPoolError::OverOrUnderFlow)?,
         )?;
-        let new_total_balance_shares = storage::change_total_shares(&e, shares_to_decrease)?;
+        let new_total_balance_shares = storage::increase_total_shares(&e, shares_to_decrease)?;
         let liabilities: i128 = 0;
         let collateral: i128 = 0;
         positions::decrease_positions(
@@ -703,7 +703,7 @@ mod test {
 
         let withdraw_result = contract_client.withdraw(&user, &amount);
 
-        assert_eq!(withdraw_result, contract_client.get_storage_state());
+        assert_eq!(withdraw_result, contract_client.get_pool_state());
     }
     #[test]
     fn add_accrual_full_usage() {
