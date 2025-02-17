@@ -115,7 +115,7 @@ pub fn read_total_shares(e: &Env) -> Result<i128, LoanPoolError> {
         .ok_or(LoanPoolError::TotalShares)
 }
 
-pub fn increase_total_shares(e: &Env, amount: i128) -> Result<i128, LoanPoolError> {
+pub fn adjust_total_shares(e: &Env, amount: i128) -> Result<i128, LoanPoolError> {
     let current_balance = read_total_shares(e)?;
 
     let new_amount = amount
@@ -139,7 +139,7 @@ pub fn read_total_balance(e: &Env) -> Result<i128, LoanPoolError> {
         .ok_or(LoanPoolError::TotalBalance)
 }
 
-pub fn change_total_balance(e: &Env, amount: i128) -> Result<i128, LoanPoolError> {
+pub fn adjust_total_balance(e: &Env, amount: i128) -> Result<i128, LoanPoolError> {
     let current_balance = read_total_balance(e)?;
 
     let new_amount = amount
@@ -163,7 +163,7 @@ pub fn read_available_balance(e: &Env) -> Result<i128, LoanPoolError> {
         .ok_or(LoanPoolError::AvailableBalance)
 }
 
-pub fn change_available_balance(e: &Env, amount: i128) -> Result<i128, LoanPoolError> {
+pub fn adjust_available_balance(e: &Env, amount: i128) -> Result<i128, LoanPoolError> {
     let current_balance = read_available_balance(e)?;
 
     let new_amount = amount

@@ -9,7 +9,7 @@ use soroban_sdk::{contract, contractimpl, contractmeta, token, Address, BytesN, 
 // Metadata that is added on to the WASM custom section
 contractmeta!(
     key = "Desc",
-    val = "Lending storage with variable interest rate."
+    val = "Lending pool with variable interest rate."
 );
 
 #[contract]
@@ -18,7 +18,7 @@ struct LoanPoolContract;
 #[allow(dead_code)]
 #[contractimpl]
 impl LoanPoolContract {
-    /// Sets the currency of the storage and initializes its balance.
+    /// Sets the currency of the pool and initializes its balance.
     pub fn initialize(
         e: Env,
         loan_manager_addr: Address,
@@ -52,7 +52,7 @@ impl LoanPoolContract {
         Ok(())
     }
 
-    /// Deposits token. Also, mints storage shares for the "user" Identifier.
+    /// Deposits token. Also, mints pool shares for the "user" Identifier.
     pub fn deposit(e: Env, user: Address, amount: i128) -> Result<i128, LoanPoolError> {
         user.require_auth();
         if amount <= 0 {
@@ -65,11 +65,11 @@ impl LoanPoolContract {
             let client = token::Client::new(&e, &token_address);
             client.transfer(&user, &e.current_contract_address(), &amount);
 
-            storage::change_available_balance(&e, amount)?;
-            storage::increase_total_shares(&e, amount)?;
-            storage::change_total_balance(&e, amount)?;
+            storage::adjust_available_balance(&e, amount)?;
+            storage::adjust_total_shares(&e, amount)?;
+            storage::adjust_total_balance(&e, amount)?;
 
-            // Increase users position in storage as they deposit
+            // Increase users position in pool as they deposit
             // as this is deposit amount is added to receivables and
             // liabilities & collateral stays intact
             let liabilities: i128 = 0; // temp test param
@@ -106,15 +106,15 @@ impl LoanPoolContract {
             .checked_div(total_balance_tokens)
             .ok_or(LoanPoolError::OverOrUnderFlow)?;
 
-        let new_available_balance_tokens = storage::change_available_balance(
+        let new_available_balance_tokens = storage::adjust_available_balance(
             &e,
             amount.checked_neg().ok_or(LoanPoolError::OverOrUnderFlow)?,
         )?;
-        let new_total_balance_tokens = storage::change_total_balance(
+        let new_total_balance_tokens = storage::adjust_total_balance(
             &e,
             amount.checked_neg().ok_or(LoanPoolError::OverOrUnderFlow)?,
         )?;
-        let new_total_balance_shares = storage::increase_total_shares(&e, shares_to_decrease)?;
+        let new_total_balance_shares = storage::adjust_total_shares(&e, shares_to_decrease)?;
         let liabilities: i128 = 0;
         let collateral: i128 = 0;
         positions::decrease_positions(
@@ -125,23 +125,23 @@ impl LoanPoolContract {
             collateral,
         )?;
 
-        // Transfer tokens from storage to user
+        // Transfer tokens from the pool to the user
         let token_address = &storage::read_currency(&e)?.token_address;
         let client = token::Client::new(&e, token_address);
         client.transfer(&e.current_contract_address(), &user, &amount);
 
         let new_annual_interest_rate = Self::get_interest(e.clone())?;
 
-        let storage_state = PoolState {
+        let pool_state = PoolState {
             total_balance_tokens: new_total_balance_tokens,
             available_balance_tokens: new_available_balance_tokens,
             total_balance_shares: new_total_balance_shares,
             annual_interest_rate: new_annual_interest_rate,
         };
-        Ok(storage_state)
+        Ok(pool_state)
     }
 
-    /// Borrow tokens from the storage
+    /// Borrow tokens from the pool
     pub fn borrow(e: Env, user: Address, amount: i128) -> Result<i128, LoanPoolError> {
         /*
         Borrow should only be callable from the loans contract. This is as the loans contract will
@@ -160,12 +160,12 @@ impl LoanPoolContract {
             "Borrowed amount has to be less than available balance!"
         ); // Check that there is enough available balance
 
-        storage::change_available_balance(
+        storage::adjust_available_balance(
             &e,
             amount.checked_neg().ok_or(LoanPoolError::OverOrUnderFlow)?,
         )?;
 
-        // Increase users position in storage as they deposit
+        // Increase the user's position in the pool as they deposit
         // as this is debt amount is added to liabilities and
         // collateral & receivables stays intact
         let collateral: i128 = 0; // temp test param
@@ -179,7 +179,7 @@ impl LoanPoolContract {
         Ok(amount)
     }
 
-    /// Deposit tokens to the storage to be used as collateral
+    /// Deposit tokens to the pool to be used as collateral
     pub fn deposit_collateral(e: Env, user: Address, amount: i128) -> Result<i128, LoanPoolError> {
         user.require_auth();
         assert!(amount > 0, "Amount must be positive!");
@@ -190,7 +190,7 @@ impl LoanPoolContract {
         let client = token::Client::new(&e, token_address);
         client.transfer(&user, &e.current_contract_address(), &amount);
 
-        // Increase users position in storage as they deposit
+        // Increase the user's position in the pool as they deposit
         // as this is collateral amount is added to collateral and
         // liabilities & receivables stays intact
         let liabilities: i128 = 0; // temp test param
@@ -212,7 +212,7 @@ impl LoanPoolContract {
         let client = token::Client::new(&e, token_address);
         client.transfer(&e.current_contract_address(), &user, &amount);
 
-        // Increase users position in storage as they deposit
+        // Increase the user's position in the pool as they deposit
         // as this is collateral amount is added to collateral and
         // liabilities & receivables stays intact
         let liabilities: i128 = 0; // temp test param
@@ -335,8 +335,8 @@ impl LoanPoolContract {
         client.transfer(&user, &loan_manager_addr, &amount_to_admin);
 
         positions::decrease_positions(&e, user, 0, amount, 0)?;
-        storage::change_available_balance(&e, amount - amount_to_admin)?;
-        storage::change_total_balance(&e, unpaid_interest - amount_to_admin)?;
+        storage::adjust_available_balance(&e, amount - amount_to_admin)?;
+        storage::adjust_total_balance(&e, unpaid_interest - amount_to_admin)?;
         Ok(())
     }
 
@@ -373,8 +373,8 @@ impl LoanPoolContract {
 
         let user_liabilities = storage::read_positions(&e, &user).liabilities;
         positions::decrease_positions(&e, user, 0, user_liabilities, 0)?;
-        storage::change_available_balance(&e, borrowed_amount - amount_to_admin)?;
-        storage::change_total_balance(&e, unpaid_interest - amount_to_admin)?;
+        storage::adjust_available_balance(&e, borrowed_amount - amount_to_admin)?;
+        storage::adjust_total_balance(&e, unpaid_interest - amount_to_admin)?;
         Ok(())
     }
 
@@ -405,8 +405,8 @@ impl LoanPoolContract {
         client.transfer(&user, &loan_manager_addr, &amount_to_admin);
 
         positions::decrease_positions(&e, loan_owner, 0, amount, 0)?;
-        storage::change_available_balance(&e, amount)?;
-        storage::change_total_balance(&e, amount)?;
+        storage::adjust_available_balance(&e, amount)?;
+        storage::adjust_total_balance(&e, amount)?;
         Ok(())
     }
 
