@@ -70,7 +70,8 @@ pub fn read_pool_addresses(e: &Env) -> Vec<Address> {
 }
 
 pub fn write_loan(e: &Env, user: Address, loan: Loan) {
-    let key = LoanManagerDataKey::Loan(user);
+    let key = LoanManagerDataKey::Loan(user.clone());
+    let is_existing = loan_exists(e, user);
 
     e.storage().persistent().set(&key, &loan);
 
@@ -78,11 +79,26 @@ pub fn write_loan(e: &Env, user: Address, loan: Loan) {
         .persistent()
         .extend_ttl(&key, POSITIONS_LIFETIME_THRESHOLD, POSITIONS_BUMP_AMOUNT);
 
-    e.events().publish(("Loan", "created"), key);
+    e.events().publish(
+        ("Loan", if is_existing { "updated" } else { "created" }),
+        key,
+    );
+}
+
+pub fn loan_exists(e: &Env, user: Address) -> bool {
+    e.storage()
+        .persistent()
+        .has(&LoanManagerDataKey::Loan(user))
 }
 
 pub fn read_loan(e: &Env, user: Address) -> Option<Loan> {
     e.storage()
         .persistent()
         .get(&LoanManagerDataKey::Loan(user))
+}
+
+pub fn delete_loan(e: &Env, user: Address) {
+    e.storage()
+        .persistent()
+        .remove(&LoanManagerDataKey::Loan(user));
 }

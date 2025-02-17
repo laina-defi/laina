@@ -1,10 +1,8 @@
 use crate::error::LoanManagerError;
 use crate::oracle::{self, Asset};
-use crate::storage::{
-    self, Loan, LoanManagerDataKey, POSITIONS_BUMP_AMOUNT, POSITIONS_LIFETIME_THRESHOLD,
-};
+use crate::storage::{self, Loan};
 
-use soroban_sdk::{contract, contractimpl, symbol_short, Address, BytesN, Env, String, Symbol};
+use soroban_sdk::{contract, contractimpl, Address, BytesN, Env, String, Symbol};
 
 mod loan_pool {
     soroban_sdk::contractimport!(
@@ -77,6 +75,7 @@ impl LoanManager {
     ) -> Result<(), LoanManagerError> {
         let admin = storage::read_admin(&e)?;
         admin.require_auth();
+
         storage::read_pool_addresses(&e).iter().for_each(|pool| {
             let pool_client = loan_pool::Client::new(&e, &pool);
             pool_client.upgrade(&new_pool_wasm_hash);
@@ -99,10 +98,7 @@ impl LoanManager {
     ) -> Result<(), LoanManagerError> {
         user.require_auth();
 
-        if e.storage()
-            .persistent()
-            .has(&LoanManagerDataKey::Loan(user.clone()))
-        {
+        if storage::loan_exists(&e, user.clone()) {
             return Err(LoanManagerError::LoanAlreadyExists);
         }
 
@@ -168,15 +164,9 @@ impl LoanManager {
         let borrow_pool_client = loan_pool::Client::new(e, &borrowed_from);
         let collateral_pool_client = loan_pool::Client::new(e, &collateral_from);
 
-        let loan_pool::Currency {
-            ticker: token_ticker,
-            ..
-        } = borrow_pool_client.get_currency();
+        let token_ticker = borrow_pool_client.get_currency().ticker;
 
-        let loan_pool::Currency {
-            ticker: token_collateral_ticker,
-            ..
-        } = collateral_pool_client.get_currency();
+        let token_collateral_ticker = collateral_pool_client.get_currency().ticker;
 
         borrow_pool_client.add_interest_to_accrual();
         let current_accrual = borrow_pool_client.get_accrual();
@@ -220,10 +210,6 @@ impl LoanManager {
         };
 
         storage::write_loan(e, user.clone(), updated_loan.clone());
-
-        let key = (Symbol::new(e, "Loan"), user.clone());
-        e.events()
-            .publish((key, symbol_short!("updated")), updated_loan);
 
         Ok(())
     }
@@ -325,7 +311,6 @@ impl LoanManager {
             0
         };
 
-        let key = (Symbol::new(e, "Loan"), user.clone());
         let new_borrowed_amount = borrowed_amount
             .checked_sub(amount)
             .ok_or(LoanManagerError::OverOrUnderFlow)?;
@@ -350,13 +335,7 @@ impl LoanManager {
             last_accrual,
         };
 
-        e.storage().persistent().set(&key, &loan);
-        e.storage().persistent().extend_ttl(
-            &key,
-            POSITIONS_LIFETIME_THRESHOLD,
-            POSITIONS_BUMP_AMOUNT,
-        );
-        e.events().publish((key, symbol_short!("updated")), loan);
+        storage::write_loan(e, user, loan);
 
         Ok((borrowed_amount, new_borrowed_amount))
     }
@@ -392,8 +371,7 @@ impl LoanManager {
         let collateral_pool_client = loan_pool::Client::new(e, &collateral_from);
         collateral_pool_client.withdraw_collateral(&user, &collateral_amount);
 
-        let key = (Symbol::new(e, "Loan"), user.clone());
-        e.storage().persistent().remove(&key);
+        storage::delete_loan(e, user);
         Ok(borrowed_amount)
     }
 
@@ -417,8 +395,6 @@ impl LoanManager {
             unpaid_interest,
             last_accrual,
         } = storage::read_loan(&e, borrower.clone()).ok_or(LoanManagerError::LoanNotFound)?;
-
-        let key = (Symbol::new(&e, "Loan"), borrower.clone());
 
         let borrow_pool_client = loan_pool::Client::new(&e, &borrowed_from);
         let collateral_pool_client = loan_pool::Client::new(&e, &collateral_from);
@@ -485,7 +461,7 @@ impl LoanManager {
         )?;
 
         let new_loan = Loan {
-            borrower,
+            borrower: borrower.clone(),
             borrowed_amount: new_borrowed_amount,
             borrowed_from,
             collateral_from,
@@ -495,7 +471,7 @@ impl LoanManager {
             last_accrual,
         };
 
-        e.storage().persistent().set(&key, &new_loan);
+        storage::write_loan(&e, borrower, new_loan);
 
         Ok((new_borrowed_amount, new_collateral_amount))
     }
