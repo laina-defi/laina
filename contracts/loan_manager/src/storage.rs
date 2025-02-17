@@ -1,4 +1,4 @@
-use soroban_sdk::{contracttype, symbol_short, Address, Env};
+use soroban_sdk::{contracttype, symbol_short, vec, Address, Env, Vec};
 
 use crate::error::LoanManagerError;
 
@@ -48,6 +48,25 @@ pub fn read_admin(e: &Env) -> Result<Address, LoanManagerError> {
         .persistent()
         .get(&LoanManagerDataKey::Admin)
         .ok_or(LoanManagerError::AdminNotFound)
+}
+
+pub fn append_pool_address(e: &Env, pool_address: Address) {
+    let mut pool_addresses = read_pool_addresses(e);
+    pool_addresses.push_back(pool_address.clone());
+    e.storage()
+        .persistent()
+        .set(&LoanManagerDataKey::PoolAddresses, &pool_addresses);
+    e.events().publish(
+        (LoanManagerDataKey::PoolAddresses, symbol_short!("added")),
+        &pool_address,
+    );
+}
+
+pub fn read_pool_addresses(e: &Env) -> Vec<Address> {
+    e.storage()
+        .persistent()
+        .get(&LoanManagerDataKey::PoolAddresses)
+        .unwrap_or(vec![&e])
 }
 
 pub fn write_loan(e: &Env, user: Address, loan: Loan) {

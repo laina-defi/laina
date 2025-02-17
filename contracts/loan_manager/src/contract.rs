@@ -4,9 +4,7 @@ use crate::storage::{
     self, Loan, LoanManagerDataKey, POSITIONS_BUMP_AMOUNT, POSITIONS_LIFETIME_THRESHOLD,
 };
 
-use soroban_sdk::{
-    contract, contractimpl, symbol_short, vec, Address, BytesN, Env, String, Symbol, Vec,
-};
+use soroban_sdk::{contract, contractimpl, symbol_short, Address, BytesN, Env, String, Symbol};
 
 mod loan_pool {
     soroban_sdk::contractimport!(
@@ -53,20 +51,7 @@ impl LoanManager {
 
         admin.require_auth();
 
-        // Add the new address to storage
-        let mut pool_addresses: Vec<Address> = e
-            .storage()
-            .persistent()
-            .get(&LoanManagerDataKey::PoolAddresses)
-            .unwrap_or(vec![&e]);
-        pool_addresses.push_back(deployed_address.clone());
-        e.storage()
-            .persistent()
-            .set(&LoanManagerDataKey::PoolAddresses, &pool_addresses);
-        e.events().publish(
-            (LoanManagerDataKey::PoolAddresses, symbol_short!("added")),
-            &deployed_address,
-        );
+        storage::append_pool_address(&e, deployed_address.clone());
 
         let pool_client = loan_pool::Client::new(&e, &deployed_address);
 
@@ -92,15 +77,10 @@ impl LoanManager {
     ) -> Result<(), LoanManagerError> {
         let admin = storage::read_admin(&e)?;
         admin.require_auth();
-        e.storage()
-            .persistent()
-            .get(&LoanManagerDataKey::PoolAddresses)
-            .unwrap_or(vec![&e])
-            .iter()
-            .for_each(|pool| {
-                let pool_client = loan_pool::Client::new(&e, &pool);
-                pool_client.upgrade(&new_pool_wasm_hash);
-            });
+        storage::read_pool_addresses(&e).iter().for_each(|pool| {
+            let pool_client = loan_pool::Client::new(&e, &pool);
+            pool_client.upgrade(&new_pool_wasm_hash);
+        });
 
         e.deployer()
             .update_current_contract_wasm(new_manager_wasm_hash);
