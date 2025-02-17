@@ -1,4 +1,6 @@
-use soroban_sdk::{contracttype, Address, Env};
+use soroban_sdk::{contracttype, symbol_short, Address, Env};
+
+use crate::error::LoanManagerError;
 
 /* Storage Types */
 #[derive(Clone)]
@@ -28,6 +30,25 @@ pub(crate) const DAY_IN_LEDGERS: u32 = 17280; // if ledger takes 5 seconds
 
 pub(crate) const POSITIONS_BUMP_AMOUNT: u32 = 30 * DAY_IN_LEDGERS;
 pub(crate) const POSITIONS_LIFETIME_THRESHOLD: u32 = POSITIONS_BUMP_AMOUNT - DAY_IN_LEDGERS;
+
+pub fn write_admin(e: &Env, admin: &Address) {
+    e.storage()
+        .persistent()
+        .set(&LoanManagerDataKey::Admin, &admin);
+    e.events()
+        .publish((symbol_short!("admin"), symbol_short!("added")), admin);
+}
+
+pub fn admin_exists(e: &Env) -> bool {
+    e.storage().persistent().has(&LoanManagerDataKey::Admin)
+}
+
+pub fn read_admin(e: &Env) -> Result<Address, LoanManagerError> {
+    e.storage()
+        .persistent()
+        .get(&LoanManagerDataKey::Admin)
+        .ok_or(LoanManagerError::AdminNotFound)
+}
 
 pub fn write_loan(e: &Env, user: Address, loan: Loan) {
     let key = LoanManagerDataKey::Loan(user);

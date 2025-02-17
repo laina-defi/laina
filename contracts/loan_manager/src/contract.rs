@@ -26,15 +26,11 @@ struct LoanManager;
 impl LoanManager {
     /// Set the admin that's allowed to upgrade the wasm.
     pub fn initialize(e: Env, admin: Address) -> Result<(), LoanManagerError> {
-        if e.storage().persistent().has(&LoanManagerDataKey::Admin) {
+        if storage::admin_exists(&e) {
             return Err(LoanManagerError::AlreadyInitialized);
         }
+        storage::write_admin(&e, &admin);
 
-        e.storage()
-            .persistent()
-            .set(&LoanManagerDataKey::Admin, &admin);
-        e.events()
-            .publish((symbol_short!("admin"), symbol_short!("added")), admin);
         Ok(())
     }
 
@@ -53,43 +49,39 @@ impl LoanManager {
             .with_current_contract(salt)
             .deploy_v2(wasm_hash, ());
 
-        let admin: Option<Address> = e.storage().persistent().get(&LoanManagerDataKey::Admin);
+        let admin = storage::read_admin(&e)?;
 
-        if let Some(admin) = admin {
-            admin.require_auth();
+        admin.require_auth();
 
-            // Add the new address to storage
-            let mut pool_addresses: Vec<Address> = e
-                .storage()
-                .persistent()
-                .get(&LoanManagerDataKey::PoolAddresses)
-                .unwrap_or(vec![&e]);
-            pool_addresses.push_back(deployed_address.clone());
-            e.storage()
-                .persistent()
-                .set(&LoanManagerDataKey::PoolAddresses, &pool_addresses);
-            e.events().publish(
-                (LoanManagerDataKey::PoolAddresses, symbol_short!("added")),
-                &deployed_address,
-            );
+        // Add the new address to storage
+        let mut pool_addresses: Vec<Address> = e
+            .storage()
+            .persistent()
+            .get(&LoanManagerDataKey::PoolAddresses)
+            .unwrap_or(vec![&e]);
+        pool_addresses.push_back(deployed_address.clone());
+        e.storage()
+            .persistent()
+            .set(&LoanManagerDataKey::PoolAddresses, &pool_addresses);
+        e.events().publish(
+            (LoanManagerDataKey::PoolAddresses, symbol_short!("added")),
+            &deployed_address,
+        );
 
-            let pool_client = loan_pool::Client::new(&e, &deployed_address);
+        let pool_client = loan_pool::Client::new(&e, &deployed_address);
 
-            let currency = loan_pool::Currency {
-                token_address,
-                ticker,
-            };
-            pool_client.initialize(
-                &e.current_contract_address(),
-                &currency,
-                &liquidation_threshold,
-            );
+        let currency = loan_pool::Currency {
+            token_address,
+            ticker,
+        };
+        pool_client.initialize(
+            &e.current_contract_address(),
+            &currency,
+            &liquidation_threshold,
+        );
 
-            // Return the contract ID of the deployed contract
-            Ok(deployed_address)
-        } else {
-            Err(LoanManagerError::AdminNotFound)
-        }
+        // Return the contract ID of the deployed contract
+        Ok(deployed_address)
     }
 
     /// Upgrade deployed loan pools and the loan manager WASM.
@@ -98,11 +90,7 @@ impl LoanManager {
         new_manager_wasm_hash: BytesN<32>,
         new_pool_wasm_hash: BytesN<32>,
     ) -> Result<(), LoanManagerError> {
-        let admin: Address = e
-            .storage()
-            .persistent()
-            .get(&LoanManagerDataKey::Admin)
-            .ok_or(LoanManagerError::AdminNotFound)?;
+        let admin = storage::read_admin(&e)?;
         admin.require_auth();
         e.storage()
             .persistent()
