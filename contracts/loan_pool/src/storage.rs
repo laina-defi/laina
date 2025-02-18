@@ -1,4 +1,4 @@
-use soroban_sdk::{contracttype, Address, Env, Symbol};
+use soroban_sdk::{contracttype, symbol_short, Address, Env, Symbol};
 
 use crate::error::LoanPoolError;
 
@@ -68,9 +68,10 @@ fn extend_persistent(e: &Env, key: &PoolDataKey) {
 
 pub fn write_loan_manager_addr(e: &Env, loan_manager_addr: Address) {
     let key = PoolDataKey::LoanManagerAddress;
-
     e.storage().persistent().set(&key, &loan_manager_addr);
     extend_persistent(e, &key);
+    e.events()
+        .publish((key, symbol_short!("added")), loan_manager_addr);
 }
 
 pub fn read_loan_manager_addr(e: &Env) -> Result<Address, LoanPoolError> {
@@ -82,9 +83,9 @@ pub fn read_loan_manager_addr(e: &Env) -> Result<Address, LoanPoolError> {
 
 pub fn write_currency(e: &Env, currency: Currency) {
     let key = PoolDataKey::Currency;
-
     e.storage().persistent().set(&key, &currency);
     extend_persistent(e, &key);
+    e.events().publish((key, symbol_short!("added")), currency);
 }
 
 pub fn read_currency(e: &Env) -> Result<Currency, LoanPoolError> {
@@ -96,16 +97,16 @@ pub fn read_currency(e: &Env) -> Result<Currency, LoanPoolError> {
 
 pub fn write_liquidation_threshold(e: &Env, threshold: i128) {
     let key = PoolDataKey::LiquidationThreshold;
-
     e.storage().persistent().set(&key, &threshold);
     extend_persistent(e, &key);
+    e.events().publish((key, symbol_short!("added")), threshold);
 }
 
 pub fn write_total_shares(e: &Env, amount: i128) {
     let key = PoolDataKey::TotalBalanceShares;
-
     e.storage().persistent().set(&key, &amount);
     extend_persistent(e, &key);
+    e.events().publish((key, symbol_short!("updated")), amount);
 }
 
 pub fn read_total_shares(e: &Env) -> Result<i128, LoanPoolError> {
@@ -127,9 +128,9 @@ pub fn adjust_total_shares(e: &Env, amount: i128) -> Result<i128, LoanPoolError>
 
 pub fn write_total_balance(e: &Env, amount: i128) {
     let key: PoolDataKey = PoolDataKey::TotalBalanceTokens;
-
     e.storage().persistent().set(&key, &amount);
     extend_persistent(e, &key);
+    e.events().publish((key, symbol_short!("added")), amount);
 }
 
 pub fn read_total_balance(e: &Env) -> Result<i128, LoanPoolError> {
@@ -151,9 +152,9 @@ pub fn adjust_total_balance(e: &Env, amount: i128) -> Result<i128, LoanPoolError
 
 pub fn write_available_balance(e: &Env, amount: i128) {
     let key: PoolDataKey = PoolDataKey::AvailableBalanceTokens;
-
     e.storage().persistent().set(&key, &amount);
     extend_persistent(e, &key);
+    e.events().publish((key, "added"), amount);
 }
 
 pub fn read_available_balance(e: &Env) -> Result<i128, LoanPoolError> {
@@ -175,10 +176,8 @@ pub fn adjust_available_balance(e: &Env, amount: i128) -> Result<i128, LoanPoolE
 
 pub fn write_accrual(e: &Env, accrual: i128) {
     let key = PoolDataKey::Accrual;
-
     e.storage().persistent().set(&key, &accrual);
     extend_persistent(e, &key);
-
     e.events().publish((key, "updated"), accrual);
 }
 
@@ -194,7 +193,6 @@ pub fn write_accrual_last_updated(e: &Env, sequence: u64) -> u64 {
 
     e.storage().persistent().set(&key, &sequence);
     extend_persistent(e, &key);
-
     e.events().publish((key, "updated"), e.ledger().timestamp());
 
     sequence
@@ -208,9 +206,10 @@ pub fn read_accrual_last_updated(e: &Env) -> Result<u64, LoanPoolError> {
 }
 
 pub fn change_interest_rate_multiplier(e: &Env, multiplier: i128) {
-    e.storage()
-        .persistent()
-        .set(&PoolDataKey::InterestRateMultiplier, &multiplier);
+    let key = PoolDataKey::InterestRateMultiplier;
+    e.storage().persistent().set(&key, &multiplier);
+    e.events()
+        .publish((key, symbol_short!("updated")), multiplier)
 }
 
 pub fn read_interest_rate_multiplier(e: &Env) -> Result<i128, LoanPoolError> {
@@ -248,15 +247,16 @@ pub fn write_positions(
     liabilities: i128,
     collateral: i128,
 ) {
-    let key = PoolDataKey::Positions(addr);
+    let key = PoolDataKey::Positions(addr.clone());
 
-    let positions: Positions = Positions {
+    let positions = Positions {
         receivable_shares: receivables,
         liabilities,
         collateral,
     };
-
     e.storage().persistent().set(&key, &positions);
-
     extend_persistent(e, &key);
+
+    e.events()
+        .publish((symbol_short!("positions"), symbol_short!("updated")), addr)
 }
