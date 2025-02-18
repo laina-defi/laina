@@ -36,7 +36,7 @@ pub fn write_admin(e: &Env, admin: &Address) {
         .persistent()
         .set(&LoanManagerDataKey::Admin, &admin);
     e.events()
-        .publish((symbol_short!("admin"), symbol_short!("added")), admin);
+        .publish((LoanManagerDataKey::Admin, symbol_short!("added")), admin);
 }
 
 pub fn admin_exists(e: &Env) -> bool {
@@ -80,7 +80,14 @@ pub fn write_loan(e: &Env, user: Address, loan: Loan) {
         .extend_ttl(&key, POSITIONS_LIFETIME_THRESHOLD, POSITIONS_BUMP_AMOUNT);
 
     e.events().publish(
-        ("Loan", if is_existing { "updated" } else { "created" }),
+        (
+            symbol_short!("Loan"),
+            if is_existing {
+                symbol_short!("updated")
+            } else {
+                symbol_short!("created")
+            },
+        ),
         key,
     );
 }
@@ -98,7 +105,8 @@ pub fn read_loan(e: &Env, user: Address) -> Option<Loan> {
 }
 
 pub fn delete_loan(e: &Env, user: Address) {
-    e.storage()
-        .persistent()
-        .remove(&LoanManagerDataKey::Loan(user));
+    let key = LoanManagerDataKey::Loan(user);
+    e.storage().persistent().remove(&key);
+    e.events()
+        .publish((symbol_short!("Loan"), symbol_short!("deleted")), key);
 }

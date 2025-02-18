@@ -63,7 +63,6 @@ impl LoanManager {
             &liquidation_threshold,
         );
 
-        // Return the contract ID of the deployed contract
         Ok(deployed_address)
     }
 
