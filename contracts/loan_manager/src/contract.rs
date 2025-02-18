@@ -101,6 +101,14 @@ impl LoanManager {
             return Err(LoanManagerError::LoanAlreadyExists);
         }
 
+        let pool_addresses = storage::read_pool_addresses(&e);
+        if !pool_addresses.contains(&borrowed_from) {
+            return Err(LoanManagerError::InvalidLoanToken);
+        }
+        if !pool_addresses.contains(&collateral_from) {
+            return Err(LoanManagerError::InvalidCollateralToken);
+        }
+
         let collateral_pool_client = loan_pool::Client::new(&e, &collateral_from);
         let borrow_pool_client = loan_pool::Client::new(&e, &borrowed_from);
 
@@ -477,15 +485,30 @@ impl LoanManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use loan_pool::Currency;
     use soroban_sdk::{
         testutils::{Address as _, Ledger},
         token::{Client as TokenClient, StellarAssetClient},
+        xdr::ToXdr,
         Env,
     };
     mod loan_manager {
         soroban_sdk::contractimport!(
             file = "../../target/wasm32-unknown-unknown/release/loan_manager.wasm"
         );
+    }
+
+    fn deploy_pool(e: &Env, manager_client: &LoanManagerClient, currency: &Currency) -> Address {
+        let wasm_hash = e.deployer().upload_contract_wasm(loan_pool::WASM);
+        let xdr_bytes = currency.token_address.clone().to_xdr(e);
+        let salt = e.crypto().sha256(&xdr_bytes).to_bytes();
+        manager_client.deploy_pool(
+            &wasm_hash,
+            &salt,
+            &currency.token_address,
+            &currency.ticker,
+            &8_000_000,
+        )
     }
 
     #[test]
@@ -513,26 +536,25 @@ mod tests {
     }
 
     #[test]
-    fn deploy_pool() {
+    fn deploy_pool_test() {
         // ARRANGE
         let e = Env::default();
         e.mock_all_auths();
 
         let admin = Address::generate(&e);
-        let deployer_client = LoanManagerClient::new(&e, &e.register(LoanManager, ()));
-        deployer_client.initialize(&admin);
+        let manager_client = LoanManagerClient::new(&e, &e.register(LoanManager, ()));
+        manager_client.initialize(&admin);
 
         // Setup test token
         let token = e.register_stellar_asset_contract_v2(admin.clone());
-        let ticker = Symbol::new(&e, "XLM");
-
-        let wasm_hash = e.deployer().upload_contract_wasm(loan_pool::WASM);
-        let salt = BytesN::from_array(&e, &[0; 32]);
+        let currency = Currency {
+            token_address: token.address(),
+            ticker: Symbol::new(&e, "XLM"),
+        };
 
         // ACT
         // Deploy contract using loan_manager as factory
-        let loan_pool_addr =
-            deployer_client.deploy_pool(&wasm_hash, &salt, &token.address(), &ticker, &8_000_000);
+        let loan_pool_addr = deploy_pool(&e, &manager_client, &currency);
 
         // ASSERT
         // No authorizations needed - the contract acts as a factory.
@@ -552,26 +574,22 @@ mod tests {
 
         let admin = Address::generate(&e);
 
-        let deployer_client = LoanManagerClient::new(&e, &e.register(LoanManager, ()));
-        deployer_client.initialize(&admin);
+        let manager_client = LoanManagerClient::new(&e, &e.register(LoanManager, ()));
+        manager_client.initialize(&admin);
 
         // Setup test token
         let token = e.register_stellar_asset_contract_v2(admin.clone());
-        let ticker = Symbol::new(&e, "XLM");
+        let currency = Currency {
+            token_address: token.address(),
+            ticker: Symbol::new(&e, "XLM"),
+        };
 
         let manager_wasm_hash = e.deployer().upload_contract_wasm(loan_manager::WASM);
         let pool_wasm_hash = e.deployer().upload_contract_wasm(loan_pool::WASM);
-        let salt = BytesN::from_array(&e, &[0; 32]);
 
         // ACT
-        deployer_client.deploy_pool(
-            &pool_wasm_hash,
-            &salt,
-            &token.address(),
-            &ticker,
-            &8_000_000,
-        );
-        deployer_client.upgrade(&manager_wasm_hash, &pool_wasm_hash);
+        deploy_pool(&e, &manager_client, &currency);
+        manager_client.upgrade(&manager_wasm_hash, &pool_wasm_hash);
     }
 
     #[test]
@@ -582,13 +600,14 @@ mod tests {
 
         let admin = Address::generate(&e);
         let loan_token = e.register_stellar_asset_contract_v2(admin.clone());
-        let loan_asset = StellarAssetClient::new(&e, &loan_token.address());
-        let loan_token_client = TokenClient::new(&e, &loan_token.address());
-        loan_asset.mint(&admin, &1000);
         let loan_currency = loan_pool::Currency {
             token_address: loan_token.address(),
             ticker: Symbol::new(&e, "XLM"),
         };
+
+        let loan_asset = StellarAssetClient::new(&e, &loan_token.address());
+        let loan_token_client = TokenClient::new(&e, &loan_token.address());
+        loan_asset.mint(&admin, &1000);
 
         let admin2 = Address::generate(&e);
         let collateral_token = e.register_stellar_asset_contract_v2(admin2.clone());
@@ -609,26 +628,23 @@ mod tests {
 
         assert_eq!(collateral_token_client.balance(&user), 1000);
 
+        // Register loan manager contract.
+        let manager_addr = e.register(LoanManager, ());
+        let manager_client = LoanManagerClient::new(&e, &manager_addr);
+        manager_client.initialize(&admin);
+
         // Set up a loan pool with funds for borrowing.
-        let loan_pool_id = e.register(loan_pool::WASM, ());
-        let loan_pool_client = loan_pool::Client::new(&e, &loan_pool_id);
+        let loan_pool_addr = deploy_pool(&e, &manager_client, &loan_currency);
+        let loan_pool_client = loan_pool::Client::new(&e, &loan_pool_addr);
 
         // Set up a loan_pool for the collaterals.
-        let collateral_pool_id = e.register(loan_pool::WASM, ());
-        let collateral_pool_client = loan_pool::Client::new(&e, &collateral_pool_id);
-
-        // Register loan manager contract.
-        let contract_id = e.register(LoanManager, ());
-        let contract_client = LoanManagerClient::new(&e, &contract_id);
+        let collateral_pool_addr = deploy_pool(&e, &manager_client, &collateral_currency);
 
         // ACT
         // Initialize the loan pool and deposit some of the admin's funds.
-        loan_pool_client.initialize(&contract_id, &loan_currency, &8_000_000);
         loan_pool_client.deposit(&admin, &1000);
 
-        collateral_pool_client.initialize(&contract_id, &collateral_currency, &8_000_000);
-
-        contract_client.create_loan(&user, &10, &loan_pool_id, &100, &collateral_pool_id);
+        manager_client.create_loan(&user, &10, &loan_pool_addr, &100, &collateral_pool_addr);
 
         // ASSERT
         assert_eq!(loan_token_client.balance(&user), 10);
@@ -676,29 +692,36 @@ mod tests {
 
         assert_eq!(collateral_token_client.balance(&user), 1_000_000);
 
+        let manager_addr = e.register(LoanManager, ());
+        let manager_client = LoanManagerClient::new(&e, &manager_addr);
+        manager_client.initialize(&admin);
+
         // Set up a loan pool with funds for borrowing.
-        let loan_pool_id = e.register(loan_pool::WASM, ());
-        let loan_pool_client = loan_pool::Client::new(&e, &loan_pool_id);
+        let loan_pool_addr = deploy_pool(&e, &manager_client, &loan_currency);
+        let loan_pool_client = loan_pool::Client::new(&e, &loan_pool_addr);
 
         // Set up a loan_pool for the collaterals.
-        let collateral_pool_id = e.register(loan_pool::WASM, ());
-        let collateral_pool_client = loan_pool::Client::new(&e, &collateral_pool_id);
+        let collateral_pool_addr = deploy_pool(&e, &manager_client, &collateral_currency);
+        let collateral_pool_client = loan_pool::Client::new(&e, &collateral_pool_addr);
 
         // Register loan manager contract.
-        let contract_id = e.register(LoanManager, ());
-        let contract_client = LoanManagerClient::new(&e, &contract_id);
-
         // ACT
         // Initialize the loan pool and deposit some of the admin's funds.
-        loan_pool_client.initialize(&contract_id, &loan_currency, &8_000_000);
+        loan_pool_client.initialize(&manager_addr, &loan_currency, &8_000_000);
         loan_pool_client.deposit(&admin, &10_001);
 
-        collateral_pool_client.initialize(&contract_id, &collateral_currency, &8_000_000);
+        collateral_pool_client.initialize(&manager_addr, &collateral_currency, &8_000_000);
 
         // Create a loan.
-        contract_client.create_loan(&user, &10_000, &loan_pool_id, &100_000, &collateral_pool_id);
+        manager_client.create_loan(
+            &user,
+            &10_000,
+            &loan_pool_addr,
+            &100_000,
+            &collateral_pool_addr,
+        );
 
-        let user_loan = contract_client.get_loan(&user).unwrap();
+        let user_loan = manager_client.get_loan(&user).unwrap();
 
         assert_eq!(user_loan.borrowed_amount, 10_000);
         assert_eq!(collateral_token_client.balance(&user), 900_000);
@@ -718,9 +741,9 @@ mod tests {
         let reflector_addr = Address::from_string(&String::from_str(&e, REFLECTOR_ADDRESS));
         e.register_at(&reflector_addr, oracle::WASM, ());
 
-        contract_client.add_interest(&user);
+        manager_client.add_interest(&user);
 
-        let user_loan = contract_client.get_loan(&user).unwrap();
+        let user_loan = manager_client.get_loan(&user).unwrap();
 
         assert_eq!(user_loan.borrowed_amount, 12_998);
         assert_eq!(user_loan.health_factor, 61_547_930);
@@ -769,27 +792,34 @@ mod tests {
 
         assert_eq!(collateral_token_client.balance(&user), 1_000_000);
 
+        // Register loan manager contract.
+        let manager_addr = e.register(LoanManager, ());
+        let manager_client = LoanManagerClient::new(&e, &manager_addr);
+        manager_client.initialize(&admin);
+
         // Set up a loan pool with funds for borrowing.
-        let loan_pool_id = e.register(loan_pool::WASM, ());
-        let loan_pool_client = loan_pool::Client::new(&e, &loan_pool_id);
+        let loan_pool_addr = deploy_pool(&e, &manager_client, &loan_currency);
+        let loan_pool_client = loan_pool::Client::new(&e, &loan_pool_addr);
 
         // Set up a loan_pool for the collaterals.
-        let collateral_pool_id = e.register(loan_pool::WASM, ());
-        let collateral_pool_client = loan_pool::Client::new(&e, &collateral_pool_id);
-
-        // Register loan manager contract.
-        let contract_id = e.register(LoanManager, ());
-        let contract_client = LoanManagerClient::new(&e, &contract_id);
+        let collateral_pool_addr = deploy_pool(&e, &manager_client, &collateral_currency);
+        let collateral_pool_client = loan_pool::Client::new(&e, &collateral_pool_addr);
 
         // ACT
         // Initialize the loan pool and deposit some of the admin's funds.
-        loan_pool_client.initialize(&contract_id, &loan_currency, &8_000_000);
+        loan_pool_client.initialize(&manager_addr, &loan_currency, &8_000_000);
         loan_pool_client.deposit(&admin, &1_000_000);
 
-        collateral_pool_client.initialize(&contract_id, &collateral_currency, &8_000_000);
+        collateral_pool_client.initialize(&manager_addr, &collateral_currency, &8_000_000);
 
         // Create a loan.
-        contract_client.create_loan(&user, &1_000, &loan_pool_id, &100_000, &collateral_pool_id);
+        manager_client.create_loan(
+            &user,
+            &1_000,
+            &loan_pool_addr,
+            &100_000,
+            &collateral_pool_addr,
+        );
 
         // Move in time
         e.ledger().with_mut(|li| {
@@ -804,16 +834,16 @@ mod tests {
         assert_eq!(loan_token_client.balance(&user), 1_000);
         assert_eq!(collateral_token_client.balance(&user), 900_000);
 
-        let user_loan = contract_client.get_loan(&user).unwrap();
+        let user_loan = manager_client.get_loan(&user).unwrap();
 
         assert_eq!(user_loan.borrowed_amount, 1_000);
         assert_eq!(user_loan.collateral_amount, 100_000);
 
-        contract_client.repay(&user, &100);
-        let user_loan = contract_client.get_loan(&user).unwrap();
+        manager_client.repay(&user, &100);
+        let user_loan = manager_client.get_loan(&user).unwrap();
         assert_eq!(user_loan.borrowed_amount, 920);
 
-        assert_eq!((920, 820), contract_client.repay(&user, &100));
+        assert_eq!((920, 820), manager_client.repay(&user, &100));
         assert_eq!(999198, loan_pool_client.get_available_balance());
         assert_eq!(1000018, loan_pool_client.get_contract_balance());
         assert_eq!(1000000, loan_pool_client.get_total_balance_shares());
@@ -862,27 +892,34 @@ mod tests {
 
         assert_eq!(collateral_token_client.balance(&user), 1_000_000);
 
+        // Register loan manager contract.
+        let manager_addr = e.register(LoanManager, ());
+        let manager_client = LoanManagerClient::new(&e, &manager_addr);
+        manager_client.initialize(&admin);
+
         // Set up a loan pool with funds for borrowing.
-        let loan_pool_id = e.register(loan_pool::WASM, ());
-        let loan_pool_client = loan_pool::Client::new(&e, &loan_pool_id);
+        let loan_pool_addr = deploy_pool(&e, &manager_client, &loan_currency);
+        let loan_pool_client = loan_pool::Client::new(&e, &loan_pool_addr);
 
         // Set up a loan_pool for the collaterals.
-        let collateral_pool_id = e.register(loan_pool::WASM, ());
-        let collateral_pool_client = loan_pool::Client::new(&e, &collateral_pool_id);
-
-        // Register loan manager contract.
-        let contract_id = e.register(LoanManager, ());
-        let contract_client = LoanManagerClient::new(&e, &contract_id);
+        let collateral_pool_addr = deploy_pool(&e, &manager_client, &collateral_currency);
+        let collateral_pool_client = loan_pool::Client::new(&e, &collateral_pool_addr);
 
         // ACT
         // Initialize the loan pool and deposit some of the admin's funds.
-        loan_pool_client.initialize(&contract_id, &loan_currency, &8_000_000);
+        loan_pool_client.initialize(&manager_addr, &loan_currency, &8_000_000);
         loan_pool_client.deposit(&admin, &1_000_000);
 
-        collateral_pool_client.initialize(&contract_id, &collateral_currency, &8_000_000);
+        collateral_pool_client.initialize(&manager_addr, &collateral_currency, &8_000_000);
 
         // Create a loan.
-        contract_client.create_loan(&user, &1_000, &loan_pool_id, &100_000, &collateral_pool_id);
+        manager_client.create_loan(
+            &user,
+            &1_000,
+            &loan_pool_addr,
+            &100_000,
+            &collateral_pool_addr,
+        );
 
         // Move in time
         e.ledger().with_mut(|li| {
@@ -898,14 +935,14 @@ mod tests {
         assert_eq!(loan_token_client.balance(&user), 1_050);
         assert_eq!(collateral_token_client.balance(&user), 900_000);
 
-        let user_loan = contract_client.get_loan(&user).unwrap();
+        let user_loan = manager_client.get_loan(&user).unwrap();
 
         assert_eq!(user_loan.borrowed_amount, 1_000);
         assert_eq!(user_loan.collateral_amount, 100_000);
 
         assert_eq!(
             1020,
-            contract_client.repay_and_close_manager(&user, &(user_loan.borrowed_amount + 45))
+            manager_client.repay_and_close_manager(&user, &(user_loan.borrowed_amount + 45))
         );
 
         assert_eq!(1000018, loan_pool_client.get_available_balance());
@@ -948,29 +985,36 @@ mod tests {
 
         assert_eq!(collateral_token_client.balance(&user), 1_000_000);
 
+        // Register loan manager contract.
+        let manager_addr = e.register(LoanManager, ());
+        let manager_client = LoanManagerClient::new(&e, &manager_addr);
+        manager_client.initialize(&admin);
+
         // Set up a loan pool with funds for borrowing.
-        let loan_pool_id = e.register(loan_pool::WASM, ());
-        let loan_pool_client = loan_pool::Client::new(&e, &loan_pool_id);
+        let loan_pool_addr = deploy_pool(&e, &manager_client, &loan_currency);
+        let loan_pool_client = loan_pool::Client::new(&e, &loan_pool_addr);
 
         // Set up a loan_pool for the collaterals.
-        let collateral_pool_id = e.register(loan_pool::WASM, ());
-        let collateral_pool_client = loan_pool::Client::new(&e, &collateral_pool_id);
-
-        // Register loan manager contract.
-        let contract_id = e.register(LoanManager, ());
-        let contract_client = LoanManagerClient::new(&e, &contract_id);
+        let collateral_pool_addr = deploy_pool(&e, &manager_client, &collateral_currency);
+        let collateral_pool_client = loan_pool::Client::new(&e, &collateral_pool_addr);
 
         // ACT
         // Initialize the loan pool and deposit some of the admin's funds.
-        loan_pool_client.initialize(&contract_id, &loan_currency, &8_000_000);
+        loan_pool_client.initialize(&manager_addr, &loan_currency, &8_000_000);
         loan_pool_client.deposit(&admin, &1_000_000);
 
-        collateral_pool_client.initialize(&contract_id, &collateral_currency, &8_000_000);
+        collateral_pool_client.initialize(&manager_addr, &collateral_currency, &8_000_000);
 
         // Create a loan.
-        contract_client.create_loan(&user, &1_000, &loan_pool_id, &100_000, &collateral_pool_id);
+        manager_client.create_loan(
+            &user,
+            &1_000,
+            &loan_pool_addr,
+            &100_000,
+            &collateral_pool_addr,
+        );
 
-        contract_client.repay(&user, &2_000);
+        manager_client.repay(&user, &2_000);
     }
     #[test]
     fn liquidate() {
@@ -1013,33 +1057,40 @@ mod tests {
 
         assert_eq!(collateral_token_client.balance(&user), 1_000_000);
 
+        // Register loan manager contract.
+        let manager_addr = e.register(LoanManager, ());
+        let manager_client = LoanManagerClient::new(&e, &manager_addr);
+        manager_client.initialize(&admin);
+
         // Set up a loan pool with funds for borrowing.
-        let loan_pool_id = e.register(loan_pool::WASM, ());
-        let loan_pool_client = loan_pool::Client::new(&e, &loan_pool_id);
+        let loan_pool_addr = deploy_pool(&e, &manager_client, &loan_currency);
+        let loan_pool_client = loan_pool::Client::new(&e, &loan_pool_addr);
 
         // Set up a loan_pool for the collaterals.
-        let collateral_pool_id = e.register(loan_pool::WASM, ());
-        let collateral_pool_client = loan_pool::Client::new(&e, &collateral_pool_id);
-
-        // Register loan manager contract.
-        let contract_id = e.register(LoanManager, ());
-        let contract_client = LoanManagerClient::new(&e, &contract_id);
+        let collateral_pool_addr = deploy_pool(&e, &manager_client, &collateral_currency);
+        let collateral_pool_client = loan_pool::Client::new(&e, &collateral_pool_addr);
 
         // ACT
         // Initialize the loan pool and deposit some of the admin's funds.
-        loan_pool_client.initialize(&contract_id, &loan_currency, &8_000_000);
+        loan_pool_client.initialize(&manager_addr, &loan_currency, &8_000_000);
         loan_pool_client.deposit(&admin, &10_001);
 
-        collateral_pool_client.initialize(&contract_id, &collateral_currency, &8_000_000);
+        collateral_pool_client.initialize(&manager_addr, &collateral_currency, &8_000_000);
 
         // Create a loan.
-        contract_client.create_loan(&user, &10_000, &loan_pool_id, &12_505, &collateral_pool_id);
+        manager_client.create_loan(
+            &user,
+            &10_000,
+            &loan_pool_addr,
+            &12_505,
+            &collateral_pool_addr,
+        );
 
-        let user_loan = contract_client.get_loan(&user).unwrap();
+        let user_loan = manager_client.get_loan(&user).unwrap();
 
         assert_eq!(user_loan.borrowed_amount, 10_000);
 
-        contract_client.add_interest(&user);
+        manager_client.add_interest(&user);
 
         // Here borrowed amount should be the same as time has not moved. add_interest() is only called to store the LastUpdate sequence number.
         assert_eq!(user_loan.borrowed_amount, 10_000);
@@ -1055,9 +1106,9 @@ mod tests {
         let reflector_addr = Address::from_string(&String::from_str(&e, REFLECTOR_ADDRESS));
         e.register_at(&reflector_addr, oracle::WASM, ());
 
-        contract_client.add_interest(&user);
+        manager_client.add_interest(&user);
 
-        let user_loan = contract_client.get_loan(&user).unwrap();
+        let user_loan = manager_client.get_loan(&user).unwrap();
 
         assert_eq!(user_loan.borrowed_amount, 12_998);
         assert_eq!(user_loan.health_factor, 7_696_568);
@@ -1070,9 +1121,9 @@ mod tests {
         let reflector_addr = Address::from_string(&String::from_str(&e, REFLECTOR_ADDRESS));
         e.register_at(&reflector_addr, oracle::WASM, ());
 
-        contract_client.liquidate(&admin, &user, &5000);
+        manager_client.liquidate(&admin, &user, &5000);
 
-        let user_loan = contract_client.get_loan(&user).unwrap();
+        let user_loan = manager_client.get_loan(&user).unwrap();
 
         assert_eq!(user_loan.borrowed_amount, 7_998);
         assert_eq!(user_loan.health_factor, 7_256_814);
