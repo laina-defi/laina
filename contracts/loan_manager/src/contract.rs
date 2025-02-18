@@ -156,9 +156,9 @@ impl LoanManager {
             collateral_amount,
             borrowed_amount,
             collateral_from,
-            health_factor: _,
             unpaid_interest,
             last_accrual,
+            ..
         } = storage::read_loan(e, user.clone()).ok_or(LoanManagerError::LoanNotFound)?;
 
         let borrow_pool_client = loan_pool::Client::new(e, &borrowed_from);
@@ -350,14 +350,12 @@ impl LoanManager {
         Self::add_interest(e, user.clone())?;
 
         let Loan {
-            borrower: _,
             borrowed_amount,
             borrowed_from,
             collateral_amount,
             collateral_from,
-            health_factor: _,
             unpaid_interest,
-            last_accrual: _,
+            ..
         } = storage::read_loan(e, user.clone()).ok_or(LoanManagerError::LoanNotFound)?;
 
         let borrow_pool_client = loan_pool::Client::new(e, &borrowed_from);
@@ -391,9 +389,9 @@ impl LoanManager {
             borrowed_from,
             collateral_from,
             collateral_amount,
-            health_factor: _,
             unpaid_interest,
             last_accrual,
+            ..
         } = storage::read_loan(&e, borrower.clone()).ok_or(LoanManagerError::LoanNotFound)?;
 
         let borrow_pool_client = loan_pool::Client::new(&e, &borrowed_from);
