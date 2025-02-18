@@ -498,6 +498,54 @@ mod tests {
         );
     }
 
+    struct TestEnv<'a> {
+        admin: Address,
+        manager_addr: Address,
+        manager_client: LoanManagerClient<'a>,
+        token_xlm_addr: Address,
+        pool_xlm_addr: Address,
+        pool_xlm_client: loan_pool::Client<'a>,
+    }
+
+    fn setup_test_env(e: &Env) -> TestEnv {
+        let admin = Address::generate(&e);
+
+        // loan manager
+        let manager_addr = e.register(LoanManager, ());
+        let manager_client = LoanManagerClient::new(e, &manager_addr);
+        manager_client.initialize(&admin);
+
+        let wasm_hash = e.deployer().upload_contract_wasm(loan_pool::WASM);
+        const LIQUIDATION_THRESHOLD: i128 = 8_000_000; // 80%
+
+        // XLM Pool
+        let token_xlm_ticker = Symbol::new(&e, "XLM");
+        let token_xlm_addr = e
+            .register_stellar_asset_contract_v2(admin.clone())
+            .address();
+        let salt = e
+            .crypto()
+            .sha256(&token_xlm_addr.clone().to_xdr(&e))
+            .to_bytes();
+        let pool_xlm_addr = manager_client.deploy_pool(
+            &wasm_hash,
+            &salt,
+            &token_xlm_addr,
+            &token_xlm_ticker,
+            &LIQUIDATION_THRESHOLD,
+        );
+        let pool_xlm_client = loan_pool::Client::new(&e, &pool_xlm_addr);
+
+        TestEnv {
+            admin,
+            manager_addr,
+            manager_client,
+            token_xlm_addr,
+            pool_xlm_addr,
+            pool_xlm_client,
+        }
+    }
+
     fn deploy_pool(e: &Env, manager_client: &LoanManagerClient, currency: &Currency) -> Address {
         let wasm_hash = e.deployer().upload_contract_wasm(loan_pool::WASM);
         let xdr_bytes = currency.token_address.clone().to_xdr(e);
@@ -515,11 +563,10 @@ mod tests {
     fn initialize() {
         let e = Env::default();
         let admin = Address::generate(&e);
+        let manager_addr = e.register(LoanManager, ());
+        let manager_client = LoanManagerClient::new(&e, &manager_addr);
 
-        let contract_id = e.register(LoanManager, ());
-        let client = LoanManagerClient::new(&e, &contract_id);
-
-        assert!(client.try_initialize(&admin).is_ok());
+        assert!(manager_client.try_initialize(&admin).is_ok());
     }
 
     #[test]
@@ -541,28 +588,18 @@ mod tests {
         let e = Env::default();
         e.mock_all_auths();
 
-        let admin = Address::generate(&e);
-        let manager_client = LoanManagerClient::new(&e, &e.register(LoanManager, ()));
-        manager_client.initialize(&admin);
-
-        // Setup test token
-        let token = e.register_stellar_asset_contract_v2(admin.clone());
-        let currency = Currency {
-            token_address: token.address(),
-            ticker: Symbol::new(&e, "XLM"),
-        };
-
         // ACT
         // Deploy contract using loan_manager as factory
-        let loan_pool_addr = deploy_pool(&e, &manager_client, &currency);
+        let TestEnv {
+            pool_xlm_client, ..
+        } = setup_test_env(&e);
 
         // ASSERT
         // No authorizations needed - the contract acts as a factory.
         // assert_eq!(e.auths(), &[]);
 
         // Invoke contract to check that it is initialized.
-        let loan_pool_client = loan_pool::Client::new(&e, &loan_pool_addr);
-        let pool_balance = loan_pool_client.get_contract_balance();
+        let pool_balance = pool_xlm_client.get_contract_balance();
         assert_eq!(pool_balance, 0);
     }
 
@@ -572,23 +609,11 @@ mod tests {
         let e = Env::default();
         e.mock_all_auths();
 
-        let admin = Address::generate(&e);
-
-        let manager_client = LoanManagerClient::new(&e, &e.register(LoanManager, ()));
-        manager_client.initialize(&admin);
-
-        // Setup test token
-        let token = e.register_stellar_asset_contract_v2(admin.clone());
-        let currency = Currency {
-            token_address: token.address(),
-            ticker: Symbol::new(&e, "XLM"),
-        };
-
-        let manager_wasm_hash = e.deployer().upload_contract_wasm(loan_manager::WASM);
+        let TestEnv { manager_client, .. } = setup_test_env(&e);
+        let manager_wasm_hash = e.deployer().upload_contract_wasm(loan_pool::WASM);
         let pool_wasm_hash = e.deployer().upload_contract_wasm(loan_pool::WASM);
 
         // ACT
-        deploy_pool(&e, &manager_client, &currency);
         manager_client.upgrade(&manager_wasm_hash, &pool_wasm_hash);
     }
 
