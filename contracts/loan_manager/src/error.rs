@@ -11,4 +11,6 @@ pub enum LoanManagerError {
     NoLastPrice = 5,
     AddressNotFound = 6,
     LoanNotFound = 7,
+    InvalidLoanToken = 8,
+    InvalidCollateralToken = 9,
 }
