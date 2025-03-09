@@ -39,13 +39,13 @@ export const LoansProvider = ({ children }: PropsWithChildren) => {
       if (result) {
         setLoans([
           {
-            borrower: result.borrower,
-            borrowedAmount: result.borrowed_amount,
-            borrowedTicker: CURRENCY_BINDINGS_BY_ADDRESS[result.borrowed_from as PoolAddress].ticker,
-            collateralAmount: result.collateral_amount,
-            collateralTicker: CURRENCY_BINDINGS_BY_ADDRESS[result.collateral_from as PoolAddress].ticker,
-            healthFactor: result.health_factor,
-            unpaidInterest: result.unpaid_interest,
+            borrower: result.value.borrower,
+            borrowedAmount: result.value.borrowed_amount,
+            borrowedTicker: CURRENCY_BINDINGS_BY_ADDRESS[result.value.borrowed_from as PoolAddress].ticker,
+            collateralAmount: result.value.collateral_amount,
+            collateralTicker: CURRENCY_BINDINGS_BY_ADDRESS[result.value.collateral_from as PoolAddress].ticker,
+            healthFactor: result.value.health_factor,
+            unpaidInterest: result.value.unpaid_interest,
           },
         ]);
       } else {
