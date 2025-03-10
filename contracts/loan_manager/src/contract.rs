@@ -270,8 +270,7 @@ impl LoanManager {
     }
 
     pub fn get_loan(e: &Env, user: Address) -> Result<Loan, LoanManagerError> {
-        let loan = storage::read_loan(e, user).ok_or(LoanManagerError::LoanNotFound)?;
-        Ok(loan)
+        storage::read_loan(e, user).ok_or(LoanManagerError::LoanNotFound)
     }
 
     pub fn get_price(e: &Env, token: Symbol) -> Result<i128, LoanManagerError> {
