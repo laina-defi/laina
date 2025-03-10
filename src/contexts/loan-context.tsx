@@ -36,21 +36,18 @@ export const LoansProvider = ({ children }: PropsWithChildren) => {
     }
     try {
       const { result } = await loanManagerClient.get_loan({ user: wallet.address });
-      if (result) {
-        setLoans([
-          {
-            borrower: result.value.borrower,
-            borrowedAmount: result.value.borrowed_amount,
-            borrowedTicker: CURRENCY_BINDINGS_BY_ADDRESS[result.value.borrowed_from as PoolAddress].ticker,
-            collateralAmount: result.value.collateral_amount,
-            collateralTicker: CURRENCY_BINDINGS_BY_ADDRESS[result.value.collateral_from as PoolAddress].ticker,
-            healthFactor: result.value.health_factor,
-            unpaidInterest: result.value.unpaid_interest,
-          },
-        ]);
-      } else {
-        setLoans([]);
-      }
+      const loan = result.unwrap();
+      setLoans([
+        {
+          borrower: loan.borrower,
+          borrowedAmount: loan.borrowed_amount,
+          borrowedTicker: CURRENCY_BINDINGS_BY_ADDRESS[loan.borrowed_from as PoolAddress].ticker,
+          collateralAmount: loan.collateral_amount,
+          collateralTicker: CURRENCY_BINDINGS_BY_ADDRESS[loan.collateral_from as PoolAddress].ticker,
+          healthFactor: loan.health_factor,
+          unpaidInterest: loan.unpaid_interest,
+        },
+      ]);
     } catch (err) {
       console.error('Error fetching user loan:', err);
       setLoans([]);
