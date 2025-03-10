@@ -488,11 +488,10 @@ mod tests {
     use super::*;
     use loan_pool::Currency;
     use soroban_sdk::{
-        log,
         testutils::{Address as _, Ledger},
         token::{Client as TokenClient, StellarAssetClient},
         xdr::ToXdr,
-        Env, IntoVal, TryIntoVal,
+        Env,
     };
     mod loan_manager {
         soroban_sdk::contractimport!(
@@ -679,7 +678,7 @@ mod tests {
         // Create a loan.
         manager_client.create_loan(&user, &100, &pool_xlm_addr, &1000, &pool_usdc_addr);
 
-        let user_loan = manager_client.get_loan(&user).unwrap();
+        let user_loan = manager_client.get_loan(&user);
 
         // Here borrowed amount should be the same as time has not moved. add_interest() is only called to store the LastUpdate sequence number.
         assert_eq!(user_loan.borrowed_amount, 100);
@@ -698,7 +697,7 @@ mod tests {
 
         manager_client.add_interest(&user);
 
-        let user_loan = manager_client.get_loan(&user).unwrap();
+        let user_loan = manager_client.get_loan(&user);
 
         assert_eq!(user_loan.borrowed_amount, 102);
         assert_eq!(user_loan.health_factor, 78_431_372);
@@ -747,13 +746,13 @@ mod tests {
         assert_eq!(xlm_token_client.balance(&user), 100);
         assert_eq!(usdc_token_client.balance(&user), 500);
 
-        let user_loan = manager_client.get_loan(&user).unwrap();
+        let user_loan = manager_client.get_loan(&user);
 
         assert_eq!(user_loan.borrowed_amount, 100);
         assert_eq!(user_loan.collateral_amount, 500);
 
         manager_client.repay(&user, &50);
-        let user_loan = manager_client.get_loan(&user).unwrap();
+        let user_loan = manager_client.get_loan(&user);
         assert_eq!(user_loan.borrowed_amount, 52);
 
         assert_eq!((52, 2), manager_client.repay(&user, &50));
@@ -805,7 +804,7 @@ mod tests {
         assert_eq!(xlm_token_client.balance(&user), 100);
         assert_eq!(usdc_token_client.balance(&user), 700);
 
-        let user_loan = manager_client.get_loan(&user).unwrap();
+        let user_loan = manager_client.get_loan(&user);
 
         assert_eq!(user_loan.borrowed_amount, 100);
         assert_eq!(user_loan.collateral_amount, 300);
@@ -877,7 +876,7 @@ mod tests {
         // Create a loan.
         manager_client.create_loan(&user, &10_000, &pool_xlm_addr, &12_505, &pool_usdc_addr);
 
-        let user_loan = manager_client.get_loan(&user).unwrap();
+        let user_loan = manager_client.get_loan(&user);
 
         assert_eq!(user_loan.borrowed_amount, 10_000);
 
@@ -899,7 +898,7 @@ mod tests {
 
         manager_client.add_interest(&user);
 
-        let user_loan = manager_client.get_loan(&user).unwrap();
+        let user_loan = manager_client.get_loan(&user);
 
         assert_eq!(user_loan.borrowed_amount, 12_998);
         assert_eq!(user_loan.health_factor, 7_696_568);
@@ -914,7 +913,7 @@ mod tests {
 
         manager_client.liquidate(&admin, &user, &5_000);
 
-        let user_loan = manager_client.get_loan(&user).unwrap();
+        let user_loan = manager_client.get_loan(&user);
 
         assert_eq!(user_loan.borrowed_amount, 7_998);
         assert_eq!(user_loan.health_factor, 7_256_814);
