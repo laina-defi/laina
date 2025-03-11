@@ -687,7 +687,7 @@ mod tests {
         assert_eq!(xlm_token_client.balance(&user), 1_000);
         assert_eq!(usdc_token_client.balance(&user), 1_000);
 
-        let mut user_loan = manager_client.get_loan(&user).unwrap();
+        let mut user_loan = manager_client.get_loan(&user);
 
         assert_eq!(user_loan.borrowed_amount, 1_000);
         assert_eq!(user_loan.collateral_amount, 100_000);
@@ -697,7 +697,7 @@ mod tests {
             li.sequence_number = 100_000 + 100_000 + 1;
         });
 
-        user_loan = manager_client.get_loan(&user).unwrap();
+        user_loan = manager_client.get_loan(&user);
 
         assert_eq!(user_loan.borrowed_amount, 928);
         assert_eq!(user_loan.collateral_amount, 100_000);
