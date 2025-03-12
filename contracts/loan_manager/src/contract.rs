@@ -778,7 +778,7 @@ mod tests {
         let positions_new_user = Positions {
             collateral: 0,
             liabilities: 0,
-            receivable_shares: 999,
+            receivable_shares: 998,
         };
         assert_eq!(
             positions_new_user,
@@ -797,54 +797,21 @@ mod tests {
         let pool_state = PoolState {
             annual_interest_rate: 200887,
             available_balance_tokens: 2000,
-            total_balance_shares: 2000,
+            total_balance_shares: 1998,
             total_balance_tokens: 2002,
         };
         assert_eq!(pool_state, pool_xlm_client.get_pool_state());
 
         let state_after_first_withdraw = pool_xlm_client.withdraw(&new_user, &1002);
         assert_eq!(state_after_first_withdraw, pool_xlm_client.get_pool_state());
-        // let test_positions_admin = Positions {
-        //     collateral: 0,
-        //     liabilities: 0,
-        //     receivable_shares: 0,
-        // };
-        // assert_eq!(
-        //     test_positions_admin,
-        //     pool_xlm_client.get_user_positions(&admin)
-        // );
-        //
-        // let test_positions_user = Positions {
-        //     collateral: 0,
-        //     liabilities: 0,
-        //     receivable_shares: 1000,
-        // };
-        // assert_eq!(
-        //     test_positions_user,
-        //     pool_xlm_client.get_user_positions(&new_user)
-        // );
-        //
-        // let test_positions_admin = Positions {
-        //     collateral: 0,
-        //     liabilities: 0,
-        //     receivable_shares: 0,
-        // };
-        // assert_eq!(
-        //     test_positions_admin,
-        //     pool_xlm_client.get_user_positions(&admin)
-        // );
-        //
-        // let pool_state = PoolState {
-        //     annual_interest_rate: 201777,
-        //     available_balance_tokens: 998,
-        //     total_balance_shares: 1000,
-        //     total_balance_tokens: 1000,
-        // };
-        // assert_eq!(pool_state, pool_xlm_client.get_pool_state());
-        //
-        // assert_eq!(1000, pool_xlm_client.get_contract_balance());
-        // pool_xlm_client.withdraw(&new_user, &998);
-        // assert_eq!(2, pool_xlm_client.get_contract_balance());
+
+        let pool_state = PoolState {
+            annual_interest_rate: 200887,
+            available_balance_tokens: 998,
+            total_balance_shares: 998,
+            total_balance_tokens: 1000,
+        };
+        assert_eq!(pool_state, pool_xlm_client.get_pool_state());
     }
 
     #[test]

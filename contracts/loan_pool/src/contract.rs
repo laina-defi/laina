@@ -65,20 +65,20 @@ impl LoanPoolContract {
             let client = token::Client::new(&e, &token_address);
             client.transfer(&user, &e.current_contract_address(), &amount);
 
-            storage::adjust_available_balance(&e, amount)?;
-            storage::adjust_total_shares(&e, amount)?;
-            storage::adjust_total_balance(&e, amount)?;
-
             let current_shares = Self::get_total_balance_shares(e.clone())?;
             let current_contract_balance = Self::get_contract_balance(e.clone())?;
 
-            let shares_issued = current_shares
-                .checked_mul(amount)
-                .ok_or(LoanPoolError::OverOrUnderFlow)?
-                .checked_div(current_contract_balance)
-                .ok_or(LoanPoolError::OverOrUnderFlow)?;
-            let liabilities: i128 = 0; // temp test param
-            let collateral: i128 = 0; // temp test param
+            let shares_issued = if current_contract_balance == 0 {
+                amount
+            } else {
+                current_shares
+                    .checked_mul(amount)
+                    .ok_or(LoanPoolError::OverOrUnderFlow)?
+                    .checked_div(current_contract_balance)
+                    .ok_or(LoanPoolError::OverOrUnderFlow)?
+            };
+            let liabilities: i128 = 0;
+            let collateral: i128 = 0;
             positions::increase_positions(
                 &e,
                 user.clone(),
@@ -86,6 +86,10 @@ impl LoanPoolContract {
                 liabilities,
                 collateral,
             )?;
+
+            storage::adjust_available_balance(&e, amount)?;
+            storage::adjust_total_shares(&e, shares_issued)?;
+            storage::adjust_total_balance(&e, amount)?;
 
             Ok(amount)
         }
@@ -125,7 +129,12 @@ impl LoanPoolContract {
             &e,
             amount.checked_neg().ok_or(LoanPoolError::OverOrUnderFlow)?,
         )?;
-        let new_total_balance_shares = storage::adjust_total_shares(&e, shares_to_decrease)?;
+        let new_total_balance_shares = storage::adjust_total_shares(
+            &e,
+            shares_to_decrease
+                .checked_neg()
+                .ok_or(LoanPoolError::OverOrUnderFlow)?,
+        )?;
         let liabilities: i128 = 0;
         let collateral: i128 = 0;
         positions::decrease_positions(
