@@ -65,16 +65,31 @@ impl LoanPoolContract {
             let client = token::Client::new(&e, &token_address);
             client.transfer(&user, &e.current_contract_address(), &amount);
 
-            storage::adjust_available_balance(&e, amount)?;
-            storage::adjust_total_shares(&e, amount)?;
-            storage::adjust_total_balance(&e, amount)?;
+            let current_shares = Self::get_total_balance_shares(e.clone())?;
+            let current_contract_balance = Self::get_contract_balance(e.clone())?;
 
-            // Increase users position in pool as they deposit
-            // as this is deposit amount is added to receivables and
-            // liabilities & collateral stays intact
-            let liabilities: i128 = 0; // temp test param
-            let collateral: i128 = 0; // temp test param
-            positions::increase_positions(&e, user.clone(), amount, liabilities, collateral)?;
+            let shares_issued = if current_contract_balance == 0 {
+                amount
+            } else {
+                current_shares
+                    .checked_mul(amount)
+                    .ok_or(LoanPoolError::OverOrUnderFlow)?
+                    .checked_div(current_contract_balance)
+                    .ok_or(LoanPoolError::OverOrUnderFlow)?
+            };
+            let liabilities: i128 = 0;
+            let collateral: i128 = 0;
+            positions::increase_positions(
+                &e,
+                user.clone(),
+                shares_issued,
+                liabilities,
+                collateral,
+            )?;
+
+            storage::adjust_available_balance(&e, amount)?;
+            storage::adjust_total_shares(&e, shares_issued)?;
+            storage::adjust_total_balance(&e, amount)?;
 
             Ok(amount)
         }
@@ -89,11 +104,6 @@ impl LoanPoolContract {
         // Get users receivables
         let receivable_shares = storage::read_positions(&e, &user).receivable_shares;
 
-        // Check that user is not trying to move more than receivables (TODO: also include collateral?)
-        if amount > receivable_shares {
-            return Err(LoanPoolError::WithdrawIsNegative);
-        }
-
         let available_balance_tokens = Self::get_available_balance(e.clone())?;
         if amount > available_balance_tokens {
             return Err(LoanPoolError::WithdrawOverBalance);
@@ -106,6 +116,11 @@ impl LoanPoolContract {
             .checked_div(total_balance_tokens)
             .ok_or(LoanPoolError::OverOrUnderFlow)?;
 
+        // Check that user is not trying to move more than receivables (TODO: also include collateral?)
+        if shares_to_decrease > receivable_shares {
+            return Err(LoanPoolError::WithdrawIsNegative);
+        }
+
         let new_available_balance_tokens = storage::adjust_available_balance(
             &e,
             amount.checked_neg().ok_or(LoanPoolError::OverOrUnderFlow)?,
@@ -114,7 +129,12 @@ impl LoanPoolContract {
             &e,
             amount.checked_neg().ok_or(LoanPoolError::OverOrUnderFlow)?,
         )?;
-        let new_total_balance_shares = storage::adjust_total_shares(&e, shares_to_decrease)?;
+        let new_total_balance_shares = storage::adjust_total_shares(
+            &e,
+            shares_to_decrease
+                .checked_neg()
+                .ok_or(LoanPoolError::OverOrUnderFlow)?,
+        )?;
         let liabilities: i128 = 0;
         let collateral: i128 = 0;
         positions::decrease_positions(
@@ -633,7 +653,7 @@ mod test {
     }
 
     #[test]
-    #[should_panic(expected = "Error(Contract, #12)")]
+    #[should_panic(expected = "Error(Contract, #11)")]
     fn withdraw_more_than_balance() {
         let e = Env::default();
         e.mock_all_auths();
@@ -705,6 +725,7 @@ mod test {
 
         assert_eq!(withdraw_result, contract_client.get_pool_state());
     }
+
     #[test]
     fn add_accrual_full_usage() {
         let e = Env::default();
