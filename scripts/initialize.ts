@@ -12,6 +12,7 @@ import {
   installContracts,
   loanManagerAddress,
   readTextFile,
+  logDeploymentInfo,
 } from './util';
 
 const account = process.env.SOROBAN_ACCOUNT;
@@ -73,3 +74,4 @@ createContractBindings();
 createContractImports();
 
 console.log('\nInitialization successful!');
+logDeploymentInfo();
