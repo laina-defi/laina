@@ -1,7 +1,7 @@
 import 'dotenv/config';
-import { mkdirSync } from 'fs';
-import crypto from 'crypto';
-import { CURRENCIES, type Currency } from '../currencies';
+import { mkdirSync } from 'node:fs';
+import crypto from 'node:crypto';
+import { CURRENCIES } from '../currencies';
 import {
   loadAccount,
   buildContracts,
@@ -28,10 +28,10 @@ const deploy = (wasm: string) => {
  * Loan_manager is used as a factory for the loan_pools.
  */
 const deployLoanManager = () => {
-  const contractsDir = `.stellar/contract-ids`;
+  const contractsDir = '.stellar/contract-ids';
   mkdirSync(contractsDir, { recursive: true });
 
-  deploy(`./target/wasm32-unknown-unknown/release/loan_manager.wasm`);
+  deploy('./target/wasm32-unknown-unknown/release/loan_manager.wasm');
 
   exe(`stellar contract invoke \
 --id ${loanManagerAddress()} \
@@ -45,7 +45,7 @@ const deployLoanManager = () => {
 const deployLoanPools = () => {
   const wasmHash = readTextFile('./.stellar/contract-wasm-hash/loan_pool.txt');
 
-  CURRENCIES.forEach(({ tokenContractAddress, ticker, loanPoolName }: Currency) => {
+  for (const { tokenContractAddress, ticker, loanPoolName } of CURRENCIES) {
     const salt = crypto.randomBytes(32).toString('hex');
     exe(
       `stellar contract invoke \
@@ -60,7 +60,7 @@ const deployLoanPools = () => {
 --liquidation_threshold 8000000 \
 | tr -d '"' > ./.stellar/contract-ids/${loanPoolName}.txt`,
     );
-  });
+  }
 };
 
 // Calling the functions (equivalent to the last part of your bash script)
