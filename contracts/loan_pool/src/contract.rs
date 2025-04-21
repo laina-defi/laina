@@ -278,57 +278,6 @@ impl LoanPoolContract {
         Ok(())
     }
 
-    pub fn get_accrual(e: &Env) -> Result<i128, LoanPoolError> {
-        storage::read_accrual(e)
-    }
-
-    pub fn get_collateral_factor(e: &Env) -> Result<i128, LoanPoolError> {
-        storage::read_collateral_factor(e)
-    }
-
-    /// Get user's positions in the storage
-    pub fn get_user_positions(e: Env, user: Address) -> Positions {
-        storage::read_positions(&e, &user)
-    }
-
-    /// Get contract data entries
-    pub fn get_contract_balance(e: Env) -> Result<i128, LoanPoolError> {
-        storage::read_total_balance(&e)
-    }
-
-    pub fn get_total_balance_shares(e: Env) -> Result<i128, LoanPoolError> {
-        storage::read_total_shares(&e)
-    }
-
-    pub fn get_available_balance(e: Env) -> Result<i128, LoanPoolError> {
-        storage::read_available_balance(&e)
-    }
-
-    pub fn get_currency(e: Env) -> Result<Currency, LoanPoolError> {
-        storage::read_currency(&e)
-    }
-
-    pub fn get_interest(e: Env) -> Result<i128, LoanPoolError> {
-        interest::get_interest(e)
-    }
-
-    pub fn get_pool_state(e: Env) -> Result<PoolState, LoanPoolError> {
-        Ok(PoolState {
-            total_balance_tokens: storage::read_total_balance(&e)?,
-            available_balance_tokens: storage::read_available_balance(&e)?,
-            total_balance_shares: storage::read_total_shares(&e)?,
-            annual_interest_rate: interest::get_interest(e)?,
-        })
-    }
-
-    pub fn increase_liabilities(e: Env, user: Address, amount: i128) -> Result<(), LoanPoolError> {
-        let loan_manager_addr = storage::read_loan_manager_addr(&e)?;
-        loan_manager_addr.require_auth();
-
-        positions::increase_positions(&e, user.clone(), 0, amount, 0)?;
-        Ok(())
-    }
-
     pub fn repay(
         e: Env,
         user: Address,
@@ -443,6 +392,57 @@ impl LoanPoolContract {
         client.transfer(&e.current_contract_address(), &user, &amount_collateral);
 
         positions::decrease_positions(&e, loan_owner, 0, 0, amount_collateral)?;
+        Ok(())
+    }
+
+    pub fn get_accrual(e: &Env) -> Result<i128, LoanPoolError> {
+        storage::read_accrual(e)
+    }
+
+    pub fn get_collateral_factor(e: &Env) -> Result<i128, LoanPoolError> {
+        storage::read_collateral_factor(e)
+    }
+
+    /// Get user's positions in the storage
+    pub fn get_user_positions(e: Env, user: Address) -> Positions {
+        storage::read_positions(&e, &user)
+    }
+
+    /// Get contract data entries
+    pub fn get_contract_balance(e: Env) -> Result<i128, LoanPoolError> {
+        storage::read_total_balance(&e)
+    }
+
+    pub fn get_total_balance_shares(e: Env) -> Result<i128, LoanPoolError> {
+        storage::read_total_shares(&e)
+    }
+
+    pub fn get_available_balance(e: Env) -> Result<i128, LoanPoolError> {
+        storage::read_available_balance(&e)
+    }
+
+    pub fn get_currency(e: Env) -> Result<Currency, LoanPoolError> {
+        storage::read_currency(&e)
+    }
+
+    pub fn get_interest(e: Env) -> Result<i128, LoanPoolError> {
+        interest::get_interest(e)
+    }
+
+    pub fn get_pool_state(e: Env) -> Result<PoolState, LoanPoolError> {
+        Ok(PoolState {
+            total_balance_tokens: storage::read_total_balance(&e)?,
+            available_balance_tokens: storage::read_available_balance(&e)?,
+            total_balance_shares: storage::read_total_shares(&e)?,
+            annual_interest_rate: interest::get_interest(e)?,
+        })
+    }
+
+    pub fn increase_liabilities(e: Env, user: Address, amount: i128) -> Result<(), LoanPoolError> {
+        let loan_manager_addr = storage::read_loan_manager_addr(&e)?;
+        loan_manager_addr.require_auth();
+
+        positions::increase_positions(&e, user.clone(), 0, amount, 0)?;
         Ok(())
     }
 }
