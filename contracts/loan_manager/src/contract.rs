@@ -169,6 +169,7 @@ impl LoanManager {
         Ok(())
     }
 
+    /// Add interest to loan
     pub fn add_interest(e: &Env, user: Address) -> Result<(), LoanManagerError> {
         const DECIMAL: i128 = 10000000;
         let Loan {
@@ -235,6 +236,7 @@ impl LoanManager {
         Ok(())
     }
 
+    /// Calculate health factor of a given token ratio
     pub fn calculate_health_factor(
         e: &Env,
         token_ticker: Symbol,
@@ -283,22 +285,7 @@ impl LoanManager {
         Ok(health_factor)
     }
 
-    pub fn get_loan(e: &Env, user: Address) -> Result<Loan, LoanManagerError> {
-        storage::read_loan(e, user).ok_or(LoanManagerError::LoanNotFound)
-    }
-
-    pub fn get_price(e: &Env, token: Symbol) -> Result<i128, LoanManagerError> {
-        let reflector_address = Address::from_string(&String::from_str(e, REFLECTOR_ADDRESS));
-        let reflector_contract = oracle::Client::new(e, &reflector_address);
-
-        let asset = Asset::Other(token);
-
-        let asset_pricedata = reflector_contract
-            .lastprice(&asset)
-            .ok_or(LoanManagerError::NoLastPrice)?;
-        Ok(asset_pricedata.price)
-    }
-
+    /// Repay part of a loan
     pub fn repay(e: &Env, user: Address, amount: i128) -> Result<(i128, i128), LoanManagerError> {
         user.require_auth();
 
@@ -361,6 +348,7 @@ impl LoanManager {
         Ok((borrowed_amount, new_borrowed_amount))
     }
 
+    /// Repay fully and close a loan
     pub fn repay_and_close_manager(
         e: &Env,
         user: Address,
@@ -394,6 +382,7 @@ impl LoanManager {
         Ok(borrowed_amount)
     }
 
+    /// Liquidate a given users loan
     pub fn liquidate(
         e: Env,
         user: Address,
@@ -493,6 +482,22 @@ impl LoanManager {
         storage::write_loan(&e, borrower, new_loan);
 
         Ok((new_borrowed_amount, new_collateral_amount))
+    }
+
+    pub fn get_loan(e: &Env, user: Address) -> Result<Loan, LoanManagerError> {
+        storage::read_loan(e, user).ok_or(LoanManagerError::LoanNotFound)
+    }
+
+    pub fn get_price(e: &Env, token: Symbol) -> Result<i128, LoanManagerError> {
+        let reflector_address = Address::from_string(&String::from_str(e, REFLECTOR_ADDRESS));
+        let reflector_contract = oracle::Client::new(e, &reflector_address);
+
+        let asset = Asset::Other(token);
+
+        let asset_pricedata = reflector_contract
+            .lastprice(&asset)
+            .ok_or(LoanManagerError::NoLastPrice)?;
+        Ok(asset_pricedata.price)
     }
 }
 
