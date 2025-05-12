@@ -1,6 +1,6 @@
-import { execSync } from 'child_process';
-import { mkdirSync, readFileSync, writeFileSync } from 'fs';
-import path from 'path';
+import { execSync } from 'node:child_process';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
 
 // Load environment variables starting with PUBLIC_ into the environment,
 // so we don't need to specify duplicate variables in .env
@@ -35,24 +35,24 @@ export const exe = (command: string) => {
 };
 
 export const buildContracts = () => {
-  exe(`rm -f ./target/wasm32-unknown-unknown/release/*.wasm`);
-  exe(`rm -f ./target/wasm32-unknown-unknown/release/*.d`);
-  exe(`make build`);
+  exe('rm -f ./target/wasm32-unknown-unknown/release/*.wasm');
+  exe('rm -f ./target/wasm32-unknown-unknown/release/*.d');
+  exe('make build');
 };
 
 /** Install all contracts and save their wasm hashes to .stellar */
 export const installContracts = () => {
-  const contractsDir = `./.stellar/contract-wasm-hash`;
+  const contractsDir = './.stellar/contract-wasm-hash';
   mkdirSync(contractsDir, { recursive: true });
 
-  install('loan_manager');
-  install('loan_pool');
+  upload('loan_manager');
+  upload('loan_pool');
 };
 
 /* Install a contract */
-const install = (contractName: string) => {
+const upload = (contractName: string) => {
   exe(
-    `stellar contract install \
+    `stellar contract upload \
 --wasm ./target/wasm32-unknown-unknown/release/${contractName}.wasm \
 --ignore-checks \
 > ./.stellar/contract-wasm-hash/${contractName}.txt`,
@@ -90,7 +90,7 @@ export const createContractImports = () => {
 };
 
 const importContract = (contractName: string) => {
-  const outputDir = `./src/contracts/`;
+  const outputDir = './src/contracts/';
   mkdirSync(outputDir, { recursive: true });
 
   /* eslint-disable quotes */
