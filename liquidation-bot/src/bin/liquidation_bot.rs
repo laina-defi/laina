@@ -1,11 +1,14 @@
 use base64::engine::general_purpose::STANDARD as base64_engine;
 use base64::Engine;
 use core::time;
+use liquidation_bot::models::Loan;
 use log::{error, info, warn};
-use std::thread;
-use stellar_strkey;
-use stellar_xdr::curr::{AccountId, Limits, PublicKey, ReadXdr, ScAddress, ScVal, ScVec, Uint256};
-
+use std::{str::FromStr, thread};
+use stellar_strkey::{ed25519, Contract};
+use stellar_xdr::curr::{
+    AccountId, ContractDataDurability, ContractDataEntry, Hash, LedgerKey, LedgerKeyContractData,
+    Limits, PublicKey, ReadXdr, ScAddress, ScSymbol, ScVal, ScVec, StringM, Uint256,
+};
 // use self::models::*;
 // use diesel::prelude::*;
 // use liquidation_bot::*;
@@ -20,6 +23,7 @@ enum BotError {
     Request(reqwest::Error),
     Parse(serde_json::Error),
     StrKey(stellar_strkey::DecodeError),
+    XdrError(stellar_xdr::curr::Error),
 }
 
 impl From<reqwest::Error> for BotError {
@@ -40,6 +44,12 @@ impl From<stellar_strkey::DecodeError> for BotError {
     }
 }
 
+impl From<stellar_xdr::curr::Error> for BotError {
+    fn from(err: stellar_xdr::curr::Error) -> Self {
+        BotError::XdrError(err)
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), BotError> {
     // let connection = &mut establish_connection();
@@ -52,7 +62,7 @@ async fn main() -> Result<(), BotError> {
     let mut last_ledger = 958657;
 
     loop {
-        last_ledger = get_new_loans(last_ledger).await?;
+        last_ledger = loan_event_listener(last_ledger).await?;
         // get_prices();
         // find_liquidateable(connection);
         // attempt_liquidating();
@@ -62,10 +72,10 @@ async fn main() -> Result<(), BotError> {
     }
 }
 
-async fn get_new_loans(start_ledger: i32) -> Result<i32, BotError> {
+async fn loan_event_listener(start_ledger: i32) -> Result<i32, BotError> {
     // TODO: fetch loans from Loan Manager
     // TODO: push new loans to the DB.
-    info!("Fetching new loans from Loan Manager.");
+    info!("Fetching loan events from Loan Manager.");
     let url = "http://localhost:8000/soroban/rpc";
 
     let json_data = json!({
@@ -129,9 +139,13 @@ async fn get_new_loans(start_ledger: i32) -> Result<i32, BotError> {
                         println!("Extracted public key: {}", public_key_string);
                         // if contract_id = in list of allowed AND ->
                         if in_success {
+                            let loan_id = format!("[\"Loan\", \"{}\"]", public_key_string);
+
                             match topics.as_slice() {
                                 [a, b] if a == "Loan" && b == "created" => {
-                                    println!("Loan created!")
+                                    println!("Loan created!");
+                                    let loan = fetch_loan(contract_id.to_string(), loan_id).await?;
+                                    println!("Loan fetched: \n {:?}", loan);
                                 }
                                 [a, b] if a == "Loan" && b == "updated" => {
                                     println!("Loan updated!")
@@ -209,6 +223,54 @@ fn unpack_scval(val: &ScVal) -> Result<String, BotError> {
             Ok(String::new())
         }
     }
+}
+
+async fn fetch_loan(contract_id: String, loan_id: String) -> Result<Loan, BotError> {
+    info!("Fetching loan from Loan Manager.");
+    let url = "http://localhost:8000/soroban/rpc";
+
+    let ledger_key = get_ledger_key(contract_id.clone(), loan_id)?;
+
+    let json_data = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "getLedgerEntries",
+        "params": {
+            "keys": [ledger_key]
+        }
+    });
+
+    let client = reqwest::Client::new();
+
+    let response = client.post(url).json(&json_data).send().await?;
+
+    let body: Value = response.json().await?;
+    println!("response: \n {:?}", body);
+
+    let loan = Loan {
+        borrowed_amount: 0,
+        borrowed_from: String::new(),
+        borrower: String::new(),
+        collateral_amount: 0,
+        id: 0,
+        collateral_from: String::new(),
+        unpaid_interest: 0,
+    };
+    Ok(loan)
+}
+
+fn get_ledger_key(contract_id: String, symbol_text: String) -> Result<LedgerKey, BotError> {
+    println!("in get_ledger_key_symbol");
+    let contract = ScAddress::Contract(Hash(Contract::from_string(&contract_id)?.0));
+    let key = ScSymbol(StringM::from_str(&symbol_text)?).into();
+    let durability = ContractDataDurability::Persistent;
+    let ledger_key = LedgerKey::ContractData(LedgerKeyContractData {
+        contract,
+        key,
+        durability,
+    });
+
+    Ok(ledger_key)
 }
 
 // fn get_prices() {

@@ -1,6 +1,7 @@
 use diesel::prelude::*;
+use serde::Deserialize;
 
-#[derive(Queryable, Selectable)]
+#[derive(Queryable, Selectable, Deserialize, Debug)]
 #[diesel(table_name = crate::schema::loans)]
 #[diesel(check_for_backend(diesel::pg::Pg))]
 pub struct Loan {
