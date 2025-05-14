@@ -3,7 +3,8 @@ use base64::Engine;
 use core::time;
 use log::{error, info, warn};
 use std::thread;
-use stellar_xdr::curr::{Limits, ReadXdr, ScVal};
+use stellar_strkey;
+use stellar_xdr::curr::{AccountId, Limits, PublicKey, ReadXdr, ScAddress, ScVal, ScVec, Uint256};
 
 // use self::models::*;
 // use diesel::prelude::*;
@@ -18,6 +19,7 @@ const SLEEP_TIME_SECONDS: u64 = 10;
 enum BotError {
     Request(reqwest::Error),
     Parse(serde_json::Error),
+    StrKey(stellar_strkey::DecodeError),
 }
 
 impl From<reqwest::Error> for BotError {
@@ -29,6 +31,12 @@ impl From<reqwest::Error> for BotError {
 impl From<serde_json::Error> for BotError {
     fn from(err: serde_json::Error) -> Self {
         BotError::Parse(err)
+    }
+}
+
+impl From<stellar_strkey::DecodeError> for BotError {
+    fn from(err: stellar_strkey::DecodeError) -> Self {
+        BotError::StrKey(err)
     }
 }
 
@@ -115,10 +123,32 @@ async fn get_new_loans(start_ledger: i32) -> Result<i32, BotError> {
             println!("In Successful Call: {}", in_success);
             println!("Ledger: {}", ledger);
             println!("Topics: {:?}", topics);
-            println!("Raw Value: {}", raw_value);
-            match decoded_value {
-                Some(val) => println!("Decoded Value: {:#?}", val),
-                None => println!("Decoded Value: <failed to decode>"),
+            if let Some(val) = decoded_value {
+                match unpack_scval(&val) {
+                    Ok(public_key_string) => {
+                        println!("Extracted public key: {}", public_key_string);
+                        // if contract_id = in list of allowed AND ->
+                        if in_success {
+                            match topics.as_slice() {
+                                [a, b] if a == "Loan" && b == "created" => {
+                                    println!("Loan created!")
+                                }
+                                [a, b] if a == "Loan" && b == "updated" => {
+                                    println!("Loan updated!")
+                                }
+                                [a, b] if a == "Loan" && b == "deleted" => {
+                                    println!("Loan deleted!")
+                                }
+                                _ => println!("Unknown topic: {:?}", topics),
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to unpack value: {:#?}", e);
+                    }
+                }
+            } else {
+                println!("Decoded Value: <failed to decode>");
             }
         }
     }
@@ -145,6 +175,42 @@ fn decode_topic(val: &str) -> Option<String> {
         None
     }
 }
+
+fn unpack_scval(val: &ScVal) -> Result<String, BotError> {
+    match val {
+        ScVal::Vec(Some(ScVec(vec))) => {
+            println!("It's a vector with {} items", vec.len());
+            for (i, item) in vec.iter().enumerate() {
+                match item {
+                    ScVal::Symbol(symbol) => {
+                        println!("Item {} is a Symbol: {}", i, symbol.to_string());
+                    }
+                    ScVal::Address(addr) => match addr {
+                        ScAddress::Account(AccountId(PublicKey::PublicKeyTypeEd25519(
+                            Uint256(bytes),
+                        ))) => {
+                            let publickey_string = stellar_strkey::ed25519::PublicKey::to_string(
+                                &stellar_strkey::ed25519::PublicKey::from_payload(bytes)?,
+                            );
+                            println!("Item {} is an Address: {:#?}", i, publickey_string);
+                            return Ok(publickey_string);
+                        }
+                        _ => println!("Item {} is another Address type", i),
+                    },
+                    other => {
+                        println!("Item {} is something else: {:?}", i, other);
+                    }
+                }
+            }
+            Ok(String::new())
+        }
+        other => {
+            println!("Not a vector, it's: {:?}", other);
+            Ok(String::new())
+        }
+    }
+}
+
 // fn get_prices() {
 //     // TODO: fetch and return token prices from CoinGecko
 //     info!("Getting prices from CoinGecko.")
