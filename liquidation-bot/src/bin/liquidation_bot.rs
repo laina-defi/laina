@@ -5,10 +5,13 @@ use std::thread;
 use self::models::*;
 use diesel::prelude::*;
 use liquidation_bot::*;
+use stellar_rpc_client;
+use tokio;
 
 const SLEEP_TIME_SECONDS: u64 = 10;
 
-fn main() {
+#[tokio::main]
+async fn main() -> Result<(), Error> {
     let connection = &mut establish_connection();
     env_logger::init();
 
@@ -27,10 +30,14 @@ fn main() {
     }
 }
 
-fn get_new_loans() {
+async fn get_new_loans() {
     // TODO: fetch loans from Loan Manager
     // TODO: push new loans to the DB.
-    info!("Fetching new loans from Loan Manager.")
+    info!("Fetching new loans from Loan Manager.");
+    let url = "http://localhost:8000/soroban/rpc";
+    let client = stellar_rpc_client::Client::new(url)?;
+    let health = client.get_health().await;
+    println!(health);
 }
 
 fn get_prices() {
