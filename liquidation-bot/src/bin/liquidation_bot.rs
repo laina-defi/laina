@@ -1,6 +1,9 @@
+use base64::engine::general_purpose::STANDARD as base64_engine;
+use base64::Engine;
 use core::time;
 use log::{error, info, warn};
 use std::thread;
+use stellar_xdr::curr::{Limits, ReadXdr, ScVal};
 
 // use self::models::*;
 // use diesel::prelude::*;
@@ -38,7 +41,7 @@ async fn main() -> Result<(), BotError> {
     warn!("This is a warning message");
     error!("This is an error message");
 
-    let mut last_ledger = 862846;
+    let mut last_ledger = 958657;
 
     loop {
         last_ledger = get_new_loans(last_ledger).await?;
@@ -67,7 +70,7 @@ async fn get_new_loans(start_ledger: i32) -> Result<i32, BotError> {
                 {
                     "type": "contract",
                     "contractIds": [
-                        "CDNSUOZJTE5UU4WWTUFLXCUGSZXXH7F7FQFHLX743CA2XRLMYOXSWNM4"
+                        "CD5QTKZZCIBF2LRGKWXB4KCRFDZAOBBLSS443FX3UODCATS2N27DWZMF"
                     ]
                 }
             ]
@@ -77,12 +80,48 @@ async fn get_new_loans(start_ledger: i32) -> Result<i32, BotError> {
     let client = reqwest::Client::new();
 
     let response = client.post(url).json(&json_data).send().await?;
-    println!("Status Code: {}", "application/json");
 
     let response_body = response.text().await?;
-    println!("Response body: \n {}", response_body);
 
     let parsed: Value = serde_json::from_str(&response_body)?;
+    println!("Fetching events...");
+    if let Some(events) = parsed["result"]["events"].as_array() {
+        for event in events {
+            let contract_id = event["contractId"].as_str().unwrap_or_default();
+            let in_success = event["inSuccessfulContractCall"].as_bool().unwrap_or(false);
+            let ledger = event["ledger"].as_u64().unwrap_or_default();
+
+            let topics: Vec<String> = event["topic"]
+                .as_array()
+                .unwrap_or(&vec![])
+                .iter()
+                .filter_map(|t| t.as_str().and_then(decode_topic))
+                .collect();
+            let raw_value = event["value"].as_str().unwrap_or_default();
+
+            let decoded_value = base64_engine.decode(raw_value).ok().and_then(|bytes| {
+                ScVal::from_xdr(
+                    bytes,
+                    Limits {
+                        depth: 64,
+                        len: 10000,
+                    },
+                )
+                .ok()
+            });
+
+            println!("--- Event ---");
+            println!("Contract ID: {}", contract_id);
+            println!("In Successful Call: {}", in_success);
+            println!("Ledger: {}", ledger);
+            println!("Topics: {:?}", topics);
+            println!("Raw Value: {}", raw_value);
+            match decoded_value {
+                Some(val) => println!("Decoded Value: {:#?}", val),
+                None => println!("Decoded Value: <failed to decode>"),
+            }
+        }
+    }
     let latest_ledger = parsed["result"]["latestLedger"]
         .as_i64()
         .unwrap_or(start_ledger as i64) as i32;
@@ -90,6 +129,22 @@ async fn get_new_loans(start_ledger: i32) -> Result<i32, BotError> {
     Ok(latest_ledger)
 }
 
+fn decode_topic(val: &str) -> Option<String> {
+    let decoded = base64_engine.decode(val).ok()?;
+    let scval = ScVal::from_xdr(
+        decoded,
+        Limits {
+            depth: 64,
+            len: 10000,
+        },
+    )
+    .ok()?;
+    if let ScVal::Symbol(sym) = scval {
+        Some(sym.to_string())
+    } else {
+        None
+    }
+}
 // fn get_prices() {
 //     // TODO: fetch and return token prices from CoinGecko
 //     info!("Getting prices from CoinGecko.")
