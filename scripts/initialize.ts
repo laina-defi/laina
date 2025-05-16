@@ -31,7 +31,7 @@ const deployLoanManager = () => {
   const contractsDir = `.stellar/contract-ids`;
   mkdirSync(contractsDir, { recursive: true });
 
-  deploy(`./target/wasm32-unknown-unknown/release/loan_manager.wasm`);
+  deploy(`./target/wasm32v1-none/release/loan_manager.wasm`);
 
   exe(`stellar contract invoke \
 --id ${loanManagerAddress()} \

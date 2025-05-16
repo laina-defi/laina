@@ -35,8 +35,8 @@ export const exe = (command: string) => {
 };
 
 export const buildContracts = () => {
-  exe(`rm -f ./target/wasm32-unknown-unknown/release/*.wasm`);
-  exe(`rm -f ./target/wasm32-unknown-unknown/release/*.d`);
+  exe(`rm -f ./target/wasm32v1-none/release/*.wasm`);
+  exe(`rm -f ./target/wasm32v1-none/release/*.d`);
   exe(`make build`);
 };
 
@@ -53,7 +53,7 @@ export const installContracts = () => {
 const install = (contractName: string) => {
   exe(
     `stellar contract install \
---wasm ./target/wasm32-unknown-unknown/release/${contractName}.wasm \
+--wasm ./target/wasm32v1-none/release/${contractName}.wasm \
 --ignore-checks \
 > ./.stellar/contract-wasm-hash/${contractName}.txt`,
   );
