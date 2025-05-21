@@ -16,3 +16,5 @@ serde = { version = "1.0", features = ["derive"] }
 stellar-strkey = "0.0.9"
 base64 = "0.22.1"
 anyhow = "1.0.98"
+stellar_sdk = "0.1.4"
+soroban-client = "0.4.7"
