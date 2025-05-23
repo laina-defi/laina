@@ -507,9 +507,7 @@ mod tests {
         Env,
     };
     mod loan_manager {
-        soroban_sdk::contractimport!(
-            file = "../../target/wasm32-unknown-unknown/release/loan_manager.wasm"
-        );
+        soroban_sdk::contractimport!(file = "../../target/wasm32v1-none/release/loan_manager.wasm");
     }
 
     #[test]
