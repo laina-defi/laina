@@ -3,12 +3,6 @@ description: Installs Rust toolchain and Stellar CLI
 runs:
   using: composite
   steps:
-    - name: Remove cached Rust toolchains
-      run: |
-        rm -rf ~/.rustup/toolchains
-        rm -rf ~/.cargo/bin
-      shell: bash
-
     - name: Cache Rust dependencies
       uses: Swatinem/rust-cache@v2
       with:

@@ -7,9 +7,35 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U testuser"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
     steps:
       - name: Checkout your repository using git
         uses: actions/checkout@v4
+
+      - name: Wait for PostgreSQL to be ready
+        env:
+          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+        run: |
+          until pg_isready -h localhost -U $POSTGRES_USER; do
+            echo "Waiting for PostgreSQL..."
+            sleep 2
+          done
+
 
       - name: Setup Rust and Stellar
         uses: ./.github/actions/setup-rust-stellar
@@ -20,7 +46,19 @@ jobs:
       - name: Build contracts
         run: make build
 
+      - name: Install diesel
+        run: cargo install diesel_cli
+
+      - name: Run migrations
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          cd liquidation-bot
+          diesel migration run
+
       - name: Run tests
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: cargo test --release
 
       - name: Run clippy
