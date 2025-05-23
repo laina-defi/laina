@@ -1,6 +1,6 @@
 use diesel::prelude::*;
 
-#[derive(Queryable, Selectable, Insertable, Debug)]
+#[derive(Queryable, Selectable, Insertable, Clone, PartialEq, Debug)]
 #[diesel(table_name = crate::schema::loans)]
 #[diesel(check_for_backend(diesel::pg::Pg))]
 pub struct Loan {

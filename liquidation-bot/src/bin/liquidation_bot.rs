@@ -191,3 +191,54 @@ pub fn save_loan(connection: &mut PgConnection, loan: Loan) -> Result<(), diesel
 //     // TODO: attempt to liquidate unhealthy loans
 //     // TODO: update the loan in DB with the new values
 // }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dotenvy::dotenv;
+    use std::env;
+
+    fn setup_test_db() -> PgConnection {
+        dotenv().ok();
+        let test_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+        PgConnection::establish(&test_url).expect("Failed to connect to test DB")
+    }
+
+    #[tokio::test]
+    async fn test_save_loan_inserts_and_updates() {
+        let mut conn = setup_test_db();
+
+        use crate::schema::loans::dsl::*;
+        diesel::delete(loans.filter(borrower.eq("TEST_BORROWER")))
+            .execute(&mut conn)
+            .unwrap();
+
+        let test_loan = Loan {
+            id: 0,
+            borrower: "TEST_BORROWER".into(),
+            borrowed_amount: 100,
+            borrowed_from: "SourceA".into(),
+            collateral_amount: 50,
+            collateral_from: "SourceB".into(),
+            unpaid_interest: 10,
+        };
+
+        save_loan(&mut conn, test_loan.clone()).unwrap();
+
+        let updated_loan = Loan {
+            borrowed_amount: 120,
+            unpaid_interest: 5,
+            ..test_loan
+        };
+
+        save_loan(&mut conn, updated_loan).unwrap();
+
+        let saved = loans
+            .filter(borrower.eq("TEST_BORROWER"))
+            .first::<Loan>(&mut conn)
+            .unwrap();
+
+        assert_eq!(saved.borrowed_amount, 120);
+        assert_eq!(saved.unpaid_interest, 5);
+    }
+}
