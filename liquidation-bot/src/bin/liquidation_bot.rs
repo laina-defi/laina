@@ -49,13 +49,16 @@ async fn main() -> Result<(), Error> {
 }
 
 async fn fetch_events(ledger: u32) -> Result<GetEventsResponse, Error> {
+    dotenv().ok();
+    let loan_manager_id =
+        env::var("CONTRACT_ID_LOAN_MANAGER").expect("CONTRACT_ID_LOAN_MANAGER must be set in .env");
     info!("Fetching new loans from Loan Manager.");
     let url = "http://localhost:8000/soroban/rpc";
     let client = stellar_rpc_client::Client::new(url)?;
 
     let start = EventStart::Ledger(ledger);
     let event_type = Some(EventType::Contract);
-    let contract_ids = vec!["CANE56WP4UAMFTIIFM4IAYWY226RKKLBYBIU6QBOZDMFRNT2COZ6CHC5".to_string()];
+    let contract_ids = vec![loan_manager_id];
     let topics_slice = &[];
     let limit = Some(100);
     let events_response = client
@@ -94,12 +97,13 @@ async fn find_loans_from_events(
 }
 
 async fn fetch_loan_to_db(loan: Vec<String>, connection: &mut PgConnection) -> Result<(), Error> {
-    let url = "https://soroban-testnet.stellar.org";
+    dotenv().ok();
+    let url =
+        env::var("PUBLIC_SOROBAN_RPC_URL").expect("PUBLIC_SOROBAN_RPC_URL must be set in .env");
     let server =
-        soroban_client::Server::new(url, Options::default()).expect("Cannot create server");
+        soroban_client::Server::new(&url, Options::default()).expect("Cannot create server");
 
     // Load secret and derive public
-    dotenv().ok();
     let secret_str =
         env::var("SOROBAN_SECRET_KEY").expect("SOROBAN_SECRET_KEY must be set in .env");
     let source_keypair = Keypair::from_secret(&secret_str).unwrap(); // Expected
@@ -107,17 +111,25 @@ async fn fetch_loan_to_db(loan: Vec<String>, connection: &mut PgConnection) -> R
 
     let ledger_data = server.get_latest_ledger().await?;
     let source_account = Rc::new(RefCell::new(
-        Account::new(&source_public, &ledger_data.sequence.to_string()).unwrap(),
+        Account::new(&source_public, &ledger_data.sequence.to_string())
+            .map_err(|e| anyhow::anyhow!("Account::new failed: {}", e))?,
     ));
 
     // Build operation
-    let contract_id_str = "CANE56WP4UAMFTIIFM4IAYWY226RKKLBYBIU6QBOZDMFRNT2COZ6CHC5";
+    let loan_manager_id =
+        env::var("CONTRACT_ID_LOAN_MANAGER").expect("CONTRACT_ID_LOAN_MANAGER must be set in .env");
     let method = "get_loan";
     let loan_owner = &loan[1];
     println!("Loan Owner: {}", loan_owner);
-    let args = vec![Address::to_sc_val(&Address::from_string(loan_owner).unwrap()).unwrap()];
+
+    let args = vec![Address::to_sc_val(
+        &Address::from_string(loan_owner)
+            .map_err(|e| anyhow::anyhow!("Account::from_string failed: {}", e))?,
+    )
+    .map_err(|e| anyhow::anyhow!("Address::to_sc_val failed: {}", e))?];
+
     let read_loan_op = Operation::new()
-        .invoke_contract(contract_id_str, method, args, None)
+        .invoke_contract(&loan_manager_id, method, args, None)
         .expect("Cannot create invoke_contract operation");
 
     // Build the transaction
