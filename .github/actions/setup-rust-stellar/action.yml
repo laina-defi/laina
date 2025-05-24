@@ -5,18 +5,25 @@ runs:
   steps:
     - name: Cache Rust dependencies
       uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: rust-1.87
 
     - name: Install Rust
       uses: dtolnay/rust-toolchain@master
       with:
-        toolchain: stable
-        targets: wasm32-unknown-unknown
+        toolchain: 1.87.0 
+        targets: wasm32v1-none
+        components: rustfmt, clippy
+
+    - name: Check installed components
+      run: rustup show
+      shell: bash
 
 
     - name: Install Stellar CLI
       run: |
-        wget -q https://github.com/stellar/stellar-cli/releases/download/v22.2.0/stellar-cli-22.2.0-x86_64-unknown-linux-gnu.tar.gz
-        tar xvf stellar-cli-22.2.0-x86_64-unknown-linux-gnu.tar.gz
+        wget -q https://github.com/stellar/stellar-cli/releases/download/v22.8.0/stellar-cli-22.8.0-x86_64-unknown-linux-gnu.tar.gz
+        tar xvf stellar-cli-22.8.0-x86_64-unknown-linux-gnu.tar.gz
         sudo mv stellar /usr/local/bin/
         stellar --version
       shell: bash

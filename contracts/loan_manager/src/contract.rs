@@ -5,9 +5,7 @@ use crate::storage::{self, Loan};
 use soroban_sdk::{contract, contractimpl, token, Address, BytesN, Env, String, Symbol};
 
 mod loan_pool {
-    soroban_sdk::contractimport!(
-        file = "../../target/wasm32-unknown-unknown/release/loan_pool.wasm"
-    );
+    soroban_sdk::contractimport!(file = "../../target/wasm32v1-none/release/loan_pool.wasm");
 }
 
 // This is the real address of the Reflector Oracle in Testnet.
@@ -509,9 +507,7 @@ mod tests {
         Env,
     };
     mod loan_manager {
-        soroban_sdk::contractimport!(
-            file = "../../target/wasm32-unknown-unknown/release/loan_manager.wasm"
-        );
+        soroban_sdk::contractimport!(file = "../../target/wasm32v1-none/release/loan_manager.wasm");
     }
 
     #[test]
