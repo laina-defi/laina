@@ -4,8 +4,13 @@ use crate::models::Loan;
 use anyhow::{anyhow, Error, Result};
 use base64::engine::general_purpose::STANDARD as base64_engine;
 use base64::Engine;
+use soroban_client::address::Address;
 use soroban_client::xdr::int128_helpers::i128_from_pieces;
 use stellar_xdr::curr::{Limits, ReadXdr, ScVal, SorobanAuthorizationEntry};
+
+pub enum Asset {
+    Stellar(Address),
+}
 
 pub fn decode_loan_from_simulate_response(
     result: (ScVal, Vec<SorobanAuthorizationEntry>),
