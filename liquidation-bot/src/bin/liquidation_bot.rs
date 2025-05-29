@@ -1,12 +1,14 @@
 use core::time;
 use dotenvy::dotenv;
-use log::info;
+use log::{error, info, warn};
 use std::{cell::RefCell, env, rc::Rc, thread};
 
 use self::models::*;
 use anyhow::{Error, Result};
 use diesel::prelude::*;
-use liquidation_bot::utils::{decode_loan_from_simulate_response, decode_topic, decode_value};
+use liquidation_bot::utils::{
+    decode_loan_from_simulate_response, decode_topic, decode_value, Asset,
+};
 use liquidation_bot::*;
 use soroban_client::{
     account::{Account, AccountBehavior},
@@ -26,11 +28,11 @@ async fn main() -> Result<(), Error> {
     let connection = &mut establish_connection();
     env_logger::init();
 
-    // info!("This is an info message");
-    // warn!("This is a warning message");
-    // error!("This is an error message");
+    info!("This is an info message");
+    warn!("This is a warning message");
+    error!("This is an error message");
 
-    let mut ledger = 993790;
+    let mut ledger = 1205313;
 
     loop {
         let GetEventsResponse {
@@ -39,9 +41,9 @@ async fn main() -> Result<(), Error> {
         } = fetch_events(ledger).await?;
         ledger = new_ledger;
         find_loans_from_events(events, connection).await?;
-        // get_prices();
-        // find_liquidateable(connection);
-        // attempt_liquidating();
+        get_prices();
+        find_liquidateable(connection);
+        attempt_liquidating();
 
         info!("Sleeping for {SLEEP_TIME_SECONDS} seconds.");
         thread::sleep(time::Duration::from_secs(SLEEP_TIME_SECONDS))
@@ -53,8 +55,9 @@ async fn fetch_events(ledger: u32) -> Result<GetEventsResponse, Error> {
     let loan_manager_id =
         env::var("CONTRACT_ID_LOAN_MANAGER").expect("CONTRACT_ID_LOAN_MANAGER must be set in .env");
     info!("Fetching new loans from Loan Manager.");
-    let url = "http://localhost:8000/soroban/rpc";
-    let client = stellar_rpc_client::Client::new(url)?;
+    let url =
+        env::var("PUBLIC_SOROBAN_RPC_URL").expect("PUBLIC_SOROBAN_RPC_URL must be set in .env");
+    let client = stellar_rpc_client::Client::new(&url)?;
 
     let start = EventStart::Ledger(ledger);
     let event_type = Some(EventType::Contract);
@@ -75,16 +78,31 @@ async fn find_loans_from_events(
     for event in events {
         match decode_topic(event.topic.clone()) {
             Ok(topics) => {
-                if topics.iter().any(|t| t.to_lowercase() == "loan") {
-                    match decode_value(event.value.clone()) {
-                        Ok(value) => {
-                            println!("Loan event: {:#?}", value);
-                            fetch_loan_to_db(value, connection).await?;
+                let topics_lower: Vec<String> = topics.iter().map(|t| t.to_lowercase()).collect();
+
+                match topics_lower
+                    .iter()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>()
+                    .as_slice()
+                {
+                    ["loan", "created"] | ["loan", "updated"] => {
+                        match decode_value(event.value.clone()) {
+                            Ok(value) => {
+                                fetch_loan_to_db(value, connection).await?;
+                            }
+                            Err(e) => error!("Failed to decode value: {e}"),
                         }
-                        Err(e) => eprintln!("Failed to decode value: {e}"),
                     }
-                } else {
-                    println!("Not a loan event, skipping.");
+                    ["loan", "deleted"] => match decode_value(event.value.clone()) {
+                        Ok(value) => {
+                            delete_loan_from_db(value, connection).await?;
+                        }
+                        Err(e) => error!("Failed to decode value: {e}"),
+                    },
+                    _ => {
+                        println!("Not a loan event, skipping.");
+                    }
                 }
             }
             Err(e) => {
@@ -143,14 +161,19 @@ async fn fetch_loan_to_db(loan: Vec<String>, connection: &mut PgConnection) -> R
     // Simulate transaction and handle response
     let response = server.simulate_transaction(tx, None).await?;
 
-    let loan = decode_loan_from_simulate_response(response.to_result().unwrap())?;
+    let result = response.to_result();
+    if result.is_none() {
+        warn!("Simulation returned None. Loan may not exist (deleted). Skipping.");
+        return Ok(());
+    };
+    let loan = decode_loan_from_simulate_response(result.unwrap())?;
 
     save_loan(connection, loan)?;
 
     Ok(())
 }
 
-pub fn save_loan(connection: &mut PgConnection, loan: Loan) -> Result<(), diesel::result::Error> {
+pub fn save_loan(connection: &mut PgConnection, loan: Loan) -> Result<(), Error> {
     use crate::schema::loans::dsl::*;
 
     let existing = loans
@@ -176,33 +199,102 @@ pub fn save_loan(connection: &mut PgConnection, loan: Loan) -> Result<(), diesel
     Ok(())
 }
 
-//
-// fn get_prices() {
-//     // TODO: fetch and return token prices from CoinGecko
-//     info!("Getting prices from CoinGecko.")
-// }
-//
-// fn find_liquidateable(connection: &mut PgConnection /*prices: Prices*/) {
-//     use self::schema::loans::dsl::*;
-//
-//     let results = loans
-//         .limit(5)
-//         .select(Loan::as_select())
-//         .load(connection)
-//         .expect("Error loading loans");
-//
-//     info!("Displaying {} loans.", results.len());
-//     for loan in results {
-//         info!("{}", loan.id);
-//     }
-//
-//     // TODO: calculate the health of each loan and return the unhealthy ones
-// }
-//
-// fn attempt_liquidating(/* unhealthy_loans: Vec<Loan> */) {
-//     // TODO: attempt to liquidate unhealthy loans
-//     // TODO: update the loan in DB with the new values
-// }
+async fn delete_loan_from_db(
+    value: Vec<String>,
+    connection: &mut PgConnection,
+) -> Result<(), Error> {
+    use crate::schema::loans::dsl::*;
+
+    let loan_owner = &value[1];
+
+    let deleted_rows = diesel::delete(loans.filter(borrower.eq(loan_owner))).execute(connection)?;
+
+    if deleted_rows > 0 {
+        info!("Deleted loan for borrower: {}", loan_owner);
+    } else {
+        warn!("No loan found to delete for borrower: {}", loan_owner);
+    }
+
+    Ok(())
+}
+
+async fn get_prices(token: Address) -> Result<(), Error> {
+    println!("Getting prices from Reflector.");
+    dotenv().ok();
+    let url =
+        env::var("PUBLIC_SOROBAN_RPC_URL").expect("PUBLIC_SOROBAN_RPC_URL must be set in .env");
+    let server =
+        soroban_client::Server::new(&url, Options::default()).expect("Cannot create server");
+    let secret_str =
+        env::var("SOROBAN_SECRET_KEY").expect("SOROBAN_SECRET_KEY must be set in .env");
+    let source_keypair = Keypair::from_secret(&secret_str).unwrap(); // Expected
+    let source_public = source_keypair.public_key();
+
+    let ledger_data = server.get_latest_ledger().await?;
+    let source_account = Rc::new(RefCell::new(
+        Account::new(&source_public, &ledger_data.sequence.to_string())
+            .map_err(|e| anyhow::anyhow!("Account::new failed: {}", e))?,
+    ));
+
+    // Build operation
+    let oracle_contract_address =
+        env::var("ORACLE_ADDRESS").expect("ORACLE_ADDRESS must be set in .env");
+    let method = "twap"; // Time-weighted average price.
+
+    let asset = Asset::Stellar(token);
+
+    let args = vec![Address::to_sc_val(
+        &Address::from_string(loan_owner)
+            .map_err(|e| anyhow::anyhow!("Account::from_string failed: {}", e))?,
+    )
+    .map_err(|e| anyhow::anyhow!("Address::to_sc_val failed: {}", e))?];
+
+    let fetch_prices_op = Operation::new()
+        .invoke_contract(&oracle_contract_address, method, args, None)
+        .expect("Cannot create invoke_contract operation");
+
+    // Build the transaction
+    let mut builder = TransactionBuilder::new(source_account.clone(), Networks::testnet(), None);
+    builder.fee(1000u32);
+    builder.add_operation(fetch_prices_op);
+
+    let mut tx = builder.build();
+    tx.sign(&[source_keypair.clone()]);
+
+    // Simulate transaction and handle response
+    let response = server.simulate_transaction(tx, None).await?;
+
+    let result = response.to_result();
+    if result.is_none() {
+        warn!("Simulation returned None. Loan may not exist (deleted). Skipping.");
+        return Ok(());
+    };
+    let loan = decode_loan_from_simulate_response(result.unwrap())?;
+
+    Ok(())
+}
+
+fn find_liquidateable(connection: &mut PgConnection /*prices: Prices*/) {
+    use self::schema::loans::dsl::*;
+
+    let results = loans
+        .limit(5)
+        .select(Loan::as_select())
+        .load(connection)
+        .expect("Error loading loans");
+
+    println!("Displaying {} loans.", results.len());
+    for loan in results {
+        println!("{:#?}", loan);
+    }
+
+    // TODO: calculate the health of each loan and return the unhealthy ones
+}
+
+fn attempt_liquidating(/* unhealthy_loans: Vec<Loan> */) {
+    // TODO: attempt to liquidate unhealthy loans
+    // TODO: update the loan in DB with the new values
+}
 
 #[cfg(test)]
 mod tests {
@@ -252,5 +344,9 @@ mod tests {
 
         assert_eq!(saved.borrowed_amount, 120);
         assert_eq!(saved.unpaid_interest, 5);
+
+        diesel::delete(loans.filter(borrower.eq("TEST_BORROWER")))
+            .execute(&mut conn)
+            .unwrap();
     }
 }
