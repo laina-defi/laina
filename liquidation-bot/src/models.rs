@@ -12,3 +12,12 @@ pub struct Loan {
     pub collateral_from: String,
     pub unpaid_interest: i64,
 }
+
+#[derive(Queryable, Selectable, Insertable, Clone, PartialEq, Debug)]
+#[diesel(table_name = crate::schema::prices)]
+#[diesel(check_for_backend(diesel::pg::Pg))]
+pub struct Price {
+    pub id: i32,
+    pub address: String,
+    pub twap: i64,
+}
