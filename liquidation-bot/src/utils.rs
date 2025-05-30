@@ -1,20 +1,53 @@
 use std::collections::HashMap;
+use std::str::FromStr;
 
 use crate::models::Loan;
 use anyhow::{anyhow, Error, Result};
 use base64::engine::general_purpose::STANDARD as base64_engine;
 use base64::Engine;
+use soroban_client::address::{Address, AddressTrait};
 use soroban_client::xdr::int128_helpers::i128_from_pieces;
-use stellar_xdr::curr::{Limits, ReadXdr, ScVal, SorobanAuthorizationEntry};
+use soroban_client::xdr::{Int128Parts, ScSymbol, ScVal, StringM, VecM};
+use stellar_xdr::curr::{Limits, ReadXdr, SorobanAuthorizationEntry};
+
+pub enum Asset {
+    Stellar(Address),
+    Other(ScSymbol),
+}
+
+pub fn asset_to_scval(value: &Asset) -> Result<ScVal, Error> {
+    match value {
+        Asset::Stellar(address) => {
+            let vec = vec![
+                ScVal::Symbol(ScSymbol(StringM::from_str("Stellar").unwrap())),
+                address
+                    .to_sc_val()
+                    .map_err(|e| anyhow!("Address.to_sc_val failed: {e}"))?,
+            ];
+            let vecm: VecM<ScVal, { u32::MAX }> = vec
+                .try_into()
+                .map_err(|_| anyhow!("Failed to convert Vec to VecM"))?;
+
+            Ok(ScVal::Vec(Some(vecm.into())))
+        }
+        Asset::Other(ticker) => {
+            let vec = vec![
+                ScVal::Symbol(ScSymbol(StringM::from_str("Other").unwrap())),
+                ScVal::Symbol(ticker.clone()),
+            ];
+            let vecm: VecM<ScVal, { u32::MAX }> = vec
+                .try_into()
+                .map_err(|_| anyhow!("Failed to convert Vec to VecM"))?;
+
+            Ok(ScVal::Vec(Some(vecm.into())))
+        }
+    }
+}
 
 pub fn decode_loan_from_simulate_response(
     result: (ScVal, Vec<SorobanAuthorizationEntry>),
 ) -> Result<Loan, Error> {
-    println!("{:#?}", result.0);
     let map = extract_map(&result.0).unwrap();
-    println!("map: {:?}", map);
-
-    println!("borrowed_amount {:?}", map.get("borrowed_amount"));
 
     let borrower_value =
         scval_to_address_string(map.get("borrower").ok_or(Error::msg("no key found"))?)?;
@@ -87,6 +120,20 @@ pub fn extract_map(scval: &ScVal) -> Result<HashMap<String, ScVal>> {
         }
         _ => Err(anyhow!("Expected ScVal::Map")),
     }
+}
+
+pub fn extract_i128_from_result(
+    res: Option<(ScVal, Vec<SorobanAuthorizationEntry>)>,
+) -> Option<i128> {
+    res.and_then(|(scval, _auth)| {
+        if let ScVal::I128(Int128Parts { hi, lo }) = scval {
+            // Convert Int128Parts { hi, lo } to i128
+            let combined = i128_from_pieces(hi, lo);
+            Some(combined)
+        } else {
+            None
+        }
+    })
 }
 
 pub fn decode_topic(topic: Vec<String>) -> Result<Vec<String>, Error> {
