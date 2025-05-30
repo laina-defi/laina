@@ -11,3 +11,13 @@ diesel::table! {
         unpaid_interest -> Int8,
     }
 }
+
+diesel::table! {
+    prices (id) {
+        id -> Int4,
+        address -> Text,
+        twap -> Int8,
+    }
+}
+
+diesel::allow_tables_to_appear_in_same_query!(loans, prices,);
