@@ -32,6 +32,7 @@ async fn main() -> Result<(), Error> {
     let connection = &mut establish_connection();
     env_logger::init();
 
+    // TODO:Decide on how to handle the initial ledger
     let mut ledger = 1205313;
 
     loop {
@@ -161,17 +162,17 @@ async fn fetch_loan_to_db(loan: Vec<String>, connection: &mut PgConnection) -> R
     // Simulate transaction and handle response
     let response = server.simulate_transaction(tx, None).await?;
 
-    // TODO: Patternmatch
-    // TODO: Add to backlog
     // TODO: Add test
-    let result = response.to_result();
-    if result.is_none() {
-        warn!("Simulation returned None. Loan may not exist (deleted). Skipping.");
-        return Ok(());
-    };
-    let loan = decode_loan_from_simulate_response(result.unwrap())?;
-
-    save_loan(connection, loan)?;
+    match response.to_result() {
+        Some(result) => {
+            let loan = decode_loan_from_simulate_response(result)?;
+            save_loan(connection, loan)?;
+        }
+        None => {
+            warn!("Simulation returned None. Loan may not exist (deleted). Skipping.");
+            return Ok(());
+        }
+    }
 
     Ok(())
 }
@@ -300,17 +301,23 @@ async fn fetch_prices(connection: &mut PgConnection) -> Result<(), Error> {
         use crate::schema::prices::dsl::*;
 
         let existing = prices
-            .filter(address.eq(&pool))
+            .filter(pool_address.eq(&pool))
             .first::<Price>(connection)
             .optional()?;
 
         if let Some(existing_price) = existing {
             diesel::update(prices.filter(id.eq(existing_price.id)))
-                .set((address.eq(&pool), twap.eq(price_twap as i64)))
+                .set((
+                    pool_address.eq(&pool),
+                    time_weighted_average_price.eq(price_twap as i64),
+                ))
                 .execute(connection)?;
         } else {
             diesel::insert_into(prices)
-                .values((address.eq(&pool), twap.eq(price_twap as i64)))
+                .values((
+                    pool_address.eq(&pool),
+                    time_weighted_average_price.eq(price_twap as i64),
+                ))
                 .execute(connection)?;
         }
     }

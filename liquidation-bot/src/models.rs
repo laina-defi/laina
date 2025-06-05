@@ -18,6 +18,6 @@ pub struct Loan {
 #[diesel(check_for_backend(diesel::pg::Pg))]
 pub struct Price {
     pub id: i32,
-    pub address: String,
-    pub twap: i64,
+    pub pool_address: String,
+    pub time_weighted_average_price: i64,
 }

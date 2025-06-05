@@ -15,8 +15,8 @@ diesel::table! {
 diesel::table! {
     prices (id) {
         id -> Int4,
-        address -> Text,
-        twap -> Int8,
+        pool_address -> Text,
+        time_weighted_average_price -> Int8,
     }
 }
 
