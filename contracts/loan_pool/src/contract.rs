@@ -214,18 +214,24 @@ impl LoanPoolContract {
         let total_pool_shares = Self::get_total_balance_shares(e.clone())?;
         let total_pool_tokens = Self::get_contract_balance(e.clone())?;
 
-        let user_available_tokens = total_pool_tokens
-            .checked_mul(user_pool_shares)
-            .ok_or(LoanPoolError::OverOrUnderFlow)?
-            .checked_div(total_pool_shares)
-            .ok_or(LoanPoolError::OverOrUnderFlow)?
-            .checked_sub(user_positions.liabilities)
-            .ok_or(LoanPoolError::OverOrUnderFlow)?;
-
-        if amount < user_available_tokens {
-            Self::withdraw_internal(e.clone(), user.clone(), amount)?;
+        let user_available_tokens = if total_pool_shares == 0 {
+            Ok(0)
         } else {
-            Self::withdraw_internal(e.clone(), user.clone(), user_available_tokens)?;
+            total_pool_tokens
+                .checked_mul(user_pool_shares)
+                .ok_or(LoanPoolError::OverOrUnderFlow)?
+                .checked_div(total_pool_shares)
+                .ok_or(LoanPoolError::OverOrUnderFlow)?
+                .checked_sub(user_positions.liabilities)
+                .ok_or(LoanPoolError::OverOrUnderFlow)
+        };
+
+        if user_available_tokens? > 0 {
+            if amount < user_available_tokens? {
+                Self::withdraw_internal(e.clone(), user.clone(), amount)?;
+            } else {
+                Self::withdraw_internal(e.clone(), user.clone(), user_available_tokens?)?;
+            }
         }
 
         let token_address = &storage::read_currency(&e)?.token_address;
