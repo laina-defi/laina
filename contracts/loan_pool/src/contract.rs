@@ -98,7 +98,10 @@ impl LoanPoolContract {
     /// Transfers share tokens back, burns them and gives corresponding amount of tokens back to user. Returns amount of tokens withdrawn
     pub fn withdraw(e: Env, user: Address, amount: i128) -> Result<PoolState, LoanPoolError> {
         user.require_auth();
+        Self::withdraw_internal(e, user, amount)
+    }
 
+    fn withdraw_internal(e: Env, user: Address, amount: i128) -> Result<PoolState, LoanPoolError> {
         Self::add_interest_to_accrual(e.clone())?;
 
         // Get users receivables
@@ -205,6 +208,31 @@ impl LoanPoolContract {
         assert!(amount > 0, "Amount must be positive!");
 
         Self::add_interest_to_accrual(e.clone())?;
+
+        let user_positions = Self::get_user_positions(e.clone(), user.clone());
+        let user_pool_shares = user_positions.receivable_shares;
+        let total_pool_shares = Self::get_total_balance_shares(e.clone())?;
+        let total_pool_tokens = Self::get_contract_balance(e.clone())?;
+
+        let user_available_tokens = if total_pool_shares == 0 {
+            Ok(0)
+        } else {
+            total_pool_tokens
+                .checked_mul(user_pool_shares)
+                .ok_or(LoanPoolError::OverOrUnderFlow)?
+                .checked_div(total_pool_shares)
+                .ok_or(LoanPoolError::OverOrUnderFlow)?
+                .checked_sub(user_positions.liabilities)
+                .ok_or(LoanPoolError::OverOrUnderFlow)
+        };
+
+        if user_available_tokens? > 0 {
+            if amount < user_available_tokens? {
+                Self::withdraw_internal(e.clone(), user.clone(), amount)?;
+            } else {
+                Self::withdraw_internal(e.clone(), user.clone(), user_available_tokens?)?;
+            }
+        }
 
         let token_address = &storage::read_currency(&e)?.token_address;
         let client = token::Client::new(&e, token_address);
