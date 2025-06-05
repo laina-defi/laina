@@ -28,4 +28,7 @@ impl MockPriceOracleContract {
             timestamp: 1,
         })
     }
+    pub fn twap(_e: Env, _asset: Asset, _records: u32) -> Option<i128> {
+        Some(1)
+    }
 }
