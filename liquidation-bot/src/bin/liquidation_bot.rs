@@ -33,7 +33,7 @@ async fn main() -> Result<(), Error> {
     env_logger::init();
 
     // TODO:Decide on how to handle the initial ledger
-    let mut ledger = 1205313;
+    let mut ledger = 1221500;
 
     loop {
         let GetEventsResponse {
@@ -43,8 +43,7 @@ async fn main() -> Result<(), Error> {
         ledger = new_ledger;
         find_loans_from_events(events, connection).await?;
         fetch_prices(connection).await?;
-        find_liquidateable(connection);
-        attempt_liquidating();
+        find_liquidateable(connection)?;
 
         info!("Sleeping for {SLEEP_TIME_SECONDS} seconds.");
         thread::sleep(time::Duration::from_secs(SLEEP_TIME_SECONDS))
@@ -324,20 +323,76 @@ async fn fetch_prices(connection: &mut PgConnection) -> Result<(), Error> {
     Ok(())
 }
 
-fn find_liquidateable(connection: &mut PgConnection /*prices: Prices*/) {
+fn find_liquidateable(connection: &mut PgConnection) -> Result<(), Error> {
     use self::schema::loans::dsl::*;
+    use self::schema::prices::dsl::*;
 
-    let results = loans
+    let all_loans = loans
         .select(Loan::as_select())
         .load(connection)
         .expect("Error loading loans");
 
-    info!("Total of {} loans in database.", results.len());
+    let all_prices = prices
+        .select(Price::as_select())
+        .load(connection)
+        .expect("Error loading prices");
 
-    // TODO: calculate the health of each loan and return the unhealthy ones
+    info!("Total of {} loans in database.", all_loans.len());
+
+    for loan in all_loans {
+        let Loan {
+            borrowed_amount: amount_borrowed,
+            borrowed_from: ref borrow_pool,
+            collateral_amount: amount_collateral,
+            collateral_from: ref collateral_pool,
+            ..
+        } = loan;
+
+        let borrow_token_price = all_prices
+            .iter()
+            .find(|p| p.pool_address == *borrow_pool)
+            .map(|p| p.time_weighted_average_price)
+            .expect("No price found for borrow pool");
+
+        let collateral_token_price = all_prices
+            .iter()
+            .find(|p| p.pool_address == *collateral_pool)
+            .map(|p| p.time_weighted_average_price)
+            .expect("No price found for collateral pool");
+
+        // TODO:Figure out where we get this from. We have getter for it and pool address in this
+        // scope
+        let collateral_factor = 8000000;
+        const DECIMAL_TO_INT_MULTIPLIER: i64 = 10_000_000;
+
+        let collateral_value = collateral_token_price
+            .checked_mul(amount_collateral)
+            .ok_or(Error::msg("OverOrUnderFlow"))?
+            .checked_mul(collateral_factor)
+            .ok_or(Error::msg("OverOrUnderFlow"))?
+            .checked_div(DECIMAL_TO_INT_MULTIPLIER)
+            .ok_or(Error::msg("OverOrUnderFlow"))?;
+
+        let borrowed_value = borrow_token_price
+            .checked_mul(amount_borrowed)
+            .ok_or(Error::msg("OverOrUnderFlow"))?;
+
+        let health_factor = collateral_value
+            .checked_mul(DECIMAL_TO_INT_MULTIPLIER)
+            .ok_or(Error::msg("OverOrUnderFlow"))?
+            .checked_div(borrowed_value)
+            .ok_or(Error::msg("OverOrUnderFlow"))?;
+
+        let health_factor_threshold = 10_100_000;
+        if health_factor < health_factor_threshold {
+            attempt_liquidating(loan);
+        }
+    }
+
+    Ok(())
 }
 
-fn attempt_liquidating(/* unhealthy_loans: Vec<Loan> */) {
+fn attempt_liquidating(loan: Loan) {
     // TODO: attempt to liquidate unhealthy loans
     // TODO: update the loan in DB with the new values
 }
