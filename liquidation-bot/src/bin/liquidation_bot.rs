@@ -1,10 +1,9 @@
 use core::time::Duration;
 use dotenvy::dotenv;
 use log::{error, info, warn};
-use soroban_sdk::xdr::{ScSymbol, SorobanAuthorizationEntry, StringM};
+use soroban_sdk::xdr::{ScSymbol, StringM};
 use std::collections::HashSet;
 use std::{cell::RefCell, env, rc::Rc, str::FromStr, thread};
-use stellar_strkey::Strkey;
 use stellar_xdr::curr::ScVal;
 
 use self::models::{Loan, Price};
@@ -26,10 +25,6 @@ use soroban_client::{
     operation::Operation,
     soroban_rpc::{SendTransactionResponse, SendTransactionStatus, TransactionStatus},
     transaction::{TransactionBehavior, TransactionBuilder, TransactionBuilderBehavior},
-    xdr::{
-        Hash, InvokeContractArgs, Limits, ScAddress, SorobanAuthorizedFunction,
-        SorobanAuthorizedInvocation, SorobanCredentials, VecM, WriteXdr,
-    },
     Options, Server,
 };
 use stellar_rpc_client::{self, Event, EventStart, EventType, GetEventsResponse};
@@ -379,7 +374,7 @@ async fn find_liquidateable(connection: &mut PgConnection) -> Result<(), Error> 
             .checked_mul(collateral_factor)
             .ok_or(Error::msg("OverOrUnderFlow"))?
             .checked_div(DECIMAL_TO_INT_MULTIPLIER as i128)
-            .ok_or(Error::msg("OverOrUnderFlow"))? as i128;
+            .ok_or(Error::msg("OverOrUnderFlow"))?;
         println!("{:#?}", collateral_value);
 
         let borrowed_value = borrow_token_price
@@ -460,7 +455,7 @@ async fn attempt_liquidating(loan: Loan) -> Result<(), Error> {
     //liquidation profitability, then using this data send an actual transaction.
 
     let mut builder = TransactionBuilder::new(source_account.clone(), Networks::testnet(), None);
-    builder.fee(10000 as u32);
+    builder.fee(10000_u32);
     builder.add_operation(read_loan_op);
 
     let mut tx = builder.build();
