@@ -388,7 +388,7 @@ async fn find_liquidateable(connection: &mut PgConnection) -> Result<(), Error> 
             .checked_div(borrowed_value)
             .ok_or(Error::msg("OverOrUnderFlow"))?;
 
-        let health_factor_threshold = 20_100_000;
+        let health_factor_threshold = 10_100_000;
         if health_factor < health_factor_threshold {
             info!("Found loan close to liquidation threshold: {:#?}", loan);
             attempt_liquidating(loan).await?;
