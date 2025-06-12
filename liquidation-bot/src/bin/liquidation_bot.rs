@@ -1,4 +1,4 @@
-use core::time;
+use core::time::Duration;
 use dotenvy::dotenv;
 use log::{error, info, warn};
 use soroban_sdk::xdr::{ScSymbol, StringM};
@@ -6,7 +6,10 @@ use std::collections::HashSet;
 use std::{cell::RefCell, env, rc::Rc, str::FromStr, thread};
 use stellar_xdr::curr::ScVal;
 
-use self::models::*;
+use self::models::{Loan, Price};
+use self::schema::loans::dsl::loans;
+use self::schema::prices::dsl::prices;
+
 use anyhow::{Error, Result};
 use diesel::prelude::*;
 use liquidation_bot::utils::{
@@ -20,12 +23,21 @@ use soroban_client::{
     keypair::{Keypair, KeypairBehavior},
     network::{NetworkPassphrase, Networks},
     operation::Operation,
+    soroban_rpc::{SendTransactionResponse, SendTransactionStatus, TransactionStatus},
     transaction::{TransactionBehavior, TransactionBuilder, TransactionBuilderBehavior},
-    Options,
+    Options, Server,
 };
 use stellar_rpc_client::{self, Event, EventStart, EventType, GetEventsResponse};
 
 const SLEEP_TIME_SECONDS: u64 = 10;
+
+pub struct BotConfig {
+    loan_manager_id: String,
+    server: Server,
+    source_keypair: Keypair,
+    source_public: String,
+    source_account: Rc<RefCell<Account>>,
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
@@ -33,7 +45,7 @@ async fn main() -> Result<(), Error> {
     env_logger::init();
 
     // TODO:Decide on how to handle the initial ledger
-    let mut ledger = 1205313;
+    let mut ledger = 1350000;
 
     loop {
         let GetEventsResponse {
@@ -43,18 +55,18 @@ async fn main() -> Result<(), Error> {
         ledger = new_ledger;
         find_loans_from_events(events, connection).await?;
         fetch_prices(connection).await?;
-        find_liquidateable(connection);
-        attempt_liquidating();
+        find_liquidateable(connection).await?;
 
         info!("Sleeping for {SLEEP_TIME_SECONDS} seconds.");
-        thread::sleep(time::Duration::from_secs(SLEEP_TIME_SECONDS))
+        thread::sleep(Duration::from_secs(SLEEP_TIME_SECONDS))
     }
 }
 
 async fn fetch_events(ledger: u32) -> Result<GetEventsResponse, Error> {
-    dotenv().ok();
-    let loan_manager_id =
-        env::var("CONTRACT_ID_LOAN_MANAGER").expect("CONTRACT_ID_LOAN_MANAGER must be set in .env");
+    let BotConfig {
+        loan_manager_id, ..
+    } = load_config().await?;
+
     info!("Fetching new loans from Loan Manager.");
     let url =
         env::var("PUBLIC_SOROBAN_RPC_URL").expect("PUBLIC_SOROBAN_RPC_URL must be set in .env");
@@ -65,6 +77,7 @@ async fn fetch_events(ledger: u32) -> Result<GetEventsResponse, Error> {
     let contract_ids = vec![loan_manager_id];
     let topics_slice = &[];
     let limit = Some(100);
+    //TODO: This could be changed to use the soroban_client for simplicity.
     let events_response = client
         .get_events(start, event_type, &contract_ids, topics_slice, limit)
         .await?;
@@ -117,27 +130,14 @@ async fn find_loans_from_events(
 }
 
 async fn fetch_loan_to_db(loan: Vec<String>, connection: &mut PgConnection) -> Result<(), Error> {
-    dotenv().ok();
-    let url =
-        env::var("PUBLIC_SOROBAN_RPC_URL").expect("PUBLIC_SOROBAN_RPC_URL must be set in .env");
-    let server =
-        soroban_client::Server::new(&url, Options::default()).expect("Cannot create server");
+    let BotConfig {
+        server,
+        source_keypair,
+        loan_manager_id,
+        source_account,
+        ..
+    } = load_config().await?;
 
-    // Load secret and derive public
-    let secret_str =
-        env::var("SOROBAN_SECRET_KEY").expect("SOROBAN_SECRET_KEY must be set in .env");
-    let source_keypair = Keypair::from_secret(&secret_str).unwrap(); // Expected
-    let source_public = source_keypair.public_key();
-
-    let ledger_data = server.get_latest_ledger().await?;
-    let source_account = Rc::new(RefCell::new(
-        Account::new(&source_public, &ledger_data.sequence.to_string())
-            .map_err(|e| anyhow::anyhow!("Account::new failed: {}", e))?,
-    ));
-
-    // Build operation
-    let loan_manager_id =
-        env::var("CONTRACT_ID_LOAN_MANAGER").expect("CONTRACT_ID_LOAN_MANAGER must be set in .env");
     let method = "get_loan";
     let loan_owner = &loan[1];
     info!("Fetching loan {} to database", loan_owner);
@@ -226,28 +226,19 @@ async fn fetch_prices(connection: &mut PgConnection) -> Result<(), Error> {
     info!("Fetching prices from Reflector");
     use crate::schema::loans::dsl::*;
 
+    let BotConfig {
+        server,
+        source_keypair,
+        source_account,
+        ..
+    } = load_config().await?;
+
     let borrowed_from_uniques = loans.select(borrowed_from).distinct().load(connection)?;
     let collateral_from_uniques = loans.select(collateral_from).distinct().load(connection)?;
     let unique_pools_in_use: HashSet<String> = borrowed_from_uniques
         .into_iter()
         .chain(collateral_from_uniques)
         .collect();
-
-    dotenv().ok();
-    let url =
-        env::var("PUBLIC_SOROBAN_RPC_URL").expect("PUBLIC_SOROBAN_RPC_URL must be set in .env");
-    let server =
-        soroban_client::Server::new(&url, Options::default()).expect("Cannot create server");
-    let secret_str =
-        env::var("SOROBAN_SECRET_KEY").expect("SOROBAN_SECRET_KEY must be set in .env");
-    let source_keypair = Keypair::from_secret(&secret_str).unwrap(); // Expected
-    let source_public = source_keypair.public_key();
-
-    let ledger_data = server.get_latest_ledger().await?;
-    let source_account = Rc::new(RefCell::new(
-        Account::new(&source_public, &ledger_data.sequence.to_string())
-            .map_err(|e| anyhow::anyhow!("Account::new failed: {}", e))?,
-    ));
 
     // Build operation
     let oracle_contract_address =
@@ -324,22 +315,211 @@ async fn fetch_prices(connection: &mut PgConnection) -> Result<(), Error> {
     Ok(())
 }
 
-fn find_liquidateable(connection: &mut PgConnection /*prices: Prices*/) {
-    use self::schema::loans::dsl::*;
-
-    let results = loans
+async fn find_liquidateable(connection: &mut PgConnection) -> Result<(), Error> {
+    let all_loans = loans
         .select(Loan::as_select())
         .load(connection)
         .expect("Error loading loans");
 
-    info!("Total of {} loans in database.", results.len());
+    let all_prices = prices
+        .select(Price::as_select())
+        .load(connection)
+        .expect("Error loading prices");
 
-    // TODO: calculate the health of each loan and return the unhealthy ones
+    info!("Total of {} loans in database.", all_loans.len());
+
+    for loan in all_loans {
+        let Loan {
+            borrowed_amount,
+            ref borrowed_from,
+            collateral_amount,
+            ref collateral_from,
+            ..
+        } = loan;
+
+        let borrow_token_price = all_prices
+            .iter()
+            .find(|p| p.pool_address == *borrowed_from)
+            .map(|p| p.time_weighted_average_price)
+            .expect("No price found for borrow pool") as i128;
+
+        let collateral_token_price = all_prices
+            .iter()
+            .find(|p| p.pool_address == *collateral_from)
+            .map(|p| p.time_weighted_average_price)
+            .expect("No price found for collateral pool")
+            as i128;
+
+        // TODO:Figure out where we get this from. We have getter for it and pool address in this
+        // scope
+        // TODO:Scale of values seems to be larger than on contract side
+        let collateral_factor = 8000000;
+        const DECIMAL_TO_INT_MULTIPLIER: i64 = 10_000_000;
+
+        let collateral_value = collateral_token_price
+            .checked_mul(collateral_amount as i128)
+            .ok_or(Error::msg("OverOrUnderFlow"))?
+            .checked_mul(collateral_factor)
+            .ok_or(Error::msg("OverOrUnderFlow"))?
+            .checked_div(DECIMAL_TO_INT_MULTIPLIER as i128)
+            .ok_or(Error::msg("OverOrUnderFlow"))?;
+
+        let borrowed_value = borrow_token_price
+            .checked_mul(borrowed_amount as i128)
+            .ok_or(Error::msg("OverOrUnderFlow"))?;
+
+        let health_factor = collateral_value
+            .checked_mul(DECIMAL_TO_INT_MULTIPLIER as i128)
+            .ok_or(Error::msg("OverOrUnderFlow"))?
+            .checked_div(borrowed_value)
+            .ok_or(Error::msg("OverOrUnderFlow"))?;
+
+        let health_factor_threshold = 10_100_000;
+        if health_factor < health_factor_threshold {
+            info!("Found loan close to liquidation threshold: {:#?}", loan);
+            attempt_liquidating(loan).await?;
+        }
+    }
+
+    Ok(())
 }
 
-fn attempt_liquidating(/* unhealthy_loans: Vec<Loan> */) {
-    // TODO: attempt to liquidate unhealthy loans
-    // TODO: update the loan in DB with the new values
+async fn attempt_liquidating(loan: Loan) -> Result<(), Error> {
+    info!("Attempting to liquidate loan: {:#?}", loan);
+
+    let BotConfig {
+        source_keypair,
+        server,
+        loan_manager_id,
+        source_public,
+        source_account,
+    } = load_config().await?;
+
+    // Build operation
+    let method = "liquidate";
+    let loan_owner = &loan.borrower;
+
+    //TODO: This has to be optimized somehow. Sometimes half of the loan can be too much. Then
+    //again sometimes very small liquidations don't help.
+    let amount = loan
+        .borrowed_amount
+        .checked_div(3)
+        .ok_or(Error::msg("OverOrUnderFlow"))? as i128;
+
+    let args = vec![
+        Address::to_sc_val(
+            &Address::from_string(&source_public)
+                .map_err(|e| anyhow::anyhow!("Account::from_string failed: {}", e))?,
+        )
+        .map_err(|e| anyhow::anyhow!("Address::to_sc_val failed: {}", e))?,
+        Address::to_sc_val(
+            &Address::from_string(loan_owner)
+                .map_err(|e| anyhow::anyhow!("Account::from_string failed: {}", e))?,
+        )
+        .map_err(|e| anyhow::anyhow!("Address::to_sc_val failed: {}", e))?,
+        amount.into(),
+    ];
+
+    let read_loan_op = Operation::new()
+        .invoke_contract(&loan_manager_id, method, args.clone(), None)
+        .expect("Cannot create invoke_contract operation");
+
+    //TODO: response now has data like minimal resource fee and if the liquidation would likely be
+    //succesful. To truly optimize the system we should first do this simulation, then calculate
+    //liquidation profitability, then using this data send an actual transaction.
+
+    let mut builder = TransactionBuilder::new(source_account.clone(), Networks::testnet(), None);
+    builder.fee(10000_u32);
+    builder.add_operation(read_loan_op);
+
+    let mut tx = builder.build();
+    tx = server.prepare_transaction(tx).await?;
+    tx.sign(&[source_keypair.clone()]);
+    let response = server.send_transaction(tx).await?;
+    println!("{:#?}", response);
+
+    // Profitability calculation
+    // let bot_balance
+    // let max_to_liquidate
+    //
+    let hash = response.hash.clone();
+    if !wait_success(&server, hash, response).await {
+        warn!("Failed to liquidate.");
+    }
+
+    info!("Loan {} liquidated!", loan.borrower);
+    Ok(())
+}
+
+async fn wait_success(server: &Server, hash: String, response: SendTransactionResponse) -> bool {
+    if response.status != SendTransactionStatus::Error {
+        loop {
+            let response = server.get_transaction(&hash).await;
+            if let Ok(tx_result) = response {
+                match tx_result.status {
+                    TransactionStatus::Success => {
+                        println!("Transaction successful!");
+                        if let Some(ledger) = tx_result.ledger {
+                            println!("Confirmed in ledger: {}", ledger);
+                        }
+                        return true;
+                    }
+                    TransactionStatus::NotFound => {
+                        println!(
+                            "Waiting for transaction confirmation... Latest ledger: {}",
+                            tx_result.latest_ledger
+                        );
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                    }
+                    TransactionStatus::Failed => {
+                        if let Some(result) = tx_result.to_result() {
+                            eprintln!("Transaction failed with result: {:?}", result);
+                        } else {
+                            eprintln!("Transaction failed without result XDR");
+                        }
+                        return false;
+                    }
+                }
+            } else {
+                eprintln!("Error getting transaction status: {:?}", response);
+            }
+        }
+    }
+    false
+}
+
+async fn load_config() -> Result<BotConfig, Error> {
+    dotenv().ok();
+
+    let url =
+        env::var("PUBLIC_SOROBAN_RPC_URL").expect("PUBLIC_SOROBAN_RPC_URL must be set in .env");
+
+    let server =
+        soroban_client::Server::new(&url, Options::default()).expect("Cannot create server");
+
+    let secret_str =
+        env::var("SOROBAN_SECRET_KEY").expect("SOROBAN_SECRET_KEY must be set in .env");
+
+    let source_keypair = Keypair::from_secret(&secret_str).expect("No keypair for secret");
+    let loan_manager_id =
+        env::var("CONTRACT_ID_LOAN_MANAGER").expect("CONTRACT_ID_LOAN_MANAGER must be set in .env");
+
+    let source_public = source_keypair.public_key();
+
+    let account_data = server.get_account(&source_public).await?;
+    let source_account = Rc::new(RefCell::new(
+        Account::new(&source_public, &account_data.sequence_number())
+            .map_err(|e| anyhow::anyhow!("Account::new failed: {}", e))?,
+    ));
+
+    let config = BotConfig {
+        loan_manager_id,
+        server,
+        source_keypair,
+        source_public,
+        source_account,
+    };
+    Ok(config)
 }
 
 #[cfg(test)]
