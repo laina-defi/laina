@@ -31,6 +31,14 @@ use stellar_rpc_client::{self, Event, EventStart, EventType, GetEventsResponse};
 
 const SLEEP_TIME_SECONDS: u64 = 10;
 
+pub struct BotConfig {
+    loan_manager_id: String,
+    server: Server,
+    source_keypair: Keypair,
+    source_public: String,
+    source_account: Rc<RefCell<Account>>,
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Error> {
     let connection = &mut establish_connection();
@@ -55,9 +63,10 @@ async fn main() -> Result<(), Error> {
 }
 
 async fn fetch_events(ledger: u32) -> Result<GetEventsResponse, Error> {
-    dotenv().ok();
-    let loan_manager_id =
-        env::var("CONTRACT_ID_LOAN_MANAGER").expect("CONTRACT_ID_LOAN_MANAGER must be set in .env");
+    let BotConfig {
+        loan_manager_id, ..
+    } = load_config().await?;
+
     info!("Fetching new loans from Loan Manager.");
     let url =
         env::var("PUBLIC_SOROBAN_RPC_URL").expect("PUBLIC_SOROBAN_RPC_URL must be set in .env");
@@ -68,6 +77,7 @@ async fn fetch_events(ledger: u32) -> Result<GetEventsResponse, Error> {
     let contract_ids = vec![loan_manager_id];
     let topics_slice = &[];
     let limit = Some(100);
+    //TODO: This could be changed to use the soroban_client for simplicity.
     let events_response = client
         .get_events(start, event_type, &contract_ids, topics_slice, limit)
         .await?;
@@ -120,27 +130,14 @@ async fn find_loans_from_events(
 }
 
 async fn fetch_loan_to_db(loan: Vec<String>, connection: &mut PgConnection) -> Result<(), Error> {
-    dotenv().ok();
-    let url =
-        env::var("PUBLIC_SOROBAN_RPC_URL").expect("PUBLIC_SOROBAN_RPC_URL must be set in .env");
-    let server =
-        soroban_client::Server::new(&url, Options::default()).expect("Cannot create server");
+    let BotConfig {
+        server,
+        source_keypair,
+        loan_manager_id,
+        source_account,
+        ..
+    } = load_config().await?;
 
-    // Load secret and derive public
-    let secret_str =
-        env::var("SOROBAN_SECRET_KEY").expect("SOROBAN_SECRET_KEY must be set in .env");
-    let source_keypair = Keypair::from_secret(&secret_str).unwrap(); // Expected
-    let source_public = source_keypair.public_key();
-
-    let ledger_data = server.get_latest_ledger().await?;
-    let source_account = Rc::new(RefCell::new(
-        Account::new(&source_public, &ledger_data.sequence.to_string())
-            .map_err(|e| anyhow::anyhow!("Account::new failed: {}", e))?,
-    ));
-
-    // Build operation
-    let loan_manager_id =
-        env::var("CONTRACT_ID_LOAN_MANAGER").expect("CONTRACT_ID_LOAN_MANAGER must be set in .env");
     let method = "get_loan";
     let loan_owner = &loan[1];
     info!("Fetching loan {} to database", loan_owner);
@@ -229,28 +226,19 @@ async fn fetch_prices(connection: &mut PgConnection) -> Result<(), Error> {
     info!("Fetching prices from Reflector");
     use crate::schema::loans::dsl::*;
 
+    let BotConfig {
+        server,
+        source_keypair,
+        source_account,
+        ..
+    } = load_config().await?;
+
     let borrowed_from_uniques = loans.select(borrowed_from).distinct().load(connection)?;
     let collateral_from_uniques = loans.select(collateral_from).distinct().load(connection)?;
     let unique_pools_in_use: HashSet<String> = borrowed_from_uniques
         .into_iter()
         .chain(collateral_from_uniques)
         .collect();
-
-    dotenv().ok();
-    let url =
-        env::var("PUBLIC_SOROBAN_RPC_URL").expect("PUBLIC_SOROBAN_RPC_URL must be set in .env");
-    let server =
-        soroban_client::Server::new(&url, Options::default()).expect("Cannot create server");
-    let secret_str =
-        env::var("SOROBAN_SECRET_KEY").expect("SOROBAN_SECRET_KEY must be set in .env");
-    let source_keypair = Keypair::from_secret(&secret_str).unwrap(); // Expected
-    let source_public = source_keypair.public_key();
-
-    let ledger_data = server.get_latest_ledger().await?;
-    let source_account = Rc::new(RefCell::new(
-        Account::new(&source_public, &ledger_data.sequence.to_string())
-            .map_err(|e| anyhow::anyhow!("Account::new failed: {}", e))?,
-    ));
 
     // Build operation
     let oracle_contract_address =
@@ -399,27 +387,15 @@ async fn find_liquidateable(connection: &mut PgConnection) -> Result<(), Error> 
 async fn attempt_liquidating(loan: Loan) -> Result<(), Error> {
     info!("Attempting to liquidate loan: {:#?}", loan);
 
-    dotenv().ok();
-    let url =
-        env::var("PUBLIC_SOROBAN_RPC_URL").expect("PUBLIC_SOROBAN_RPC_URL must be set in .env");
-    let server =
-        soroban_client::Server::new(&url, Options::default()).expect("Cannot create server");
-
-    // Load secret and derive public
-    let secret_str =
-        env::var("SOROBAN_SECRET_KEY").expect("SOROBAN_SECRET_KEY must be set in .env");
-    let source_keypair = Keypair::from_secret(&secret_str).unwrap(); // Expected
-    let source_public = source_keypair.public_key();
-
-    let account_data = server.get_account(&source_public).await?;
-    let source_account = Rc::new(RefCell::new(
-        Account::new(&source_public, &account_data.sequence_number())
-            .map_err(|e| anyhow::anyhow!("Account::new failed: {}", e))?,
-    ));
+    let BotConfig {
+        source_keypair,
+        server,
+        loan_manager_id,
+        source_public,
+        source_account,
+    } = load_config().await?;
 
     // Build operation
-    let loan_manager_id =
-        env::var("CONTRACT_ID_LOAN_MANAGER").expect("CONTRACT_ID_LOAN_MANAGER must be set in .env");
     let method = "liquidate";
     let loan_owner = &loan.borrower;
 
@@ -510,6 +486,40 @@ async fn wait_success(server: &Server, hash: String, response: SendTransactionRe
         }
     }
     false
+}
+
+async fn load_config() -> Result<BotConfig, Error> {
+    dotenv().ok();
+
+    let url =
+        env::var("PUBLIC_SOROBAN_RPC_URL").expect("PUBLIC_SOROBAN_RPC_URL must be set in .env");
+
+    let server =
+        soroban_client::Server::new(&url, Options::default()).expect("Cannot create server");
+
+    let secret_str =
+        env::var("SOROBAN_SECRET_KEY").expect("SOROBAN_SECRET_KEY must be set in .env");
+
+    let source_keypair = Keypair::from_secret(&secret_str).expect("No keypair for secret");
+    let loan_manager_id =
+        env::var("CONTRACT_ID_LOAN_MANAGER").expect("CONTRACT_ID_LOAN_MANAGER must be set in .env");
+
+    let source_public = source_keypair.public_key();
+
+    let account_data = server.get_account(&source_public).await?;
+    let source_account = Rc::new(RefCell::new(
+        Account::new(&source_public, &account_data.sequence_number())
+            .map_err(|e| anyhow::anyhow!("Account::new failed: {}", e))?,
+    ));
+
+    let config = BotConfig {
+        loan_manager_id,
+        server,
+        source_keypair,
+        source_public,
+        source_account,
+    };
+    Ok(config)
 }
 
 #[cfg(test)]
