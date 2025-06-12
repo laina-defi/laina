@@ -263,9 +263,9 @@ async fn fetch_prices(connection: &mut PgConnection) -> Result<(), Error> {
     for pool in unique_pools_in_use {
         // Temporary
         let currency = match pool.as_str() {
-            "CBNV4LFYAVV4WZAUXRJL6C2XA5ZW4KPZTJULPVGUS7EIWUF2Z5KJ4GDR" => "XLM",
-            "CCZG6LDR4HLPYVNOYDGDCKQHBJF6OMDMB4VGR63LRYQBBBX6Q7YGHJRF" => "USDC",
-            "CARYUYVPGUYRI22LZJWNIVIRNNFRY4YKAYID7JZJ3ZXA5IXXCBLQWOQZ" => "EURC",
+            "CCDF2NOJXOW73SXXB6BZRAPGVNJU7VMUURXCVLRHCHHAXHOY2TVRLFFP" => "XLM",
+            "CAXTXTUCA6ILFHCPIN34TWWVL4YL2QDDHYI65MVVQCEMDANFZLXVIEIK" => "USDC",
+            "CDUFMIS6ZH3JM5MPNTWMDLBXPNQYV5FBPBGCFT2WWG4EXKGEPOCBNGCZ" => "EURC",
             _ => "None",
         };
 
@@ -375,12 +375,10 @@ async fn find_liquidateable(connection: &mut PgConnection) -> Result<(), Error> 
             .ok_or(Error::msg("OverOrUnderFlow"))?
             .checked_div(DECIMAL_TO_INT_MULTIPLIER as i128)
             .ok_or(Error::msg("OverOrUnderFlow"))?;
-        println!("{:#?}", collateral_value);
 
         let borrowed_value = borrow_token_price
             .checked_mul(borrowed_amount as i128)
             .ok_or(Error::msg("OverOrUnderFlow"))?;
-        println!("{:#?}", borrowed_value);
 
         let health_factor = collateral_value
             .checked_mul(DECIMAL_TO_INT_MULTIPLIER as i128)
