@@ -1,12 +1,16 @@
-use core::time;
+use core::time::Duration;
 use dotenvy::dotenv;
 use log::{error, info, warn};
-use soroban_sdk::xdr::{ScSymbol, StringM};
+use soroban_sdk::xdr::{ScSymbol, SorobanAuthorizationEntry, StringM};
 use std::collections::HashSet;
 use std::{cell::RefCell, env, rc::Rc, str::FromStr, thread};
+use stellar_strkey::Strkey;
 use stellar_xdr::curr::ScVal;
 
-use self::models::*;
+use self::models::{Loan, Price};
+use self::schema::loans::dsl::loans;
+use self::schema::prices::dsl::prices;
+
 use anyhow::{Error, Result};
 use diesel::prelude::*;
 use liquidation_bot::utils::{
@@ -20,8 +24,13 @@ use soroban_client::{
     keypair::{Keypair, KeypairBehavior},
     network::{NetworkPassphrase, Networks},
     operation::Operation,
+    soroban_rpc::{SendTransactionResponse, SendTransactionStatus, TransactionStatus},
     transaction::{TransactionBehavior, TransactionBuilder, TransactionBuilderBehavior},
-    Options,
+    xdr::{
+        Hash, InvokeContractArgs, Limits, ScAddress, SorobanAuthorizedFunction,
+        SorobanAuthorizedInvocation, SorobanCredentials, VecM, WriteXdr,
+    },
+    Options, Server,
 };
 use stellar_rpc_client::{self, Event, EventStart, EventType, GetEventsResponse};
 
@@ -33,7 +42,7 @@ async fn main() -> Result<(), Error> {
     env_logger::init();
 
     // TODO:Decide on how to handle the initial ledger
-    let mut ledger = 1221500;
+    let mut ledger = 1350000;
 
     loop {
         let GetEventsResponse {
@@ -43,10 +52,10 @@ async fn main() -> Result<(), Error> {
         ledger = new_ledger;
         find_loans_from_events(events, connection).await?;
         fetch_prices(connection).await?;
-        find_liquidateable(connection)?;
+        find_liquidateable(connection).await?;
 
         info!("Sleeping for {SLEEP_TIME_SECONDS} seconds.");
-        thread::sleep(time::Duration::from_secs(SLEEP_TIME_SECONDS))
+        thread::sleep(Duration::from_secs(SLEEP_TIME_SECONDS))
     }
 }
 
@@ -259,9 +268,9 @@ async fn fetch_prices(connection: &mut PgConnection) -> Result<(), Error> {
     for pool in unique_pools_in_use {
         // Temporary
         let currency = match pool.as_str() {
-            "CCDF2NOJXOW73SXXB6BZRAPGVNJU7VMUURXCVLRHCHHAXHOY2TVRLFFP" => "XLM",
-            "CAXTXTUCA6ILFHCPIN34TWWVL4YL2QDDHYI65MVVQCEMDANFZLXVIEIK" => "USDC",
-            "CDUFMIS6ZH3JM5MPNTWMDLBXPNQYV5FBPBGCFT2WWG4EXKGEPOCBNGCZ" => "EURC",
+            "CBNV4LFYAVV4WZAUXRJL6C2XA5ZW4KPZTJULPVGUS7EIWUF2Z5KJ4GDR" => "XLM",
+            "CCZG6LDR4HLPYVNOYDGDCKQHBJF6OMDMB4VGR63LRYQBBBX6Q7YGHJRF" => "USDC",
+            "CARYUYVPGUYRI22LZJWNIVIRNNFRY4YKAYID7JZJ3ZXA5IXXCBLQWOQZ" => "EURC",
             _ => "None",
         };
 
@@ -323,10 +332,7 @@ async fn fetch_prices(connection: &mut PgConnection) -> Result<(), Error> {
     Ok(())
 }
 
-fn find_liquidateable(connection: &mut PgConnection) -> Result<(), Error> {
-    use self::schema::loans::dsl::*;
-    use self::schema::prices::dsl::*;
-
+async fn find_liquidateable(connection: &mut PgConnection) -> Result<(), Error> {
     let all_loans = loans
         .select(Loan::as_select())
         .load(connection)
@@ -341,60 +347,176 @@ fn find_liquidateable(connection: &mut PgConnection) -> Result<(), Error> {
 
     for loan in all_loans {
         let Loan {
-            borrowed_amount: amount_borrowed,
-            borrowed_from: ref borrow_pool,
-            collateral_amount: amount_collateral,
-            collateral_from: ref collateral_pool,
+            borrowed_amount,
+            ref borrowed_from,
+            collateral_amount,
+            ref collateral_from,
             ..
         } = loan;
 
         let borrow_token_price = all_prices
             .iter()
-            .find(|p| p.pool_address == *borrow_pool)
+            .find(|p| p.pool_address == *borrowed_from)
             .map(|p| p.time_weighted_average_price)
-            .expect("No price found for borrow pool");
+            .expect("No price found for borrow pool") as i128;
 
         let collateral_token_price = all_prices
             .iter()
-            .find(|p| p.pool_address == *collateral_pool)
+            .find(|p| p.pool_address == *collateral_from)
             .map(|p| p.time_weighted_average_price)
-            .expect("No price found for collateral pool");
+            .expect("No price found for collateral pool")
+            as i128;
 
         // TODO:Figure out where we get this from. We have getter for it and pool address in this
         // scope
+        // TODO:Scale of values seems to be larger than on contract side
         let collateral_factor = 8000000;
         const DECIMAL_TO_INT_MULTIPLIER: i64 = 10_000_000;
 
         let collateral_value = collateral_token_price
-            .checked_mul(amount_collateral)
+            .checked_mul(collateral_amount as i128)
             .ok_or(Error::msg("OverOrUnderFlow"))?
             .checked_mul(collateral_factor)
             .ok_or(Error::msg("OverOrUnderFlow"))?
-            .checked_div(DECIMAL_TO_INT_MULTIPLIER)
-            .ok_or(Error::msg("OverOrUnderFlow"))?;
+            .checked_div(DECIMAL_TO_INT_MULTIPLIER as i128)
+            .ok_or(Error::msg("OverOrUnderFlow"))? as i128;
+        println!("{:#?}", collateral_value);
 
         let borrowed_value = borrow_token_price
-            .checked_mul(amount_borrowed)
+            .checked_mul(borrowed_amount as i128)
             .ok_or(Error::msg("OverOrUnderFlow"))?;
+        println!("{:#?}", borrowed_value);
 
         let health_factor = collateral_value
-            .checked_mul(DECIMAL_TO_INT_MULTIPLIER)
+            .checked_mul(DECIMAL_TO_INT_MULTIPLIER as i128)
             .ok_or(Error::msg("OverOrUnderFlow"))?
             .checked_div(borrowed_value)
             .ok_or(Error::msg("OverOrUnderFlow"))?;
 
-        let health_factor_threshold = 10_100_000;
+        let health_factor_threshold = 20_100_000;
         if health_factor < health_factor_threshold {
-            attempt_liquidating(loan);
+            info!("Found loan close to liquidation threshold: {:#?}", loan);
+            attempt_liquidating(loan).await?;
         }
     }
 
     Ok(())
 }
 
-fn attempt_liquidating(loan: Loan) {
-    // TODO: attempt to liquidate unhealthy loans
-    // TODO: update the loan in DB with the new values
+async fn attempt_liquidating(loan: Loan) -> Result<(), Error> {
+    info!("Attempting to liquidate loan: {:#?}", loan);
+
+    dotenv().ok();
+    let url =
+        env::var("PUBLIC_SOROBAN_RPC_URL").expect("PUBLIC_SOROBAN_RPC_URL must be set in .env");
+    let server =
+        soroban_client::Server::new(&url, Options::default()).expect("Cannot create server");
+
+    // Load secret and derive public
+    let secret_str =
+        env::var("SOROBAN_SECRET_KEY").expect("SOROBAN_SECRET_KEY must be set in .env");
+    let source_keypair = Keypair::from_secret(&secret_str).unwrap(); // Expected
+    let source_public = source_keypair.public_key();
+
+    let account_data = server.get_account(&source_public).await?;
+    let source_account = Rc::new(RefCell::new(
+        Account::new(&source_public, &account_data.sequence_number())
+            .map_err(|e| anyhow::anyhow!("Account::new failed: {}", e))?,
+    ));
+
+    // Build operation
+    let loan_manager_id =
+        env::var("CONTRACT_ID_LOAN_MANAGER").expect("CONTRACT_ID_LOAN_MANAGER must be set in .env");
+    let method = "liquidate";
+    let loan_owner = &loan.borrower;
+
+    //TODO: This has to be optimized somehow. Sometimes half of the loan can be too much. Then
+    //again sometimes very small liquidations don't help.
+    let amount = loan
+        .borrowed_amount
+        .checked_div(3)
+        .ok_or(Error::msg("OverOrUnderFlow"))? as i128;
+
+    let args = vec![
+        Address::to_sc_val(
+            &Address::from_string(&source_public)
+                .map_err(|e| anyhow::anyhow!("Account::from_string failed: {}", e))?,
+        )
+        .map_err(|e| anyhow::anyhow!("Address::to_sc_val failed: {}", e))?,
+        Address::to_sc_val(
+            &Address::from_string(loan_owner)
+                .map_err(|e| anyhow::anyhow!("Account::from_string failed: {}", e))?,
+        )
+        .map_err(|e| anyhow::anyhow!("Address::to_sc_val failed: {}", e))?,
+        amount.into(),
+    ];
+
+    let read_loan_op = Operation::new()
+        .invoke_contract(&loan_manager_id, method, args.clone(), None)
+        .expect("Cannot create invoke_contract operation");
+
+    //TODO: response now has data like minimal resource fee and if the liquidation would likely be
+    //succesful. To truly optimize the system we should first do this simulation, then calculate
+    //liquidation profitability, then using this data send an actual transaction.
+
+    let mut builder = TransactionBuilder::new(source_account.clone(), Networks::testnet(), None);
+    builder.fee(10000 as u32);
+    builder.add_operation(read_loan_op);
+
+    let mut tx = builder.build();
+    tx = server.prepare_transaction(tx).await?;
+    tx.sign(&[source_keypair.clone()]);
+    let response = server.send_transaction(tx).await?;
+    println!("{:#?}", response);
+
+    // Profitability calculation
+    // let bot_balance
+    // let max_to_liquidate
+    //
+    let hash = response.hash.clone();
+    if !wait_success(&server, hash, response).await {
+        warn!("Failed to liquidate.");
+    }
+
+    info!("Loan {} liquidated!", loan.borrower);
+    Ok(())
+}
+
+async fn wait_success(server: &Server, hash: String, response: SendTransactionResponse) -> bool {
+    if response.status != SendTransactionStatus::Error {
+        loop {
+            let response = server.get_transaction(&hash).await;
+            if let Ok(tx_result) = response {
+                match tx_result.status {
+                    TransactionStatus::Success => {
+                        println!("Transaction successful!");
+                        if let Some(ledger) = tx_result.ledger {
+                            println!("Confirmed in ledger: {}", ledger);
+                        }
+                        return true;
+                    }
+                    TransactionStatus::NotFound => {
+                        println!(
+                            "Waiting for transaction confirmation... Latest ledger: {}",
+                            tx_result.latest_ledger
+                        );
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                    }
+                    TransactionStatus::Failed => {
+                        if let Some(result) = tx_result.to_result() {
+                            eprintln!("Transaction failed with result: {:?}", result);
+                        } else {
+                            eprintln!("Transaction failed without result XDR");
+                        }
+                        return false;
+                    }
+                }
+            } else {
+                eprintln!("Error getting transaction status: {:?}", response);
+            }
+        }
+    }
+    false
 }
 
 #[cfg(test)]
