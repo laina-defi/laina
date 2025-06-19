@@ -12,7 +12,7 @@ pub struct PoolConfig {
     pub status: u32,     // Status of the pool
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, PartialOrd)]
 #[contracttype]
 pub struct Positions {
     // struct names under 9 characters are marginally more efficient. Need to think if we value marginal efficiency over readibility

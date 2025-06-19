@@ -1115,6 +1115,105 @@ mod tests {
         assert_eq!(user_loan.collateral_amount, 7_005);
     }
 
+    #[test]
+    fn withfraw_all_after_yield() {
+        // ARRANGE
+        let e = Env::default();
+        e.mock_all_auths_allowing_non_root_auth();
+        e.ledger().with_mut(|li| {
+            li.sequence_number = 100_000;
+            li.timestamp = 1;
+            li.min_persistent_entry_ttl = 1_000_000;
+            li.min_temp_entry_ttl = 1_000_000;
+            li.max_entry_ttl = 1_000_001;
+        });
+
+        let TestEnv {
+            admin,
+            user,
+            manager_client,
+            pool_xlm_addr,
+            pool_xlm_client,
+            pool_usdc_addr,
+            xlm_asset_client,
+            usdc_asset_client,
+            ..
+        } = setup_test_env(&e);
+
+        let user2 = Address::generate(&e);
+        let user3 = Address::generate(&e);
+
+        // print more money
+        xlm_asset_client.mint(&admin, &9_001);
+        xlm_asset_client.mint(&user, &9_000);
+        xlm_asset_client.mint(&user2, &5_000);
+        xlm_asset_client.mint(&user3, &5_000);
+        pool_xlm_client.deposit(&admin, &9_001);
+        pool_xlm_client.deposit(&user, &5_000);
+        pool_xlm_client.deposit(&user3, &5_000);
+        usdc_asset_client.mint(&user, &12_000);
+
+        // ACT
+        // Create a loan.
+        manager_client.create_loan(&user, &10_000, &pool_xlm_addr, &12_505, &pool_usdc_addr);
+
+        let user_loan = manager_client.get_loan(&user);
+
+        assert_eq!(user_loan.borrowed_amount, 10_000);
+
+        manager_client.add_interest(&user);
+
+        // Here borrowed amount should be the same as time has not moved. add_interest() is only called to store the LastUpdate sequence number.
+        assert_eq!(user_loan.borrowed_amount, 10_000);
+        assert_eq!(user_loan.health_factor, 10_004_000);
+
+        // Move time
+        e.ledger().with_mut(|li| {
+            li.sequence_number = 100_000 + 10_000;
+            li.timestamp = 1 + 8_000_000;
+        });
+
+        // A new instance of reflector mock needs to be created, they only live for one ledger.
+        let reflector_addr = Address::from_string(&String::from_str(&e, REFLECTOR_ADDRESS));
+        e.register_at(&reflector_addr, oracle::WASM, ());
+
+        manager_client.add_interest(&user);
+
+        let user_loan = manager_client.get_loan(&user);
+
+        assert_eq!(user_loan.borrowed_amount, 10_163);
+        assert_eq!(user_loan.health_factor, 9_843_550);
+        assert_eq!(user_loan.collateral_amount, 12_505);
+
+        e.ledger().with_mut(|li| {
+            li.sequence_number = 100_000 + 1_000;
+        });
+
+        let reflector_addr = Address::from_string(&String::from_str(&e, REFLECTOR_ADDRESS));
+        e.register_at(&reflector_addr, oracle::WASM, ());
+
+        manager_client.repay_and_close_manager(&user, &11_500);
+        let user_positions_before_withdraw = pool_xlm_client.get_user_positions(&user);
+        assert_eq!(
+            user_positions_before_withdraw,
+            Positions {
+                liabilities: 0,
+                collateral: 0,
+                receivable_shares: 5000
+            }
+        );
+        pool_xlm_client.withdraw(&user, &5_000);
+
+        let user_positions = pool_xlm_client.get_user_positions(&user);
+        let empty_positions = Positions {
+            liabilities: 0,
+            collateral: 0,
+            receivable_shares: 37,
+        };
+
+        assert_eq!(user_positions, empty_positions);
+    }
+
     /* Test setup helpers */
     struct TestEnv<'a> {
         admin: Address,
