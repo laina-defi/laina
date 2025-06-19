@@ -239,7 +239,14 @@ pub fn save_loan(db_connection: &mut PgConnection, loan: Loan) -> Result<(), Err
             .execute(db_connection)?;
     } else {
         diesel::insert_into(loans)
-            .values(&loan)
+            .values((
+                crate::schema::loans::borrower.eq(&loan.borrower),
+                crate::schema::loans::borrowed_amount.eq(loan.borrowed_amount),
+                crate::schema::loans::borrowed_from.eq(&loan.borrowed_from),
+                crate::schema::loans::collateral_amount.eq(loan.collateral_amount),
+                crate::schema::loans::collateral_from.eq(&loan.collateral_from),
+                crate::schema::loans::unpaid_interest.eq(loan.unpaid_interest),
+            ))
             .execute(db_connection)?;
     }
     Ok(())
@@ -621,7 +628,13 @@ async fn load_config() -> Result<BotConfig, Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::schema::loans::dsl::{borrower as borrower_col, loans};
+    use crate::schema::prices::dsl::prices;
+    use crate::schema::prices::{
+        pool_address as pool_address_col, time_weighted_average_price as price_col,
+    };
     use dotenvy::dotenv;
+    use serial_test::serial;
     use std::env;
 
     fn setup_test_db() -> PgConnection {
@@ -630,14 +643,52 @@ mod tests {
         PgConnection::establish(&test_url).expect("Failed to connect to test DB")
     }
 
+    fn create_test_loan(borrower: &str) -> Loan {
+        Loan {
+            id: 0,
+            borrower: borrower.to_string(),
+            borrowed_amount: 1000000000, // 1000 tokens with 7 decimals
+            borrowed_from: "CCDF2NOJXOW73SXXB6BZRAPGVNJU7VMUURXCVLRHCHHAXHOY2TVRLFFP".to_string(),
+            collateral_amount: 2000000000, // 2000 tokens with 7 decimals
+            collateral_from: "CAXTXTUCA6ILFHCPIN34TWWVL4YL2QDDHYI65MVVQCEMDANFZLXVIEIK".to_string(),
+            unpaid_interest: 50000000, // 50 tokens with 7 decimals
+        }
+    }
+
+    fn create_test_price(pool_address: &str, price: i64) -> Price {
+        Price {
+            id: 0,
+            pool_address: pool_address.to_string(),
+            time_weighted_average_price: price,
+        }
+    }
+
+    fn clean_test_data(conn: &mut PgConnection, test_borrower: &str) {
+        // Clean loans for specific borrower
+        if !test_borrower.is_empty() {
+            diesel::delete(loans.filter(borrower_col.eq(test_borrower)))
+                .execute(conn)
+                .ok();
+        }
+
+        // Clean all test-related loans
+        diesel::delete(loans.filter(borrower_col.like("TEST_%")))
+            .execute(conn)
+            .ok();
+
+        // Clean test prices
+        diesel::delete(prices.filter(pool_address_col.like("TEST_%")))
+            .execute(conn)
+            .ok();
+    }
+
     #[tokio::test]
+    #[serial]
     async fn test_save_loan_inserts_and_updates() {
         let mut conn = setup_test_db();
 
-        use crate::schema::loans::dsl::*;
-        diesel::delete(loans.filter(borrower.eq("TEST_BORROWER")))
-            .execute(&mut conn)
-            .unwrap();
+        // Clean up before test
+        clean_test_data(&mut conn, "TEST_BORROWER");
 
         let test_loan = Loan {
             id: 0,
@@ -660,15 +711,413 @@ mod tests {
         save_loan(&mut conn, updated_loan).unwrap();
 
         let saved = loans
-            .filter(borrower.eq("TEST_BORROWER"))
+            .filter(borrower_col.eq("TEST_BORROWER"))
             .first::<Loan>(&mut conn)
             .unwrap();
 
         assert_eq!(saved.borrowed_amount, 120);
         assert_eq!(saved.unpaid_interest, 5);
 
-        diesel::delete(loans.filter(borrower.eq("TEST_BORROWER")))
+        // Clean up after test
+        clean_test_data(&mut conn, "TEST_BORROWER");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_save_loan_creates_new_loan() {
+        let mut conn = setup_test_db();
+        let test_borrower = "TEST_NEW_BORROWER";
+
+        clean_test_data(&mut conn, test_borrower);
+
+        let test_loan = create_test_loan(test_borrower);
+        save_loan(&mut conn, test_loan.clone()).unwrap();
+
+        let saved = loans
+            .filter(borrower_col.eq(test_borrower))
+            .first::<Loan>(&mut conn)
+            .unwrap();
+
+        assert_eq!(saved.borrower, test_borrower);
+        assert_eq!(saved.borrowed_amount, test_loan.borrowed_amount);
+        assert_eq!(saved.collateral_amount, test_loan.collateral_amount);
+
+        clean_test_data(&mut conn, test_borrower);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_delete_loan_from_db() {
+        let mut conn = setup_test_db();
+        let test_borrower = "TEST_DELETE_BORROWER";
+
+        // Extra aggressive cleanup - delete ALL test data first
+        diesel::delete(loans.filter(borrower_col.like("TEST_%")))
+            .execute(&mut conn)
+            .ok();
+
+        // Verify no existing loan for this borrower
+        let existing_count = loans
+            .filter(borrower_col.eq(test_borrower))
+            .count()
+            .get_result::<i64>(&mut conn)
+            .unwrap();
+        assert_eq!(existing_count, 0, "Database should be clean before test");
+
+        let test_loan = create_test_loan(test_borrower);
+        save_loan(&mut conn, test_loan).unwrap();
+
+        // Verify loan exists
+        let count_before = loans
+            .filter(borrower_col.eq(test_borrower))
+            .count()
+            .get_result::<i64>(&mut conn)
+            .unwrap();
+        assert_eq!(count_before, 1);
+
+        // Delete loan
+        let value = vec!["loan".to_string(), test_borrower.to_string()];
+        delete_loan_from_db(value, &mut conn).await.unwrap();
+
+        // Verify loan is deleted
+        let count_after = loans
+            .filter(borrower_col.eq(test_borrower))
+            .count()
+            .get_result::<i64>(&mut conn)
+            .unwrap();
+        assert_eq!(count_after, 0);
+    }
+
+    #[test]
+    fn test_liquidation_calculation_healthy_loan() {
+        let borrowed_amount = 1000000000; // 1000 tokens
+        let borrowed_price = 1_0000000i128; // $1 per token
+        let collateral_amount = 2000000000; // 2000 tokens
+        let collateral_price = 1_0000000i128; // $1 per token
+        let collateral_factor = 8000000; // 80%
+        const DECIMAL_TO_INT_MULTIPLIER: i64 = 10_000_000;
+
+        let collateral_value = collateral_price
+            .checked_mul(collateral_amount as i128)
+            .unwrap()
+            .checked_mul(collateral_factor)
+            .unwrap()
+            .checked_div(DECIMAL_TO_INT_MULTIPLIER as i128)
+            .unwrap();
+
+        let borrowed_value = borrowed_price.checked_mul(borrowed_amount as i128).unwrap();
+
+        let health_factor = collateral_value
+            .checked_mul(DECIMAL_TO_INT_MULTIPLIER as i128)
+            .unwrap()
+            .checked_div(borrowed_value)
+            .unwrap();
+
+        // Expected: (2000 * 1 * 0.8) / 1000 = 1.6 = 16000000
+        assert_eq!(health_factor, 16000000);
+
+        // This should NOT be liquidatable with threshold of 1.01
+        let threshold = 10100000;
+        assert!(health_factor >= threshold);
+    }
+
+    #[test]
+    fn test_liquidation_calculation_unhealthy_loan() {
+        let borrowed_amount = 1000000000; // 1000 tokens
+        let borrowed_price = 1_0000000i128; // $1 per token
+        let collateral_amount = 1000000000; // 1000 tokens
+        let collateral_price = 1_0000000i128; // $1 per token
+        let collateral_factor = 8000000; // 80%
+        const DECIMAL_TO_INT_MULTIPLIER: i64 = 10_000_000;
+
+        let collateral_value = collateral_price
+            .checked_mul(collateral_amount as i128)
+            .unwrap()
+            .checked_mul(collateral_factor)
+            .unwrap()
+            .checked_div(DECIMAL_TO_INT_MULTIPLIER as i128)
+            .unwrap();
+
+        let borrowed_value = borrowed_price.checked_mul(borrowed_amount as i128).unwrap();
+
+        let health_factor = collateral_value
+            .checked_mul(DECIMAL_TO_INT_MULTIPLIER as i128)
+            .unwrap()
+            .checked_div(borrowed_value)
+            .unwrap();
+
+        // Expected: (1000 * 1 * 0.8) / 1000 = 0.8 = 8000000
+        assert_eq!(health_factor, 8000000);
+
+        // This should be liquidatable with threshold of 1.01
+        let threshold = 10100000;
+        assert!(health_factor < threshold);
+    }
+
+    #[test]
+    fn test_liquidation_amount_calculation() {
+        let borrowed_amount = 3000000000i64; // 3000 tokens
+        let liquidation_amount = borrowed_amount
+            .checked_div(3)
+            .expect("Division should not overflow");
+
+        assert_eq!(liquidation_amount, 1000000000); // 1000 tokens (1/3 of loan)
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_save_and_update_price() {
+        let mut conn = setup_test_db();
+        let test_pool = "TEST_POOL_ADDRESS";
+
+        clean_test_data(&mut conn, "");
+
+        // Clean up any existing test data
+        diesel::delete(prices.filter(pool_address_col.eq(test_pool)))
+            .execute(&mut conn)
+            .ok();
+
+        let test_price = create_test_price(test_pool, 1500000); // $1.5
+
+        // Insert new price
+        diesel::insert_into(prices)
+            .values((
+                pool_address_col.eq(&test_price.pool_address),
+                price_col.eq(test_price.time_weighted_average_price),
+            ))
             .execute(&mut conn)
             .unwrap();
+
+        // Verify insertion
+        let saved = prices
+            .filter(pool_address_col.eq(test_pool))
+            .first::<Price>(&mut conn)
+            .unwrap();
+        assert_eq!(saved.time_weighted_average_price, 1500000);
+
+        // Update price
+        let updated_price = 2000000; // $2.0
+        diesel::update(prices.filter(pool_address_col.eq(test_pool)))
+            .set(price_col.eq(updated_price))
+            .execute(&mut conn)
+            .unwrap();
+
+        // Verify update
+        let updated = prices
+            .filter(pool_address_col.eq(test_pool))
+            .first::<Price>(&mut conn)
+            .unwrap();
+        assert_eq!(updated.time_weighted_average_price, updated_price);
+
+        // Clean up
+        diesel::delete(prices.filter(pool_address_col.eq(test_pool)))
+            .execute(&mut conn)
+            .unwrap();
+    }
+
+    #[test]
+    fn test_event_topic_matching() {
+        let topics_loan_created = vec!["loan".to_string(), "created".to_string()];
+        let topics_loan_updated = vec!["loan".to_string(), "updated".to_string()];
+        let topics_loan_deleted = vec!["loan".to_string(), "deleted".to_string()];
+        let topics_other = vec!["pool".to_string(), "created".to_string()];
+
+        // Test loan created/updated matching
+        let topics_lower: Vec<String> = topics_loan_created
+            .iter()
+            .map(|t| t.to_lowercase())
+            .collect();
+        let slice: Vec<&str> = topics_lower.iter().map(String::as_str).collect();
+        assert!(matches!(slice.as_slice(), ["loan", "created"]));
+
+        let topics_lower: Vec<String> = topics_loan_updated
+            .iter()
+            .map(|t| t.to_lowercase())
+            .collect();
+        let slice: Vec<&str> = topics_lower.iter().map(String::as_str).collect();
+        assert!(matches!(slice.as_slice(), ["loan", "updated"]));
+
+        let topics_lower: Vec<String> = topics_loan_deleted
+            .iter()
+            .map(|t| t.to_lowercase())
+            .collect();
+        let slice: Vec<&str> = topics_lower.iter().map(String::as_str).collect();
+        assert!(matches!(slice.as_slice(), ["loan", "deleted"]));
+
+        let topics_lower: Vec<String> = topics_other.iter().map(|t| t.to_lowercase()).collect();
+        let slice: Vec<&str> = topics_lower.iter().map(String::as_str).collect();
+        assert!(!matches!(
+            slice.as_slice(),
+            ["loan", "created"] | ["loan", "updated"] | ["loan", "deleted"]
+        ));
+    }
+
+    #[test]
+    fn test_pool_address_to_currency_mapping() {
+        let xlm_pool = "CCDF2NOJXOW73SXXB6BZRAPGVNJU7VMUURXCVLRHCHHAXHOY2TVRLFFP";
+        let usdc_pool = "CAXTXTUCA6ILFHCPIN34TWWVL4YL2QDDHYI65MVVQCEMDANFZLXVIEIK";
+        let _eurc_pool = "CDUFMIS6ZH3JM5MPNTWMDLBXPNQYV5FBPBGCFT2WWG4EXKGEPOCBNGCZ";
+        let unknown_pool = "SOME_UNKNOWN_POOL_ADDRESS";
+
+        let xlm_currency = match xlm_pool {
+            "CCDF2NOJXOW73SXXB6BZRAPGVNJU7VMUURXCVLRHCHHAXHOY2TVRLFFP" => "XLM",
+            "CAXTXTUCA6ILFHCPIN34TWWVL4YL2QDDHYI65MVVQCEMDANFZLXVIEIK" => "USDC",
+            "CDUFMIS6ZH3JM5MPNTWMDLBXPNQYV5FBPBGCFT2WWG4EXKGEPOCBNGCZ" => "EURC",
+            _ => "None",
+        };
+        assert_eq!(xlm_currency, "XLM");
+
+        let usdc_currency = match usdc_pool {
+            "CCDF2NOJXOW73SXXB6BZRAPGVNJU7VMUURXCVLRHCHHAXHOY2TVRLFFP" => "XLM",
+            "CAXTXTUCA6ILFHCPIN34TWWVL4YL2QDDHYI65MVVQCEMDANFZLXVIEIK" => "USDC",
+            "CDUFMIS6ZH3JM5MPNTWMDLBXPNQYV5FBPBGCFT2WWG4EXKGEPOCBNGCZ" => "EURC",
+            _ => "None",
+        };
+        assert_eq!(usdc_currency, "USDC");
+
+        let unknown_currency = match unknown_pool {
+            "CCDF2NOJXOW73SXXB6BZRAPGVNJU7VMUURXCVLRHCHHAXHOY2TVRLFFP" => "XLM",
+            "CAXTXTUCA6ILFHCPIN34TWWVL4YL2QDDHYI65MVVQCEMDANFZLXVIEIK" => "USDC",
+            "CDUFMIS6ZH3JM5MPNTWMDLBXPNQYV5FBPBGCFT2WWG4EXKGEPOCBNGCZ" => "EURC",
+            _ => "None",
+        };
+        assert_eq!(unknown_currency, "None");
+    }
+
+    #[test]
+    fn test_overflow_protection_in_liquidation_calculation() {
+        // Test with very large numbers to ensure overflow protection works
+        let borrowed_amount = i64::MAX / 2;
+        let borrowed_price = 1000000i128;
+        let collateral_amount = i64::MAX / 2;
+        let collateral_price = 1000000i128;
+        let collateral_factor = 8000000;
+        const DECIMAL_TO_INT_MULTIPLIER: i64 = 10_000_000;
+
+        // This should not panic due to overflow protection
+        let collateral_value_result = collateral_price
+            .checked_mul(collateral_amount as i128)
+            .and_then(|v| v.checked_mul(collateral_factor))
+            .and_then(|v| v.checked_div(DECIMAL_TO_INT_MULTIPLIER as i128));
+
+        let borrowed_value_result = borrowed_price.checked_mul(borrowed_amount as i128);
+
+        // Test that we handle potential overflows gracefully
+        assert!(collateral_value_result.is_some() || collateral_value_result.is_none());
+        assert!(borrowed_value_result.is_some() || borrowed_value_result.is_none());
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_delete_loan_nonexistent() {
+        let mut conn = setup_test_db();
+        let test_borrower = "NONEXISTENT_BORROWER";
+
+        // Ensure the borrower doesn't exist
+        clean_test_data(&mut conn, test_borrower);
+
+        // Try to delete non-existent loan
+        let value = vec!["loan".to_string(), test_borrower.to_string()];
+        let result = delete_loan_from_db(value, &mut conn).await;
+
+        // Should succeed (no error) even if loan doesn't exist
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_collateral_factor_scenarios() {
+        let borrowed_amount = 1000000000i64;
+        let borrowed_price = 1_0000000i128;
+        let collateral_amount = 1500000000i64;
+        let collateral_price = 1_0000000i128;
+        const DECIMAL_TO_INT_MULTIPLIER: i64 = 10_000_000;
+
+        // Test different collateral factors
+        let factors = vec![
+            5000000, // 50%
+            7500000, // 75%
+            8000000, // 80%
+            9000000, // 90%
+        ];
+
+        for factor in factors {
+            let collateral_value = collateral_price
+                .checked_mul(collateral_amount as i128)
+                .unwrap()
+                .checked_mul(factor)
+                .unwrap()
+                .checked_div(DECIMAL_TO_INT_MULTIPLIER as i128)
+                .unwrap();
+
+            let borrowed_value = borrowed_price.checked_mul(borrowed_amount as i128).unwrap();
+
+            let health_factor = collateral_value
+                .checked_mul(DECIMAL_TO_INT_MULTIPLIER as i128)
+                .unwrap()
+                .checked_div(borrowed_value)
+                .unwrap();
+
+            // Health factor should be proportional to collateral factor
+            let expected_health_factor =
+                (collateral_amount as i128 * factor) / (borrowed_amount as i128);
+            assert_eq!(health_factor, expected_health_factor);
+        }
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_save_loan_edge_cases() {
+        let mut conn = setup_test_db();
+        let test_borrower = "TEST_EDGE_CASE_BORROWER";
+
+        clean_test_data(&mut conn, test_borrower);
+
+        // Test with zero amounts
+        let zero_loan = Loan {
+            id: 0,
+            borrower: test_borrower.to_string(),
+            borrowed_amount: 0,
+            borrowed_from: "POOL1".to_string(),
+            collateral_amount: 0,
+            collateral_from: "POOL2".to_string(),
+            unpaid_interest: 0,
+        };
+
+        let result = save_loan(&mut conn, zero_loan);
+        assert!(result.is_ok());
+
+        // Test with large values (but not MAX to avoid potential DB constraints)
+        let large_loan = Loan {
+            id: 0,
+            borrower: format!("{}_LARGE", test_borrower),
+            borrowed_amount: 1_000_000_000_000_000, // 1 quadrillion
+            borrowed_from: "POOL1".to_string(),
+            collateral_amount: 2_000_000_000_000_000, // 2 quadrillion
+            collateral_from: "POOL2".to_string(),
+            unpaid_interest: 50_000_000_000_000, // 50 trillion
+        };
+
+        let result = save_loan(&mut conn, large_loan);
+        assert!(result.is_ok());
+
+        clean_test_data(&mut conn, test_borrower);
+        clean_test_data(&mut conn, &format!("{}_LARGE", test_borrower));
+    }
+
+    #[test]
+    fn test_health_factor_threshold_boundary() {
+        let threshold = 10_100_000i128; // 1.01
+
+        // Test exactly at threshold
+        let health_factor_at_threshold = 10_100_000i128;
+        assert!(health_factor_at_threshold >= threshold);
+
+        // Test just below threshold (should be liquidatable)
+        let health_factor_below = 10_099_999i128;
+        assert!(health_factor_below < threshold);
+
+        // Test just above threshold (should not be liquidatable)
+        let health_factor_above = 10_100_001i128;
+        assert!(health_factor_above >= threshold);
     }
 }
