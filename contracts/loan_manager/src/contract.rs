@@ -1,8 +1,8 @@
 use crate::error::LoanManagerError;
 use crate::oracle::{self, Asset};
-use crate::storage::{self, Loan};
+use crate::storage::{self, write_loans, Loan};
 
-use soroban_sdk::{contract, contractimpl, token, Address, BytesN, Env, String, Symbol};
+use soroban_sdk::{contract, contractimpl, token, vec, Address, BytesN, Env, String, Symbol, Vec};
 
 mod loan_pool {
     soroban_sdk::contractimport!(file = "../../target/wasm32v1-none/release/loan_pool.wasm");
@@ -109,10 +109,6 @@ impl LoanManager {
     ) -> Result<(), LoanManagerError> {
         user.require_auth();
 
-        if storage::loan_exists(&e, user.clone()) {
-            return Err(LoanManagerError::LoanAlreadyExists);
-        }
-
         let pool_addresses = storage::read_pool_addresses(&e);
         if !pool_addresses.contains(&borrowed_from) {
             return Err(LoanManagerError::InvalidLoanToken);
@@ -162,73 +158,78 @@ impl LoanManager {
             last_accrual: borrow_pool_client.get_accrual(),
         };
 
-        storage::write_loan(&e, user.clone(), loan);
+        storage::create_loan(&e, user.clone(), loan);
 
         Ok(())
     }
 
+    /// add interest to all the loans the user has
     pub fn add_interest(e: &Env, user: Address) -> Result<(), LoanManagerError> {
-        const DECIMAL: i128 = 10000000;
-        let Loan {
-            borrower,
-            borrowed_from,
-            collateral_amount,
-            borrowed_amount,
-            collateral_from,
-            unpaid_interest,
-            last_accrual,
-            ..
-        } = storage::read_loan(e, user.clone()).ok_or(LoanManagerError::LoanNotFound)?;
+        let current_loans = storage::read_loans(e, user.clone());
+        let mut new_loans: Vec<Loan> = vec![&e];
 
-        let borrow_pool_client = loan_pool::Client::new(e, &borrowed_from);
-        let collateral_pool_client = loan_pool::Client::new(e, &collateral_from);
+        for loan in current_loans.iter() {
+            let Loan {
+                borrower,
+                borrowed_from,
+                collateral_amount,
+                borrowed_amount,
+                collateral_from,
+                unpaid_interest,
+                last_accrual,
+                ..
+            } = loan;
+            let borrow_pool_client = loan_pool::Client::new(e, &borrowed_from);
+            let collateral_pool_client = loan_pool::Client::new(e, &collateral_from);
 
-        let token_ticker = borrow_pool_client.get_currency().ticker;
+            let token_ticker = borrow_pool_client.get_currency().ticker;
+            let token_collateral_ticker = collateral_pool_client.get_currency().ticker;
 
-        let token_collateral_ticker = collateral_pool_client.get_currency().ticker;
+            const DECIMAL: i128 = 10000000;
 
-        borrow_pool_client.add_interest_to_accrual();
-        let current_accrual = borrow_pool_client.get_accrual();
-        let interest_since_update_multiplier = current_accrual
-            .checked_mul(DECIMAL)
-            .ok_or(LoanManagerError::OverOrUnderFlow)?
-            .checked_div(last_accrual)
-            .ok_or(LoanManagerError::OverOrUnderFlow)?;
+            borrow_pool_client.add_interest_to_accrual();
+            let current_accrual = borrow_pool_client.get_accrual();
+            let interest_since_update_multiplier = current_accrual
+                .checked_mul(DECIMAL)
+                .ok_or(LoanManagerError::OverOrUnderFlow)?
+                .checked_div(last_accrual)
+                .ok_or(LoanManagerError::OverOrUnderFlow)?;
 
-        let new_borrowed_amount = borrowed_amount
-            .checked_mul(interest_since_update_multiplier)
-            .ok_or(LoanManagerError::OverOrUnderFlow)?
-            .checked_div(DECIMAL)
-            .ok_or(LoanManagerError::OverOrUnderFlow)?;
+            let new_borrowed_amount = borrowed_amount
+                .checked_mul(interest_since_update_multiplier)
+                .ok_or(LoanManagerError::OverOrUnderFlow)?
+                .checked_div(DECIMAL)
+                .ok_or(LoanManagerError::OverOrUnderFlow)?;
 
-        let new_health_factor = Self::calculate_health_factor(
-            e,
-            token_ticker,
-            new_borrowed_amount,
-            token_collateral_ticker,
-            collateral_amount,
-            collateral_from.clone(),
-        )?;
+            let new_health_factor = Self::calculate_health_factor(
+                e,
+                token_ticker,
+                new_borrowed_amount,
+                token_collateral_ticker,
+                collateral_amount,
+                collateral_from.clone(),
+            )?;
 
-        let borrow_change = new_borrowed_amount
-            .checked_sub(borrowed_amount)
-            .ok_or(LoanManagerError::OverOrUnderFlow)?;
-        let new_unpaid_interest = unpaid_interest
-            .checked_add(borrow_change)
-            .ok_or(LoanManagerError::OverOrUnderFlow)?;
+            let borrow_change = new_borrowed_amount
+                .checked_sub(borrowed_amount)
+                .ok_or(LoanManagerError::OverOrUnderFlow)?;
+            let new_unpaid_interest = unpaid_interest
+                .checked_add(borrow_change)
+                .ok_or(LoanManagerError::OverOrUnderFlow)?;
 
-        let updated_loan = Loan {
-            borrower,
-            borrowed_from,
-            collateral_amount,
-            borrowed_amount: new_borrowed_amount,
-            collateral_from,
-            health_factor: new_health_factor,
-            unpaid_interest: new_unpaid_interest,
-            last_accrual: current_accrual,
-        };
+            new_loans.push_back(Loan {
+                borrower,
+                borrowed_from,
+                collateral_amount,
+                borrowed_amount: new_borrowed_amount,
+                collateral_from,
+                health_factor: new_health_factor,
+                unpaid_interest: new_unpaid_interest,
+                last_accrual: current_accrual,
+            });
+        }
 
-        storage::write_loan(e, user.clone(), updated_loan.clone());
+        write_loans(e, user, new_loans);
 
         Ok(())
     }
@@ -280,10 +281,18 @@ impl LoanManager {
         Ok(health_factor)
     }
 
-    pub fn get_loan(e: &Env, user: Address) -> Result<Loan, LoanManagerError> {
-        storage::read_loan(e, user).ok_or(LoanManagerError::LoanNotFound)
+    /// Get the loans for a specific user
+    pub fn get_loans(e: &Env, user: Address) -> Vec<Loan> {
+        storage::read_loans(e, user)
     }
 
+    /// Get a single loan
+    pub fn get_loan(e: &Env, user: Address, loan_idx: u32) -> Result<Loan, LoanManagerError> {
+        let loans = storage::read_loans(e, user.clone());
+        loans.get(loan_idx).ok_or(LoanManagerError::LoanNotFound)
+    }
+
+    /// Get the price of a token
     pub fn get_price(e: &Env, token: Symbol) -> Result<i128, LoanManagerError> {
         let reflector_address = Address::from_string(&String::from_str(e, REFLECTOR_ADDRESS));
         let reflector_contract = oracle::Client::new(e, &reflector_address);
@@ -296,11 +305,17 @@ impl LoanManager {
         Ok(asset_pricedata.price)
     }
 
-    pub fn repay(e: &Env, user: Address, amount: i128) -> Result<(i128, i128), LoanManagerError> {
+    pub fn repay(
+        e: &Env,
+        user: Address,
+        loan_idx: u32,
+        amount: i128,
+    ) -> Result<(i128, i128), LoanManagerError> {
         user.require_auth();
 
         Self::add_interest(e, user.clone())?;
 
+        let mut loans = storage::read_loans(e, user.clone());
         let Loan {
             borrower,
             borrowed_amount,
@@ -310,7 +325,7 @@ impl LoanManager {
             unpaid_interest,
             last_accrual,
             ..
-        } = storage::read_loan(e, user.clone()).ok_or(LoanManagerError::LoanNotFound)?;
+        } = loans.get(loan_idx).ok_or(LoanManagerError::LoanNotFound)?;
 
         assert!(
             amount <= borrowed_amount,
@@ -342,18 +357,20 @@ impl LoanManager {
             collateral_from.clone(),
         )?;
 
-        let loan = Loan {
-            borrower,
-            borrowed_amount: new_borrowed_amount,
-            borrowed_from,
-            collateral_amount,
-            collateral_from,
-            health_factor: new_health_factor,
-            unpaid_interest: new_unpaid_interest,
-            last_accrual,
-        };
-
-        storage::write_loan(e, user, loan);
+        loans.insert(
+            loan_idx,
+            Loan {
+                borrower,
+                borrowed_amount: new_borrowed_amount,
+                borrowed_from,
+                collateral_amount,
+                collateral_from,
+                health_factor: new_health_factor,
+                unpaid_interest: new_unpaid_interest,
+                last_accrual,
+            },
+        );
+        storage::write_loans(e, user, loans);
 
         Ok((borrowed_amount, new_borrowed_amount))
     }
@@ -362,6 +379,7 @@ impl LoanManager {
         e: &Env,
         user: Address,
         max_allowed_amount: i128,
+        loan_idx: u32,
     ) -> Result<i128, LoanManagerError> {
         user.require_auth();
 
@@ -374,7 +392,7 @@ impl LoanManager {
             collateral_from,
             unpaid_interest,
             ..
-        } = storage::read_loan(e, user.clone()).ok_or(LoanManagerError::LoanNotFound)?;
+        } = Self::get_loan(e, user.clone(), loan_idx)?;
 
         let borrow_pool_client = loan_pool::Client::new(e, &borrowed_from);
         borrow_pool_client.repay_and_close(
@@ -387,7 +405,7 @@ impl LoanManager {
         let collateral_pool_client = loan_pool::Client::new(e, &collateral_from);
         collateral_pool_client.withdraw_collateral(&user, &collateral_amount);
 
-        storage::delete_loan(e, user);
+        storage::delete_loan(e, user, loan_idx);
         Ok(borrowed_amount)
     }
 
@@ -395,6 +413,7 @@ impl LoanManager {
         e: Env,
         user: Address,
         borrower: Address,
+        loan_idx: u32,
         amount: i128,
     ) -> Result<(i128, i128), LoanManagerError> {
         user.require_auth();
@@ -410,7 +429,7 @@ impl LoanManager {
             unpaid_interest,
             last_accrual,
             ..
-        } = storage::read_loan(&e, borrower.clone()).ok_or(LoanManagerError::LoanNotFound)?;
+        } = Self::get_loan(&e, borrower.clone(), loan_idx)?;
 
         let borrow_pool_client = loan_pool::Client::new(&e, &borrowed_from);
         let collateral_pool_client = loan_pool::Client::new(&e, &collateral_from);
@@ -487,7 +506,8 @@ impl LoanManager {
             last_accrual,
         };
 
-        storage::write_loan(&e, borrower, new_loan);
+        // udpate one loan
+        storage::update_loan(&e, borrower.clone(), loan_idx, new_loan);
 
         Ok((new_borrowed_amount, new_collateral_amount))
     }
@@ -684,17 +704,17 @@ mod tests {
         assert_eq!(xlm_token_client.balance(&user), 1_000);
         assert_eq!(usdc_token_client.balance(&user), 1_000);
 
-        let mut user_loan = manager_client.get_loan(&user);
+        let mut user_loan = manager_client.get_loan(&user, &0);
 
         assert_eq!(user_loan.borrowed_amount, 1_000);
         assert_eq!(user_loan.collateral_amount, 100_000);
 
-        manager_client.repay(&user, &100);
+        manager_client.repay(&user, &0, &100);
         e.ledger().with_mut(|li| {
             li.sequence_number = 100_000 + 100_000 + 1;
         });
 
-        user_loan = manager_client.get_loan(&user);
+        user_loan = manager_client.get_loan(&user, &0);
 
         assert_eq!(user_loan.borrowed_amount, 928);
         assert_eq!(user_loan.collateral_amount, 100_000);
@@ -750,16 +770,16 @@ mod tests {
         assert_eq!(xlm_token_client.balance(&user), 100);
         assert_eq!(usdc_token_client.balance(&user), 500);
 
-        let user_loan = manager_client.get_loan(&user);
+        let user_loan = manager_client.get_loan(&user, &0);
 
         assert_eq!(user_loan.borrowed_amount, 100);
         assert_eq!(user_loan.collateral_amount, 500);
 
-        manager_client.repay(&user, &50);
-        let user_loan = manager_client.get_loan(&user);
+        manager_client.repay(&user, &0, &50);
+        let user_loan = manager_client.get_loan(&user, &0);
         assert_eq!(user_loan.borrowed_amount, 52);
 
-        assert_eq!((52, 2), manager_client.repay(&user, &50));
+        assert_eq!((52, 2), manager_client.repay(&user, &0, &50));
         assert_eq!(1000, pool_xlm_client.get_available_balance());
         assert_eq!(1002, pool_xlm_client.get_contract_balance());
         assert_eq!(1000, pool_xlm_client.get_total_balance_shares());
@@ -860,7 +880,7 @@ mod tests {
         // Create a loan.
         manager_client.create_loan(&user, &100, &pool_xlm_addr, &1000, &pool_usdc_addr);
 
-        let user_loan = manager_client.get_loan(&user);
+        let user_loan = manager_client.get_loan(&user, &0);
 
         // Here borrowed amount should be the same as time has not moved. add_interest() is only called to store the LastUpdate sequence number.
         assert_eq!(user_loan.borrowed_amount, 100);
@@ -879,7 +899,7 @@ mod tests {
 
         manager_client.add_interest(&user);
 
-        let user_loan = manager_client.get_loan(&user);
+        let user_loan = manager_client.get_loan(&user, &0);
 
         assert_eq!(user_loan.borrowed_amount, 102);
         assert_eq!(user_loan.health_factor, 78_431_372);
@@ -928,16 +948,16 @@ mod tests {
         assert_eq!(xlm_token_client.balance(&user), 100);
         assert_eq!(usdc_token_client.balance(&user), 500);
 
-        let user_loan = manager_client.get_loan(&user);
+        let user_loan = manager_client.get_loan(&user, &0);
 
         assert_eq!(user_loan.borrowed_amount, 100);
         assert_eq!(user_loan.collateral_amount, 500);
 
-        manager_client.repay(&user, &50);
-        let user_loan = manager_client.get_loan(&user);
+        manager_client.repay(&user, &0, &50);
+        let user_loan = manager_client.get_loan(&user, &0);
         assert_eq!(user_loan.borrowed_amount, 52);
 
-        assert_eq!((52, 2), manager_client.repay(&user, &50));
+        assert_eq!((52, 2), manager_client.repay(&user, &0, &50));
         assert_eq!(1000, pool_xlm_client.get_available_balance());
         assert_eq!(1002, pool_xlm_client.get_contract_balance());
         assert_eq!(1000, pool_xlm_client.get_total_balance_shares());
@@ -986,7 +1006,7 @@ mod tests {
         assert_eq!(xlm_token_client.balance(&user), 100);
         assert_eq!(usdc_token_client.balance(&user), 700);
 
-        let user_loan = manager_client.get_loan(&user);
+        let user_loan = manager_client.get_loan(&user, &0);
 
         assert_eq!(user_loan.borrowed_amount, 100);
         assert_eq!(user_loan.collateral_amount, 300);
@@ -995,7 +1015,7 @@ mod tests {
         xlm_asset_client.mint(&user, &45);
         assert_eq!(
             102,
-            manager_client.repay_and_close_manager(&user, &(user_loan.borrowed_amount + 45))
+            manager_client.repay_and_close_manager(&user, &(user_loan.borrowed_amount + 45), &0)
         );
 
         assert_eq!(1002, pool_xlm_client.get_available_balance());
@@ -1022,7 +1042,7 @@ mod tests {
         // Create a loan.
         manager_client.create_loan(&user, &100, &pool_xlm_addr, &1000, &pool_usdc_addr);
 
-        manager_client.repay(&user, &2_000);
+        manager_client.repay(&user, &0, &2_000);
     }
     #[test]
     fn liquidate() {
@@ -1058,7 +1078,7 @@ mod tests {
         // Create a loan.
         manager_client.create_loan(&user, &10_000, &pool_xlm_addr, &12_505, &pool_usdc_addr);
 
-        let user_loan = manager_client.get_loan(&user);
+        let user_loan = manager_client.get_loan(&user, &0);
 
         assert_eq!(user_loan.borrowed_amount, 10_000);
 
@@ -1080,7 +1100,7 @@ mod tests {
 
         manager_client.add_interest(&user);
 
-        let user_loan = manager_client.get_loan(&user);
+        let user_loan = manager_client.get_loan(&user, &0);
 
         assert_eq!(user_loan.borrowed_amount, 12_998);
         assert_eq!(user_loan.health_factor, 7_696_568);
@@ -1093,9 +1113,9 @@ mod tests {
         let reflector_addr = Address::from_string(&String::from_str(&e, REFLECTOR_ADDRESS));
         e.register_at(&reflector_addr, oracle::WASM, ());
 
-        manager_client.liquidate(&admin, &user, &5_000);
+        manager_client.liquidate(&admin, &user, &0, &5_000);
 
-        let user_loan = manager_client.get_loan(&user);
+        let user_loan = manager_client.get_loan(&user, &0);
 
         assert_eq!(user_loan.borrowed_amount, 7_998);
         assert_eq!(user_loan.health_factor, 7_256_814);
