@@ -85,44 +85,45 @@ pub fn read_pool_addresses(e: &Env) -> Vec<Address> {
         .unwrap_or(vec![&e])
 }
 
-pub fn write_loan(e: &Env, user: Address, loan: Loan) {
+pub fn create_loan(e: &Env, user: Address, loan: Loan) {
     let key = LoanManagerDataKey::Loan(user.clone());
-    let is_existing = loan_exists(e, user);
+    let mut loans = read_loans(e, user.clone());
+    loans.push_back(loan);
 
-    e.storage().persistent().set(&key, &loan);
-
+    e.storage().persistent().set(&key, &loans);
     e.storage()
         .persistent()
         .extend_ttl(&key, POSITIONS_LIFETIME_THRESHOLD, POSITIONS_BUMP_AMOUNT);
 
-    e.events().publish(
-        (
-            symbol_short!("Loan"),
-            if is_existing {
-                symbol_short!("updated")
-            } else {
-                symbol_short!("created")
-            },
-        ),
-        key,
-    );
+    e.events()
+        .publish((symbol_short!("Loan"), symbol_short!("created")), key);
 }
 
-pub fn loan_exists(e: &Env, user: Address) -> bool {
+pub fn write_loans(e: &Env, user: Address, loans: Vec<Loan>) {
+    let key = LoanManagerDataKey::Loan(user.clone());
+    e.storage().persistent().set(&key, &loans);
     e.storage()
         .persistent()
-        .has(&LoanManagerDataKey::Loan(user))
+        .extend_ttl(&key, POSITIONS_LIFETIME_THRESHOLD, POSITIONS_BUMP_AMOUNT);
+    e.events()
+        .publish((symbol_short!("Loan"), symbol_short!("updated")), key);
 }
 
-pub fn read_loan(e: &Env, user: Address) -> Option<Loan> {
+pub fn update_loan(e: &Env, user: Address, loan_idx: u32, loan: Loan) {
+    let mut loans = read_loans(e, user.clone());
+    loans.insert(loan_idx, loan);
+    write_loans(e, user, loans);
+}
+
+pub fn read_loans(e: &Env, user: Address) -> Vec<Loan> {
     e.storage()
         .persistent()
         .get(&LoanManagerDataKey::Loan(user))
+        .unwrap_or(vec![&e])
 }
 
-pub fn delete_loan(e: &Env, user: Address) {
-    let key = LoanManagerDataKey::Loan(user);
-    e.storage().persistent().remove(&key);
-    e.events()
-        .publish((symbol_short!("Loan"), symbol_short!("deleted")), key);
+pub fn delete_loan(e: &Env, user: Address, loan_idx: u32) {
+    let mut loans = read_loans(e, user.clone());
+    loans.remove(loan_idx);
+    write_loans(e, user, loans);
 }
