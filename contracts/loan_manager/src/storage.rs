@@ -111,7 +111,7 @@ pub fn write_loans(e: &Env, user: Address, loans: Vec<Loan>) {
 
 pub fn update_loan(e: &Env, user: Address, loan_idx: u32, loan: Loan) {
     let mut loans = read_loans(e, user.clone());
-    loans.insert(loan_idx, loan);
+    loans.set(loan_idx, loan);
     write_loans(e, user, loans);
 }
 
