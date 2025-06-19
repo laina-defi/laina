@@ -362,16 +362,21 @@ impl LoanManager {
             collateral_from.clone(),
         )?;
 
-        storage::update_loan(e, user, loan_idx, Loan {
-            borrower,
-            borrowed_amount: new_borrowed_amount,
-            borrowed_from,
-            collateral_amount,
-            collateral_from,
-            health_factor: new_health_factor,
-            unpaid_interest: new_unpaid_interest,
-            last_accrual,
-        });
+        storage::update_loan(
+            e,
+            user,
+            loan_idx,
+            Loan {
+                borrower,
+                borrowed_amount: new_borrowed_amount,
+                borrowed_from,
+                collateral_amount,
+                collateral_from,
+                health_factor: new_health_factor,
+                unpaid_interest: new_unpaid_interest,
+                last_accrual,
+            },
+        );
 
         Ok((borrowed_amount, new_borrowed_amount))
     }
@@ -545,7 +550,7 @@ mod tests {
         testutils::{Address as _, Ledger},
         token::{Client as TokenClient, StellarAssetClient},
         xdr::ToXdr,
-        Env, String,
+        Env,
     };
     mod loan_manager {
         soroban_sdk::contractimport!(file = "../../target/wasm32v1-none/release/loan_manager.wasm");
@@ -585,7 +590,9 @@ mod tests {
         // ACT
         // Deploy contract using loan_manager as factory
         let TestEnv {
-            pool_usdc_client, pool_eurc_client, ..
+            pool_usdc_client,
+            pool_eurc_client,
+            ..
         } = setup_test_env(&e);
 
         // ASSERT
@@ -918,7 +925,8 @@ mod tests {
         // ACT
 
         // Create a loan.
-        let user_loan = manager_client.create_loan(&user, &100, &pool_usdc_addr, &1000, &pool_xlm_addr);
+        let user_loan =
+            manager_client.create_loan(&user, &100, &pool_usdc_addr, &1000, &pool_xlm_addr);
 
         // Here borrowed amount should be the same as time has not moved. add_interest() is only called to store the LastUpdate sequence number.
         assert_eq!(user_loan.borrowed_amount, 100);
@@ -1141,7 +1149,6 @@ mod tests {
         let eurc_loan = loans.get(0).unwrap();
         assert_eq!(eurc_loan.borrowed_amount, 102);
         assert_eq!(eurc_loan.collateral_amount, 300);
-
     }
 
     #[test]
@@ -1184,30 +1191,36 @@ mod tests {
             pool_xlm_addr,
             pool_usdc_client,
             pool_usdc_addr,
+            pool_eurc_client,
+            eurc_asset_client,
             xlm_asset_client,
             usdc_asset_client,
             reflector_addr,
+            pool_eurc_addr,
             ..
         } = setup_test_env(&e);
 
         // print more money
         usdc_asset_client.mint(&admin, &9_001);
+        eurc_asset_client.mint(&admin, &9_001);
+        xlm_asset_client.mint(&user, &30_000);
         pool_usdc_client.deposit(&admin, &9_001);
-        xlm_asset_client.mint(&user, &12_000);
+        pool_eurc_client.deposit(&admin, &9_001);
 
         // ACT
         // Create a loan.
         manager_client.create_loan(&user, &10_000, &pool_usdc_addr, &12_505, &pool_xlm_addr);
+        manager_client.create_loan(&user, &10_000, &pool_eurc_addr, &12_505, &pool_xlm_addr);
 
-        let user_loan = manager_client.get_loan(&user, &0);
-
-        assert_eq!(user_loan.borrowed_amount, 10_000);
+        let loans = manager_client.get_loans(&user);
+        let usdc_loan = loans.get(0).unwrap();
+        assert_eq!(usdc_loan.borrowed_amount, 10_000);
 
         manager_client.add_interest(&user);
 
         // Here borrowed amount should be the same as time has not moved. add_interest() is only called to store the LastUpdate sequence number.
-        assert_eq!(user_loan.borrowed_amount, 10_000);
-        assert_eq!(user_loan.health_factor, 10_004_000);
+        assert_eq!(usdc_loan.borrowed_amount, 10_000);
+        assert_eq!(usdc_loan.health_factor, 10_004_000);
 
         // Move time
         e.ledger().with_mut(|li| {
@@ -1220,11 +1233,11 @@ mod tests {
 
         manager_client.add_interest(&user);
 
-        let user_loan = manager_client.get_loan(&user, &0);
+        let usdc_loan = manager_client.get_loan(&user, &0);
 
-        assert_eq!(user_loan.borrowed_amount, 10_760);
-        assert_eq!(user_loan.health_factor, 9_297_397);
-        assert_eq!(user_loan.collateral_amount, 12_505);
+        assert_eq!(usdc_loan.borrowed_amount, 10_760);
+        assert_eq!(usdc_loan.health_factor, 9_297_397);
+        assert_eq!(usdc_loan.collateral_amount, 12_505);
 
         e.ledger().with_mut(|li| {
             li.sequence_number = 100_000 + 1_000;
@@ -1234,11 +1247,18 @@ mod tests {
 
         manager_client.liquidate(&admin, &user, &0, &5_000);
 
-        let user_loan = manager_client.get_loan(&user, &0);
+        let loans = manager_client.get_loans(&user);
+        assert_eq!(loans.len(), 2);
 
-        assert_eq!(user_loan.borrowed_amount, 5_760);
-        assert_eq!(user_loan.health_factor, 9_729_166);
-        assert_eq!(user_loan.collateral_amount, 7_005);
+        let usdc_loan = loans.get(0).unwrap();
+        assert_eq!(usdc_loan.borrowed_amount, 5_760);
+        assert_eq!(usdc_loan.health_factor, 9_729_166);
+        assert_eq!(usdc_loan.collateral_amount, 7_005);
+
+        let eurc_loan = loans.get(1).unwrap();
+        assert_eq!(eurc_loan.borrowed_amount, 10_760);
+        assert_eq!(eurc_loan.health_factor, 9_297_397);
+        assert_eq!(eurc_loan.collateral_amount, 12_505);
     }
 
     /* Test setup helpers */
