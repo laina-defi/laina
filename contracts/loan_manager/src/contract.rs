@@ -419,16 +419,15 @@ impl LoanManager {
         let collateral_ticker = collateral_pool_client.get_currency().ticker;
 
         // Check that loan is for sure liquidatable at this moment.
-        assert!(
-            Self::calculate_health_factor(
-                &e,
-                borrowed_ticker.clone(),
-                borrowed_amount,
-                collateral_ticker.clone(),
-                collateral_amount,
-                collateral_from.clone(),
-            )? < 10000000
-        ); // Temp high value for testing
+        let health_factor_before_liquidation = Self::calculate_health_factor(
+            &e,
+            borrowed_ticker.clone(),
+            borrowed_amount,
+            collateral_ticker.clone(),
+            collateral_amount,
+            collateral_from.clone(),
+        )?;
+        assert!(health_factor_before_liquidation < 10000000);
         assert!(
             amount
                 < (borrowed_amount
@@ -438,14 +437,24 @@ impl LoanManager {
 
         let borrowed_price = Self::get_price(&e, borrowed_ticker.clone())?;
         let collateral_price = Self::get_price(&e, collateral_ticker.clone())?;
+        let collateral_factor = collateral_pool_client.get_collateral_factor();
+        const FIXED_POINT_ONE: i128 = 10_000_000;
 
-        const TEMP_BONUS: i128 = 10_500_000; // multiplier 1.05 -> 5%
+        // bonus rate = (1-collateralfactor) / 2 = e.g. 2.5-10 %
+        // As multiplier = bonus rate + 1
+        let bonus = FIXED_POINT_ONE
+            .checked_sub(collateral_factor)
+            .ok_or(LoanManagerError::OverOrUnderFlow)?
+            .checked_div(2_i128)
+            .ok_or(LoanManagerError::OverOrUnderFlow)?
+            .checked_add(FIXED_POINT_ONE)
+            .ok_or(LoanManagerError::OverOrUnderFlow)?;
 
         let liquidation_value = amount
             .checked_mul(borrowed_price)
             .ok_or(LoanManagerError::OverOrUnderFlow)?;
         let collateral_amount_bonus = liquidation_value
-            .checked_mul(TEMP_BONUS)
+            .checked_mul(bonus)
             .ok_or(LoanManagerError::OverOrUnderFlow)?
             .checked_div(collateral_price)
             .ok_or(LoanManagerError::OverOrUnderFlow)?
@@ -475,6 +484,10 @@ impl LoanManager {
             new_collateral_amount,
             collateral_from.clone(),
         )?;
+
+        if new_health_factor < health_factor_before_liquidation {
+            return Err(LoanManagerError::InvalidLiquidation);
+        }
 
         let new_loan = Loan {
             borrower: borrower.clone(),
@@ -1070,8 +1083,8 @@ mod tests {
 
         // Move time
         e.ledger().with_mut(|li| {
-            li.sequence_number = 100_000 + 100_000;
-            li.timestamp = 1 + 31_556_926;
+            li.sequence_number = 100_000 + 10_000;
+            li.timestamp = 1 + 8_000_000;
         });
 
         // A new instance of reflector mock needs to be created, they only live for one ledger.
@@ -1082,8 +1095,8 @@ mod tests {
 
         let user_loan = manager_client.get_loan(&user);
 
-        assert_eq!(user_loan.borrowed_amount, 12_998);
-        assert_eq!(user_loan.health_factor, 7_696_568);
+        assert_eq!(user_loan.borrowed_amount, 10_760);
+        assert_eq!(user_loan.health_factor, 9_297_397);
         assert_eq!(user_loan.collateral_amount, 12_505);
 
         e.ledger().with_mut(|li| {
@@ -1097,9 +1110,9 @@ mod tests {
 
         let user_loan = manager_client.get_loan(&user);
 
-        assert_eq!(user_loan.borrowed_amount, 7_998);
-        assert_eq!(user_loan.health_factor, 7_256_814);
-        assert_eq!(user_loan.collateral_amount, 7_255);
+        assert_eq!(user_loan.borrowed_amount, 5_760);
+        assert_eq!(user_loan.health_factor, 9_729_166);
+        assert_eq!(user_loan.collateral_amount, 7_005);
     }
 
     /* Test setup helpers */
