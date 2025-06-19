@@ -545,7 +545,7 @@ mod tests {
         testutils::{Address as _, Ledger},
         token::{Client as TokenClient, StellarAssetClient},
         xdr::ToXdr,
-        Env,
+        Env, String,
     };
     mod loan_manager {
         soroban_sdk::contractimport!(file = "../../target/wasm32v1-none/release/loan_manager.wasm");
@@ -1034,13 +1034,13 @@ mod tests {
         let TestEnv {
             user,
             manager_client,
-            usdc_asset_client,
-            pool_usdc_client,
             pool_xlm_addr,
             pool_usdc_addr,
             xlm_token_client,
             usdc_token_client,
             reflector_addr,
+            pool_usdc_client,
+            usdc_asset_client,
             ..
         } = setup_test_env(&e);
 
@@ -1054,29 +1054,94 @@ mod tests {
             li.timestamp = 1 + 31_556_926;
         });
 
+        // A new instance of reflector mock needs to be created, they only live for one ledger.
+        e.register_at(&reflector_addr, oracle::WASM, ());
+
+        // ASSERT
+        assert_eq!(xlm_token_client.balance(&user), 700);
+        assert_eq!(usdc_token_client.balance(&user), 100);
+
+        let loans = manager_client.get_loans(&user);
+        assert_eq!(loans.len(), 1);
+
+        // mint the user some money so they can repay.
+        usdc_asset_client.mint(&user, &45);
+        manager_client.repay_and_close_manager(&user, &145, &0);
+
+        let loans = manager_client.get_loans(&user);
+        assert_eq!(loans.len(), 0);
+        assert_eq!(1002, pool_usdc_client.get_available_balance());
+        assert_eq!(1002, pool_usdc_client.get_contract_balance());
+        assert_eq!(1000, pool_usdc_client.get_total_balance_shares());
+    }
+
+    #[test]
+    fn repay_and_close_with_multiple_loans() {
+        // ARRANGE
+        let e = Env::default();
+        e.mock_all_auths_allowing_non_root_auth();
+        e.ledger().with_mut(|li| {
+            li.sequence_number = 100_000;
+            li.timestamp = 1;
+            li.min_persistent_entry_ttl = 1_000_000;
+            li.min_temp_entry_ttl = 1_000_000;
+            li.max_entry_ttl = 1_000_001;
+        });
+
+        let TestEnv {
+            user,
+            manager_client,
+            usdc_asset_client,
+            pool_usdc_client,
+            pool_xlm_addr,
+            pool_usdc_addr,
+            pool_eurc_addr,
+            usdc_token_client,
+            reflector_addr,
+            ..
+        } = setup_test_env(&e);
+
+        // ACT
+        // Create a loan.
+        manager_client.create_loan(&user, &100, &pool_usdc_addr, &300, &pool_xlm_addr);
+        manager_client.create_loan(&user, &100, &pool_eurc_addr, &300, &pool_xlm_addr);
+
+        // Move in time
+        e.ledger().with_mut(|li| {
+            li.sequence_number = 100_000 + 100_000;
+            li.timestamp = 1 + 31_556_926;
+        });
+
         // ASSERT
         // A new instance of reflector mock needs to be created, they only live for one ledger.
         e.register_at(&reflector_addr, oracle::WASM, ());
 
-        assert_eq!(xlm_token_client.balance(&user), 700);
-        assert_eq!(usdc_token_client.balance(&user), 100);
+        let loans = manager_client.get_loans(&user);
+        assert_eq!(loans.len(), 2);
+        let usdc_loan = loans.get(0).unwrap();
 
-        let user_loan = manager_client.get_loan(&user, &0);
-
-        assert_eq!(user_loan.borrowed_amount, 100);
-        assert_eq!(user_loan.collateral_amount, 300);
+        assert_eq!(usdc_loan.borrowed_amount, 100);
+        assert_eq!(usdc_loan.collateral_amount, 300);
 
         // mint the user some money so they can repay.
         usdc_asset_client.mint(&user, &45);
         assert_eq!(
             102,
-            manager_client.repay_and_close_manager(&user, &(user_loan.borrowed_amount + 45), &0)
+            manager_client.repay_and_close_manager(&user, &(usdc_loan.borrowed_amount + 45), &0)
         );
 
         assert_eq!(1002, pool_usdc_client.get_available_balance());
         assert_eq!(1002, pool_usdc_client.get_contract_balance());
         assert_eq!(1000, pool_usdc_client.get_total_balance_shares());
         assert_eq!(43, usdc_token_client.balance(&user));
+
+        // The eurc loan should still be there after repaying the usdc loan
+        let loans = manager_client.get_loans(&user);
+        assert_eq!(loans.len(), 1);
+        let eurc_loan = loans.get(0).unwrap();
+        assert_eq!(eurc_loan.borrowed_amount, 102);
+        assert_eq!(eurc_loan.collateral_amount, 300);
+
     }
 
     #[test]
