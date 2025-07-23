@@ -17,4 +17,6 @@ pub enum LoanPoolError {
     WithdrawOverBalance = 11,
     WithdrawIsNegative = 12,
     InterestRateMultiplier = 13,
+    PoolStatus = 14,
+    WrongStatus = 15,
 }
