@@ -1,7 +1,7 @@
 use crate::dto::PoolState;
 use crate::error::LoanPoolError;
 use crate::interest::{self, get_interest};
-use crate::storage::{Currency, Positions};
+use crate::storage::{Currency, PoolStatus, Positions};
 use crate::{positions, storage};
 
 use soroban_sdk::{contract, contractimpl, contractmeta, token, Address, BytesN, Env};
@@ -34,6 +34,7 @@ impl LoanPoolContract {
         storage::write_accrual(&e, 10_000_000); // Default initial accrual value.
         storage::write_accrual_last_updated(&e, e.ledger().timestamp());
         storage::change_interest_rate_multiplier(&e, 1); // Temporary parameter
+        storage::change_pool_status(&e, PoolStatus::Healthy);
     }
 
     pub fn upgrade(e: Env, new_wasm_hash: BytesN<32>) -> Result<(), LoanPoolError> {
@@ -55,6 +56,12 @@ impl LoanPoolContract {
     /// Deposits token. Also, mints pool shares for the "user" Identifier.
     pub fn deposit(e: Env, user: Address, amount: i128) -> Result<i128, LoanPoolError> {
         user.require_auth();
+
+        let pool_status = storage::read_pool_status(&e)?;
+        if pool_status == PoolStatus::Restricted || pool_status == PoolStatus::Frozen {
+            return Err(LoanPoolError::WrongStatus);
+        }
+
         if amount <= 0 {
             Err(LoanPoolError::NegativeDeposit)
         } else {
@@ -98,6 +105,12 @@ impl LoanPoolContract {
     /// Transfers share tokens back, burns them and gives corresponding amount of tokens back to user. Returns amount of tokens withdrawn
     pub fn withdraw(e: Env, user: Address, amount: i128) -> Result<PoolState, LoanPoolError> {
         user.require_auth();
+
+        let pool_status = storage::read_pool_status(&e)?;
+        if pool_status == PoolStatus::Frozen {
+            return Err(LoanPoolError::WrongStatus);
+        }
+
         Self::withdraw_internal(e, user, amount)
     }
 
@@ -174,6 +187,11 @@ impl LoanPoolContract {
         let loan_manager_addr = storage::read_loan_manager_addr(&e)?;
         loan_manager_addr.require_auth();
         user.require_auth();
+
+        let pool_status = storage::read_pool_status(&e)?;
+        if pool_status != PoolStatus::Healthy {
+            return Err(LoanPoolError::WrongStatus);
+        }
 
         Self::add_interest_to_accrual(e.clone())?;
 
@@ -366,6 +384,11 @@ impl LoanPoolContract {
         let loan_manager_addr = storage::read_loan_manager_addr(&e)?;
         loan_manager_addr.require_auth();
 
+        let pool_status = storage::read_pool_status(&e)?;
+        if pool_status == PoolStatus::Frozen {
+            return Err(LoanPoolError::WrongStatus);
+        }
+
         Self::add_interest_to_accrual(e.clone())?;
 
         let amount_to_admin = if amount < unpaid_interest {
@@ -397,6 +420,11 @@ impl LoanPoolContract {
     ) -> Result<(), LoanPoolError> {
         let loan_manager_addr = storage::read_loan_manager_addr(&e)?;
         loan_manager_addr.require_auth();
+
+        let pool_status = storage::read_pool_status(&e)?;
+        if pool_status == PoolStatus::Frozen {
+            return Err(LoanPoolError::WrongStatus);
+        }
 
         Self::add_interest_to_accrual(e.clone())?;
 
@@ -435,6 +463,11 @@ impl LoanPoolContract {
     ) -> Result<(), LoanPoolError> {
         let loan_manager_addr = storage::read_loan_manager_addr(&e)?;
         loan_manager_addr.require_auth();
+
+        let pool_status = storage::read_pool_status(&e)?;
+        if pool_status == PoolStatus::Frozen {
+            return Err(LoanPoolError::WrongStatus);
+        }
 
         Self::add_interest_to_accrual(e.clone())?;
 
