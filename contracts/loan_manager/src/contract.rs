@@ -428,10 +428,18 @@ impl LoanManager {
             collateral_from.clone(),
         )?;
         assert!(health_factor_before_liquidation < 10000000);
+        // Assert that the liquidation is not more than 50% of loan
         assert!(
             amount
                 < (borrowed_amount
                     .checked_div(2)
+                    .ok_or(LoanManagerError::OverOrUnderFlow)?)
+        );
+        // Assert that the liquidation is atleast 1% of loan
+        assert!(
+            amount
+                > (borrowed_amount
+                    .checked_div(100)
                     .ok_or(LoanManagerError::OverOrUnderFlow)?)
         );
 
