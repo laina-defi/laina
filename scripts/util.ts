@@ -81,6 +81,7 @@ const bind = (contractName: string, address: string | undefined) => {
   exe(
     `stellar contract bindings typescript --contract-id ${address_} --output-dir ./packages/${contractName} --overwrite`,
   );
+  // TODO: Remove the extra `install @stellar/stellar-sdk@14.0.0-rc.3 after mainnet updates to protocol 23.`
   exe(
     `cd ./packages/${contractName} && npm install @stellar/stellar-sdk@14.0.0-rc.3 && npm install && npm run build && cd ../..`,
   );
