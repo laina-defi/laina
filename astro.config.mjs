@@ -12,6 +12,9 @@ export default defineConfig({
     server: {
       https: true,
     },
+    define: {
+      global: 'globalThis',
+    },
   },
   output: 'static',
   integrations: [react(), tailwind()],
