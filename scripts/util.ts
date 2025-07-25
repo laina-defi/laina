@@ -52,7 +52,7 @@ export const installContracts = () => {
 /* Install a contract */
 const install = (contractName: string) => {
   exe(
-    `stellar contract install \
+    `stellar contract upload \
 --wasm ./target/wasm32v1-none/release/${contractName}.wasm \
 --ignore-checks \
 > ./.stellar/contract-wasm-hash/${contractName}.txt`,
@@ -81,7 +81,10 @@ const bind = (contractName: string, address: string | undefined) => {
   exe(
     `stellar contract bindings typescript --contract-id ${address_} --output-dir ./packages/${contractName} --overwrite`,
   );
-  exe(`cd ./packages/${contractName} && npm install && npm run build && cd ../..`);
+  // TODO: Remove the extra `install @stellar/stellar-sdk@14.0.0-rc.3 after mainnet updates to protocol 23.`
+  exe(
+    `cd ./packages/${contractName} && npm install @stellar/stellar-sdk@14.0.0-rc.3 && npm install && npm run build && cd ../..`,
+  );
 };
 
 export const createContractImports = () => {

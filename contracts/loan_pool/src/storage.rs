@@ -27,6 +27,15 @@ pub struct Currency {
     pub ticker: Symbol,
 }
 
+#[derive(PartialEq, Eq, Debug)]
+#[contracttype]
+pub enum PoolStatus {
+    Healthy,
+    Caution,
+    Restricted,
+    Frozen,
+}
+
 #[derive(Clone)]
 #[contracttype]
 enum PoolDataKey {
@@ -50,6 +59,8 @@ enum PoolDataKey {
     AccrualLastUpdate,
     // Interest rate multiplier
     InterestRateMultiplier,
+    // Pool health status,
+    PoolStatus,
 }
 
 /* Ledger Thresholds */
@@ -64,6 +75,21 @@ fn extend_persistent(e: &Env, key: &PoolDataKey) {
     e.storage()
         .persistent()
         .extend_ttl(key, POSITIONS_LIFETIME_THRESHOLD, POSITIONS_BUMP_AMOUNT);
+}
+
+pub fn change_pool_status(e: &Env, pool_status: PoolStatus) {
+    let key = PoolDataKey::PoolStatus;
+    e.storage().persistent().set(&key, &pool_status);
+    extend_persistent(e, &key);
+    e.events()
+        .publish((key, symbol_short!("updated")), pool_status);
+}
+
+pub fn read_pool_status(e: &Env) -> Result<PoolStatus, LoanPoolError> {
+    e.storage()
+        .persistent()
+        .get(&PoolDataKey::PoolStatus)
+        .ok_or(LoanPoolError::PoolStatus)
 }
 
 pub fn write_loan_manager_addr(e: &Env, loan_manager_addr: Address) {
