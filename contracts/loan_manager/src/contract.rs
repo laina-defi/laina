@@ -292,7 +292,7 @@ impl LoanManager {
         storage::read_loans(e, user)
     }
 
-    /// Get a single loan
+    /// Get a single loan by index for a specific user
     pub fn get_loan(e: &Env, user: Address, loan_idx: u32) -> Result<Loan, LoanManagerError> {
         let loans = storage::read_loans(e, user.clone());
         loans.get(loan_idx).ok_or(LoanManagerError::LoanNotFound)
