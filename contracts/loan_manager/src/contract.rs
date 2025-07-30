@@ -1175,6 +1175,10 @@ mod tests {
     fn liquidate() {
         // ARRANGE
         let e = Env::default();
+
+        // TODO: make sure liquidate works on a real network
+        e.cost_estimate().budget().reset_unlimited();
+
         e.mock_all_auths_allowing_non_root_auth();
         e.ledger().with_mut(|li| {
             li.sequence_number = 100_000;
