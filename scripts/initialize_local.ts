@@ -1,7 +1,7 @@
 import { config } from "dotenv";
 
 // Load local environment variables
-config({ path: ".local.env" });
+config({ path: ".env.local" });
 import { mkdirSync } from "fs";
 import crypto from "crypto";
 import { CURRENCIES, type Currency } from "../currencies";
@@ -70,11 +70,20 @@ const deployLoanPools = () => {
   );
 };
 
+/** Deploy reflector_mock contract */
+const deployReflectorMock = () => {
+  const contractsDir = `.stellar/contract-ids`;
+  mkdirSync(contractsDir, { recursive: true });
+
+  deploy(`./target/wasm32v1-none/release/reflector_oracle_mock.wasm`);
+};
+
 // Calling the functions (equivalent to the last part of your bash script)
 loadAccount();
 buildContracts();
 installContracts();
 deployLoanManager();
+deployReflectorMock();
 deployLoanPools();
 createContractBindings();
 createContractImports();

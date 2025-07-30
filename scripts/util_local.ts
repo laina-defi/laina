@@ -49,6 +49,7 @@ export const installContracts = () => {
 
   install("loan_manager");
   install("loan_pool");
+  install("reflector_oracle_mock");
 };
 
 /* Install a contract */
