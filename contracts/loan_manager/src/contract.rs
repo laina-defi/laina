@@ -10,7 +10,9 @@ mod loan_pool {
 
 // This is the real address of the Reflector Oracle in Testnet.
 // We use the same address to mock it for testing.
-const REFLECTOR_ADDRESS: &str = "CCYOZJCOPG34LLQQ7N24YXBM7LL62R7ONMZ3G6WZAAYPB5OYKOMJRN63";
+// const REFLECTOR_ADDRESS: &str = "CCYOZJCOPG34LLQQ7N24YXBM7LL62R7ONMZ3G6WZAAYPB5OYKOMJRN63";
+// This is now the generated id from the mock contract on local network
+const REFLECTOR_ADDRESS: &str = "CBZCZMHCQS3TLYJJLGMHWUB7TCYCKGSGCJHQBM2S2GZESKREHWQBELDZ";
 
 #[contract]
 struct LoanManager;
