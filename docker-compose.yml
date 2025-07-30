@@ -8,3 +8,10 @@ services:
       - POSTGRES_DB=${POSTGRES_DB}
     ports:
       - "5432:5432"
+
+  stellar:
+    image: stellar/quickstart
+    command: --local
+    ports:
+      - "8000:8000"
+    container_name: stellar
