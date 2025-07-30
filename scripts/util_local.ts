@@ -102,14 +102,17 @@ const importContract = (contractName: string) => {
   const outputDir = `./src/contracts/`;
   mkdirSync(outputDir, { recursive: true });
 
+  // Map local network to standalone (what stellar CLI generates)
+  const networkName = process.env.SOROBAN_NETWORK === "local" ? "standalone" : process.env.SOROBAN_NETWORK;
+
   /* eslint-disable quotes */
   /* eslint-disable no-constant-condition */
   const importContent =
     `import * as Client from '${contractName}'; \n` +
     `import { rpcUrl } from './util'; \n\n` +
-    `export const contractId = Client.networks.${process.env.SOROBAN_NETWORK}.contractId; \n\n` +
+    `export const contractId = Client.networks.${networkName}.contractId; \n\n` +
     `export const contractClient = new Client.Client({ \n` +
-    `  ...Client.networks.${process.env.SOROBAN_NETWORK}, \n` +
+    `  ...Client.networks.${networkName}, \n` +
     `  rpcUrl, \n` +
     `${process.env.SOROBAN_NETWORK === "local" || "standalone" ? `  allowHttp: true,\n` : null}` +
     `  publicKey: '${GENESIS_ACCOUNT}', \n` +
