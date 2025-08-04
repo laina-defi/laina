@@ -22,8 +22,21 @@ pub struct LoanId {
 
 #[derive(Clone)]
 #[contracttype]
+pub struct NewLoan {
+    pub borrower_address: Address,
+    pub borrowed_amount: i128,
+    pub borrowed_from: Address,
+    pub collateral_amount: i128,
+    pub collateral_from: Address,
+    pub health_factor: i128,
+    pub unpaid_interest: i128,
+    pub last_accrual: i128,
+}
+
+#[derive(Clone)]
+#[contracttype]
 pub struct Loan {
-    pub borrower: Address,
+    pub loan_id: LoanId,
     pub borrowed_amount: i128,
     pub borrowed_from: Address,
     pub collateral_amount: i128,
@@ -135,7 +148,7 @@ pub fn remove_user_loan_id(e: &Env, user: &Address, loan_id: u64) {
     e.storage().persistent().set(&key, &new_nonces);
 }
 
-pub fn create_loan(e: &Env, user: Address, loan: Loan) -> LoanId {
+pub fn create_loan(e: &Env, user: Address, new_loan: NewLoan) -> Loan {
     let nonce = increment_loan_nonce(e, &user);
     let loan_id = LoanId {
         borrower_address: user.clone(),
@@ -143,6 +156,16 @@ pub fn create_loan(e: &Env, user: Address, loan: Loan) -> LoanId {
     };
 
     let key = LoanManagerDataKey::Loan(loan_id.clone());
+    let loan = Loan {
+        loan_id,
+        borrowed_amount: new_loan.borrowed_amount,
+        borrowed_from: new_loan.borrowed_from,
+        collateral_amount: new_loan.collateral_amount,
+        collateral_from: new_loan.collateral_from,
+        health_factor: new_loan.health_factor,
+        unpaid_interest: new_loan.unpaid_interest,
+        last_accrual: new_loan.last_accrual,
+    };
     e.storage().persistent().set(&key, &loan);
     e.storage()
         .persistent()
@@ -153,7 +176,7 @@ pub fn create_loan(e: &Env, user: Address, loan: Loan) -> LoanId {
     e.events()
         .publish((symbol_short!("Loan"), symbol_short!("created")), key);
 
-    loan_id
+    loan
 }
 
 pub fn write_loan(e: &Env, loan_id: &LoanId, loan: &Loan) {
