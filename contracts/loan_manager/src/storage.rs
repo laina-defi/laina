@@ -105,51 +105,8 @@ pub fn read_pool_addresses(e: &Env) -> Vec<Address> {
         .unwrap_or(vec![&e])
 }
 
-// Get the next loan nonce for a user
-pub fn get_next_loan_nonce(e: &Env, user: &Address) -> u64 {
-    let key = (user.clone(), symbol_short!("nonce"));
-    e.storage().persistent().get(&key).unwrap_or(0)
-}
-
-// Increment and return the next loan nonce for a user
-pub fn increment_loan_nonce(e: &Env, user: &Address) -> u64 {
-    let next_nonce = get_next_loan_nonce(e, user) + 1;
-    let key = (user.clone(), symbol_short!("nonce"));
-    e.storage().persistent().set(&key, &next_nonce);
-    next_nonce
-}
-
-// Get all loan ID nonces for a user
-pub fn get_user_loan_id_nonces(e: &Env, user: &Address) -> Vec<u64> {
-    let key = (user.clone(), symbol_short!("ids"));
-    e.storage().persistent().get(&key).unwrap_or(vec![&e])
-}
-
-// Add a loan ID to user's loan list
-pub fn add_user_loan_id(e: &Env, user: &Address, loan_id: u64) {
-    let mut loan_ids = get_user_loan_id_nonces(e, user);
-    loan_ids.push_back(loan_id);
-    let key = (user.clone(), symbol_short!("ids"));
-    e.storage().persistent().set(&key, &loan_ids);
-}
-
-// Remove a loan ID from user's loan list
-pub fn remove_user_loan_id(e: &Env, user: &Address, loan_id: u64) {
-    let nonces = get_user_loan_id_nonces(e, user);
-    let mut new_nonces = vec![&e];
-
-    for id in nonces.iter() {
-        if id != loan_id {
-            new_nonces.push_back(id);
-        }
-    }
-
-    let key = (user.clone(), symbol_short!("ids"));
-    e.storage().persistent().set(&key, &new_nonces);
-}
-
 pub fn create_loan(e: &Env, user: Address, new_loan: NewLoan) -> Loan {
-    let nonce = increment_loan_nonce(e, &user);
+    let nonce = get_and_increment_loan_nonce(e, &user);
     let loan_id = LoanId {
         borrower_address: user.clone(),
         nonce,
@@ -194,13 +151,6 @@ pub fn read_loan(e: &Env, loan_id: &LoanId) -> Option<Loan> {
     e.storage().persistent().get(&key)
 }
 
-pub fn delete_loan(e: &Env, loan_id: &LoanId) {
-    let key = LoanManagerDataKey::Loan(loan_id.clone());
-    e.storage().persistent().remove(&key);
-    remove_user_loan_id(e, &loan_id.borrower_address, loan_id.nonce);
-}
-
-// Helper function to get all loans for a user
 pub fn read_user_loans(e: &Env, user: &Address) -> Vec<Loan> {
     let nonces = get_user_loan_id_nonces(e, user);
     let mut loans = vec![&e];
@@ -216,4 +166,50 @@ pub fn read_user_loans(e: &Env, user: &Address) -> Vec<Loan> {
     }
 
     loans
+}
+
+pub fn delete_loan(e: &Env, loan_id: &LoanId) {
+    let key = LoanManagerDataKey::Loan(loan_id.clone());
+    e.storage().persistent().remove(&key);
+    remove_user_loan_id(e, &loan_id.borrower_address, loan_id.nonce);
+}
+
+// Increment and return the next loan nonce for a user
+fn get_and_increment_loan_nonce(e: &Env, user: &Address) -> u64 {
+    let key = (user.clone(), symbol_short!("nonce"));
+
+    let prev_nonce = e.storage().persistent().get(&key).unwrap_or(0);
+    let next_nonce = prev_nonce + 1;
+
+    e.storage().persistent().set(&key, &next_nonce);
+    next_nonce
+}
+
+// Get all loan ID nonces for a user
+pub fn get_user_loan_id_nonces(e: &Env, user: &Address) -> Vec<u64> {
+    let key = (user.clone(), symbol_short!("ids"));
+    e.storage().persistent().get(&key).unwrap_or(vec![&e])
+}
+
+// Add a loan ID to user's loan list
+pub fn add_user_loan_id(e: &Env, user: &Address, loan_id: u64) {
+    let mut loan_ids = get_user_loan_id_nonces(e, user);
+    loan_ids.push_back(loan_id);
+    let key = (user.clone(), symbol_short!("ids"));
+    e.storage().persistent().set(&key, &loan_ids);
+}
+
+// Remove a loan ID from user's loan list
+pub fn remove_user_loan_id(e: &Env, user: &Address, loan_id: u64) {
+    let nonces = get_user_loan_id_nonces(e, user);
+    let mut new_nonces = vec![&e];
+
+    for id in nonces.iter() {
+        if id != loan_id {
+            new_nonces.push_back(id);
+        }
+    }
+
+    let key = (user.clone(), symbol_short!("ids"));
+    e.storage().persistent().set(&key, &new_nonces);
 }
