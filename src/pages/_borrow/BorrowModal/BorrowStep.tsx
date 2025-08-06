@@ -130,7 +130,6 @@ export const BorrowStep = ({ onClose, currency }: BorrowStepProps) => {
 
   const isBorrowDisabled =
     !isTrustline ||
-    loanAmount === 0n ||
     collateralAmount === 0n ||
     healthFactor < HEALTH_FACTOR_MIN_THRESHOLD ||
     !loanAmountCents ||
