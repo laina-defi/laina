@@ -305,11 +305,7 @@ impl LoanManager {
         Ok(asset_pricedata.price)
     }
 
-    pub fn repay(
-        e: &Env,
-        loan_id: LoanId,
-        amount: i128,
-    ) -> Result<(i128, i128), LoanManagerError> {
+    pub fn repay(e: &Env, loan_id: LoanId, amount: i128) -> Result<(i128, i128), LoanManagerError> {
         let user = loan_id.borrower_address.clone();
         user.require_auth();
 
@@ -1116,10 +1112,8 @@ mod tests {
         usdc_asset_client.mint(&user, &45);
         assert_eq!(
             102,
-            manager_client.repay_and_close_manager(
-                &(usdc_loan.borrowed_amount + 45),
-                &usdc_loan.loan_id
-            )
+            manager_client
+                .repay_and_close_manager(&(usdc_loan.borrowed_amount + 45), &usdc_loan.loan_id)
         );
 
         assert_eq!(1002, pool_usdc_client.get_available_balance());
