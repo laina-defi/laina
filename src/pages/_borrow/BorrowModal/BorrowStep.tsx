@@ -129,7 +129,11 @@ export const BorrowStep = ({ onClose, currency }: BorrowStepProps) => {
   const isTrustline = loanBalance.trustLine;
 
   const isBorrowDisabled =
-    !isTrustline || loanAmount === 0n || collateralAmount === 0n || healthFactor < HEALTH_FACTOR_MIN_THRESHOLD;
+    !isTrustline ||
+    collateralAmount === 0n ||
+    healthFactor < HEALTH_FACTOR_MIN_THRESHOLD ||
+    !loanAmountCents ||
+    loanAmountCents < 1000n; // Minimum $10 (1000 cents)
 
   const collateralBalance = decimalStringToStroops(
     collateralTickerBalance.trustLine ? collateralTickerBalance.balanceLine.balance : '0',
@@ -182,6 +186,7 @@ export const BorrowStep = ({ onClose, currency }: BorrowStepProps) => {
       <p className="my-4">The annual interest rate is currently {formatAPR(annualInterestRate)}.</p>
 
       <p className="font-bold mb-2 mt-6">Amount to borrow</p>
+      <p className="my-4">The borrowed value must be greater than $10.</p>
       <CryptoAmountSelector
         max={availableBalanceTokens}
         value={loanAmount}

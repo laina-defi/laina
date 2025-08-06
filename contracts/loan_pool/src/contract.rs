@@ -179,11 +179,6 @@ impl LoanPoolContract {
 
     /// Borrow tokens from the pool
     pub fn borrow(e: Env, user: Address, amount: i128) -> Result<i128, LoanPoolError> {
-        /*
-        Borrow should only be callable from the loans contract. This is as the loans contract will
-        include the logic and checks that the borrowing can be actually done. Therefore we need to
-        include a check that the caller is the loans contract.
-        */
         let loan_manager_addr = storage::read_loan_manager_addr(&e)?;
         loan_manager_addr.require_auth();
         user.require_auth();
@@ -199,18 +194,15 @@ impl LoanPoolContract {
         assert!(
             amount < balance,
             "Borrowed amount has to be less than available balance!"
-        ); // Check that there is enough available balance
+        );
 
         storage::adjust_available_balance(
             &e,
             amount.checked_neg().ok_or(LoanPoolError::OverOrUnderFlow)?,
         )?;
 
-        // Increase the user's position in the pool as they deposit
-        // as this is debt amount is added to liabilities and
-        // collateral & receivables stays intact
-        let collateral: i128 = 0; // temp test param
-        let receivables: i128 = 0; // temp test param
+        let collateral: i128 = 0;
+        let receivables: i128 = 0;
         positions::increase_positions(&e, user.clone(), receivables, amount, collateral)?;
 
         let token_address = &storage::read_currency(&e)?.token_address;
@@ -256,11 +248,8 @@ impl LoanPoolContract {
         let client = token::Client::new(&e, token_address);
         client.transfer(&user, &e.current_contract_address(), &amount);
 
-        // Increase the user's position in the pool as they deposit
-        // as this is collateral amount is added to collateral and
-        // liabilities & receivables stays intact
-        let liabilities: i128 = 0; // temp test param
-        let receivables: i128 = 0; // temp test param
+        let liabilities: i128 = 0;
+        let receivables: i128 = 0;
         positions::increase_positions(&e, user.clone(), receivables, liabilities, amount)?;
 
         Ok(amount)
@@ -278,11 +267,8 @@ impl LoanPoolContract {
         let client = token::Client::new(&e, token_address);
         client.transfer(&e.current_contract_address(), &user, &amount);
 
-        // Increase the user's position in the pool as they deposit
-        // as this is collateral amount is added to collateral and
-        // liabilities & receivables stays intact
-        let liabilities: i128 = 0; // temp test param
-        let receivables: i128 = 0; // temp test param
+        let liabilities: i128 = 0;
+        let receivables: i128 = 0;
         positions::decrease_positions(&e, user.clone(), receivables, liabilities, amount)?;
 
         Ok(amount)
@@ -510,7 +496,7 @@ impl LoanPoolContract {
 
 #[cfg(test)]
 mod test {
-    use super::*; // This imports LoanPoolContract and everything else from the parent module
+    use super::*;
     use soroban_sdk::{
         testutils::{Address as _, Ledger},
         token::{Client as TokenClient, StellarAssetClient},
