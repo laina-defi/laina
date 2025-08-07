@@ -3,9 +3,7 @@ import type { XDR_BASE64 } from '@stellar/stellar-sdk/contract';
 import type { Currency } from 'currencies';
 
 const HorizonServer = new Horizon.Server(
-  import.meta.env.STELLAR_NETWORK === 'local' 
-    ? 'http://localhost:8000'
-    : 'https://horizon-testnet.stellar.org/'
+  import.meta.env.STELLAR_NETWORK === 'local' ? 'http://localhost:8000' : 'https://horizon-testnet.stellar.org/',
 );
 
 export const getBalances = async (account: string): Promise<Horizon.HorizonApi.BalanceLine[]> => {
@@ -22,9 +20,8 @@ export const createAddTrustlineTransaction = async (
   const sourceAccount = await HorizonServer.loadAccount(account);
 
   const transaction = new TransactionBuilder(sourceAccount, {
-    networkPassphrase: import.meta.env.STELLAR_NETWORK === 'local' 
-      ? 'Standalone Network ; February 2017'
-      : Networks.TESTNET,
+    networkPassphrase:
+      import.meta.env.STELLAR_NETWORK === 'local' ? 'Standalone Network ; February 2017' : Networks.TESTNET,
     fee: '100000',
   })
     .addOperation(Operation.changeTrust({ asset }))
@@ -35,10 +32,9 @@ export const createAddTrustlineTransaction = async (
 };
 
 export const sendTransaction = async (txXdr: XDR_BASE64): Promise<Horizon.HorizonApi.SubmitTransactionResponse> => {
-  const tx = TransactionBuilder.fromXDR(txXdr, 
-    import.meta.env.STELLAR_NETWORK === 'local' 
-      ? 'Standalone Network ; February 2017'
-      : Networks.TESTNET
+  const tx = TransactionBuilder.fromXDR(
+    txXdr,
+    import.meta.env.STELLAR_NETWORK === 'local' ? 'Standalone Network ; February 2017' : Networks.TESTNET,
   );
   return HorizonServer.submitTransaction(tx);
 };

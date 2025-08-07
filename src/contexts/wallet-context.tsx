@@ -72,9 +72,7 @@ const Context = createContext<WalletContext>({
 });
 
 const kit = new StellarWalletsKit({
-  network: import.meta.env.STELLAR_NETWORK === 'local' 
-    ? WalletNetwork.LOCAL
-    : WalletNetwork.TESTNET,
+  network: import.meta.env.STELLAR_NETWORK === 'local' ? WalletNetwork.LOCAL : WalletNetwork.TESTNET,
   selectedWalletId: FREIGHTER_ID,
   modules: allowAllModules(),
 });

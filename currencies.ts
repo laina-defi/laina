@@ -14,13 +14,13 @@ export type Currency = {
   issuer?: string;
 };
 
-  const envConfig = {
-    CONTRACT_ADDRESS_XLM: getEnvVar('PUBLIC_CONTRACT_ADDRESS_XLM'),
-    CONTRACT_ADDRESS_USDC: getEnvVar('PUBLIC_CONTRACT_ADDRESS_USDC'),
-    CONTRACT_ADDRESS_EURC: getEnvVar('PUBLIC_CONTRACT_ADDRESS_EURC'),
-    ISSUER_ADDRESS_USDC: getEnvVar('PUBLIC_ISSUER_ADDRESS_USDC'),
-    ISSUER_ADDRESS_EURC: getEnvVar('PUBLIC_ISSUER_ADDRESS_EURC'),
-  } as const;
+const envConfig = {
+  CONTRACT_ADDRESS_XLM: getEnvVar('PUBLIC_CONTRACT_ADDRESS_XLM'),
+  CONTRACT_ADDRESS_USDC: getEnvVar('PUBLIC_CONTRACT_ADDRESS_USDC'),
+  CONTRACT_ADDRESS_EURC: getEnvVar('PUBLIC_CONTRACT_ADDRESS_EURC'),
+  ISSUER_ADDRESS_USDC: getEnvVar('PUBLIC_ISSUER_ADDRESS_USDC'),
+  ISSUER_ADDRESS_EURC: getEnvVar('PUBLIC_ISSUER_ADDRESS_EURC'),
+} as const;
 
 // Utility function to get environment variables from either meta.env (Astro) or process.env (Node.js)
 function getEnvVar(key: string): string {
@@ -34,7 +34,8 @@ function getEnvVar(key: string): string {
 
   // Fall back to process.env (Node.js environment)
   if (typeof process !== 'undefined' && process.env) {
-    dotenv.config(); // Uses DOTENV_CONFIG_PATH or defaults to .env
+    // Use DOTENV_CONFIG_PATH if set, otherwise default to .env
+    dotenv.config({ path: process.env.DOTENV_CONFIG_PATH || '.env' });
 
     const value = process.env[key];
     if (value !== undefined) {

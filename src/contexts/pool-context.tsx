@@ -1,14 +1,7 @@
-import { contractClient as loanManagerClient } from "@contracts/loan_manager";
-import type { SupportedCurrency } from "currencies";
-import {
-  type PropsWithChildren,
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useState,
-} from "react";
-import { CURRENCY_BINDINGS } from "src/currency-bindings";
+import { contractClient as loanManagerClient } from '@contracts/loan_manager';
+import type { SupportedCurrency } from 'currencies';
+import { type PropsWithChildren, createContext, useCallback, useContext, useEffect, useState } from 'react';
+import { CURRENCY_BINDINGS } from 'src/currency-bindings';
 
 export type PriceRecord = {
   [K in SupportedCurrency]: bigint;
@@ -34,15 +27,11 @@ export type PoolContext = {
 const Context = createContext<PoolContext>({
   prices: null,
   pools: null,
-  refetchPools: () => { },
+  refetchPools: () => {},
 });
 
 const fetchAllPrices = async (): Promise<PriceRecord> => {
-  const [XLM, USDC, EURC] = await Promise.all([
-    fetchPriceData("XLM"),
-    fetchPriceData("USDC"),
-    fetchPriceData("EURC"),
-  ]);
+  const [XLM, USDC, EURC] = await Promise.all([fetchPriceData('XLM'), fetchPriceData('USDC'), fetchPriceData('EURC')]);
   return { XLM, USDC, EURC };
 };
 
@@ -53,22 +42,16 @@ const fetchPriceData = async (ticker: string): Promise<bigint> => {
     return value;
   }
   const error = result.unwrapErr();
-  console.error("Error: ", error);
+  console.error('Error: ', error);
   return 0n;
 };
 
 const fetchPools = async (): Promise<PoolRecord> => {
-  const [XLM, USDC, EURC] = await Promise.all([
-    fetchPoolState("XLM"),
-    fetchPoolState("USDC"),
-    fetchPoolState("EURC"),
-  ]);
+  const [XLM, USDC, EURC] = await Promise.all([fetchPoolState('XLM'), fetchPoolState('USDC'), fetchPoolState('EURC')]);
   return { XLM, USDC, EURC };
 };
 
-const fetchPoolState = async (
-  ticker: SupportedCurrency,
-): Promise<PoolState> => {
+const fetchPoolState = async (ticker: SupportedCurrency): Promise<PoolState> => {
   const { contractClient } = CURRENCY_BINDINGS[ticker];
   const { result } = await contractClient.get_pool_state();
   if (result.isOk()) {
@@ -81,7 +64,7 @@ const fetchPoolState = async (
     };
   }
   const error = result.unwrapErr();
-  console.error("Error: ", error);
+  console.error('Error: ', error);
   return {
     totalBalanceTokens: 0n,
     totalBalanceShares: 0n,
@@ -97,10 +80,10 @@ export const PoolProvider = ({ children }: PropsWithChildren) => {
   const refetchPools = useCallback(() => {
     fetchAllPrices()
       .then((res) => setPrices(res))
-      .catch((err) => console.error("Error fetching prices", err));
+      .catch((err) => console.error('Error fetching prices', err));
     fetchPools()
       .then((res) => setPools(res))
-      .catch((err) => console.error("Error fetching pools", err));
+      .catch((err) => console.error('Error fetching pools', err));
   }, []);
 
   useEffect(() => {
@@ -111,11 +94,7 @@ export const PoolProvider = ({ children }: PropsWithChildren) => {
     return () => clearInterval(intervalId);
   }, [refetchPools]);
 
-  return (
-    <Context.Provider value={{ prices, pools, refetchPools }}>
-      {children}
-    </Context.Provider>
-  );
+  return <Context.Provider value={{ prices, pools, refetchPools }}>{children}</Context.Provider>;
 };
 
 export const usePools = (): PoolContext => useContext(Context);
