@@ -1,10 +1,10 @@
-import { config } from "dotenv";
+import { config } from 'dotenv';
 
 // Load local environment variables
-config({ path: ".env.local" });
-import { mkdirSync } from "fs";
-import crypto from "crypto";
-import { CURRENCIES, type Currency } from "../currencies-local";
+config();
+import { mkdirSync } from 'fs';
+import crypto from 'crypto';
+import { CURRENCIES, type Currency } from '../currencies';
 import {
   loadAccount,
   buildContracts,
@@ -15,13 +15,11 @@ import {
   installContracts,
   loanManagerAddress,
   readTextFile,
-} from "./util_local";
+} from './util_local';
 
 const account = process.env.SOROBAN_ACCOUNT;
 
-console.log(
-  "######################Initializing contracts ########################",
-);
+console.log('######################Initializing contracts ########################');
 
 const deploy = (wasm: string) => {
   exe(
@@ -48,13 +46,12 @@ const deployLoanManager = () => {
 
 /** Deploy liquidity pools using the loan-manager as a factory contract */
 const deployLoanPools = () => {
-  const wasmHash = readTextFile("./.stellar/contract-wasm-hash/loan_pool.txt");
+  const wasmHash = readTextFile('./.stellar/contract-wasm-hash/loan_pool.txt');
 
-  CURRENCIES.forEach(
-    ({ tokenContractAddress, ticker, loanPoolName }: Currency) => {
-      const salt = crypto.randomBytes(32).toString("hex");
-      exe(
-        `stellar contract invoke \
+  CURRENCIES.forEach(({ tokenContractAddress, ticker, loanPoolName }: Currency) => {
+    const salt = crypto.randomBytes(32).toString('hex');
+    exe(
+      `stellar contract invoke \
 --id ${loanManagerAddress()} \
 --source-account ${account} \
 --network local \
@@ -65,9 +62,8 @@ const deployLoanPools = () => {
 --ticker ${ticker} \
 --liquidation_threshold 8000000 \
 | tr -d '"' > ./.stellar/contract-ids/${loanPoolName}.txt`,
-      );
-    },
-  );
+    );
+  });
 };
 
 /** Deploy reflector_mock contract */
@@ -88,4 +84,4 @@ deployLoanPools();
 createContractBindings();
 createContractImports();
 
-console.log("\nInitialization successful!");
+console.log('\nInitialization successful!');
