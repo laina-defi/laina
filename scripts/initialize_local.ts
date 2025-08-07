@@ -4,7 +4,7 @@ import { config } from "dotenv";
 config({ path: ".env.local" });
 import { mkdirSync } from "fs";
 import crypto from "crypto";
-import { CURRENCIES, type Currency } from "../currencies";
+import { CURRENCIES, type Currency } from "../currencies-local";
 import {
   loadAccount,
   buildContracts,

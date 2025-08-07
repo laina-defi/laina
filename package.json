@@ -37,9 +37,9 @@
 		"astro": "astro",
 		"build": "astro check && astro build",
 		"dev": "astro dev",
-		"dev:local": "astro dev",
+		"dev:local": "STELLAR_NETWORK=local astro dev",
 		"init": "node --import tsx scripts/initialize.ts",
-		"init:local": "docker compose up -d && DOTENV_CONFIG_PATH=.env.local node --import tsx scripts/initialize_local.ts",
+		"init:local": "docker compose up -d && DOTENV_CONFIG_PATH=.env.local node --import tsx scripts/initialize_local.ts && DOTENV_CONFIG_PATH=.env.local npm run issue_tokens:local ",
 		"upgrade": "node --import tsx scripts/upgrade.ts",
 		"preview": "astro preview",
 		"start": "npm run init && astro dev",
@@ -49,7 +49,10 @@
 		"lint:fix": "biome check --fix --unsafe ./src",
 		"lint:check": "biome check ./src",
 		"format": "prettier --write \"**/*.{js,mjs,jsx,ts,tsx,json,graphql,css,astro,md}\"",
-		"format:check": "prettier --check \"**/*.{js,mjs,jsx,ts,tsx,json,graphql,css,astro,md}\""
+		"format:check": "prettier --check \"**/*.{js,mjs,jsx,ts,tsx,json,graphql,css,astro,md}\"",
+		"set-price": "node --import tsx scripts/set-oracle-price.ts",
+		"issue_tokens": "node --import tsx scripts/issue_tokens.ts",
+		"issue_tokens:local": "node --import tsx scripts/issue_tokens_local.ts"
 	},
 	"type": "module",
 	"version": "0.0.1",

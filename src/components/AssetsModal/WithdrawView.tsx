@@ -1,14 +1,18 @@
-import { Button } from '@components/Button';
-import { CryptoAmountSelector } from '@components/CryptoAmountSelector';
-import { ErrorDialogContent, LoadingDialogContent, SuccessDialogContent } from '@components/Dialog';
-import { Loading } from '@components/Loading';
-import { usePools } from '@contexts/pool-context';
-import { useWallet } from '@contexts/wallet-context';
-import { stroopsToDecimalString } from '@lib/converters';
-import { SCALAR_7, toCents } from '@lib/formatting';
-import type { SupportedCurrency } from 'currencies';
-import { useState } from 'react';
-import { CURRENCY_BINDINGS } from 'src/currency-bindings';
+import { Button } from "@components/Button";
+import { CryptoAmountSelector } from "@components/CryptoAmountSelector";
+import {
+  ErrorDialogContent,
+  LoadingDialogContent,
+  SuccessDialogContent,
+} from "@components/Dialog";
+import { Loading } from "@components/Loading";
+import { usePools } from "@contexts/pool-context";
+import { useWallet } from "@contexts/wallet-context";
+import { stroopsToDecimalString } from "@lib/converters";
+import { SCALAR_7, toCents } from "@lib/formatting";
+import type { SupportedCurrency } from "currencies";
+import { useState } from "react";
+import { CURRENCY_BINDINGS } from "src/currency-bindings";
 
 export interface WithdrawViewProps {
   ticker: SupportedCurrency;
@@ -27,20 +31,23 @@ const WithdrawView = ({ ticker, onBack }: WithdrawViewProps) => {
   const pool = pools?.[ticker];
   const price = prices?.[ticker];
 
-  const valueCents = price ? toCents(price, BigInt(amount) * SCALAR_7) : undefined;
+  const valueCents = price
+    ? toCents(price, BigInt(amount) * SCALAR_7)
+    : undefined;
 
   if (!pool) {
-    console.warn('PoolState is not loaded');
+    console.warn("PoolState is not loaded");
     return null;
   }
 
   if (!positions[ticker]) {
-    throw Error('Unexpectedly opened WithdrawView without balance');
+    throw Error("Unexpectedly opened WithdrawView without balance");
   }
 
   const { receivable_shares } = positions[ticker];
 
-  const totalBalance = (receivable_shares * pool.totalBalanceTokens) / pool.totalBalanceShares;
+  const totalBalance =
+    (receivable_shares * pool.totalBalanceTokens) / pool.totalBalanceShares;
 
   const handleAmountChange = (stroops: bigint) => {
     setAmount(stroops);
@@ -65,7 +72,7 @@ const WithdrawView = ({ ticker, onBack }: WithdrawViewProps) => {
       await tx.signAndSend({ signTransaction });
       setIsSuccess(true);
     } catch (err) {
-      console.error('Error withdrawing', err);
+      console.error("Error withdrawing", err);
       setError(err as Error);
     }
     setIsWithdrawing(false);

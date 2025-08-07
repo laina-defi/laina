@@ -12,10 +12,8 @@ services:
   stellar:
     image: stellar/quickstart
     command: --local
-    environment:
-      - POSTGRES_PASSWORD=stellar123
     ports:
       - "8000:8000"
-    volumes:
-      - "./stellar-data:/opt/stellar"
     container_name: stellar
+    environment:
+      - HORIZON_CORS_ALLOWED_ORIGINS=*
