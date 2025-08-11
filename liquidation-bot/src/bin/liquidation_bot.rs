@@ -1,6 +1,7 @@
 use core::time::Duration;
 use dotenvy::dotenv;
 use log::{error, info, warn};
+use once_cell::sync::OnceCell;
 use soroban_sdk::xdr::{ScSymbol, StringM};
 use std::collections::HashSet;
 use std::{cell::RefCell, env, rc::Rc, str::FromStr, thread};
@@ -31,18 +32,27 @@ use stellar_rpc_client::{self, Event, EventStart, EventType, GetEventsResponse};
 
 const SLEEP_TIME_SECONDS: u64 = 10;
 
+static CONFIG: OnceCell<BotConfig> = OnceCell::new();
+
+fn get_config() -> &'static BotConfig {
+    CONFIG.get().expect("Config not initialized")
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Error> {
     env_logger::init();
+
+    let config = load_config().await?;
+    CONFIG.set(config).expect("Failed to set global config");
 
     let BotConfig {
         rpc_url,
         source_keypair,
         ..
-    } = load_config().await?;
+    } = get_config();
 
     let db_connection = &mut establish_connection();
-    let rpc_client = stellar_rpc_client::Client::new(&rpc_url)?;
+    let rpc_client = stellar_rpc_client::Client::new(rpc_url)?;
 
     let allow_http: bool = std::env::var("ALLOW_HTTP")
         .expect("ALLOW_HTTP must be set in .env")
@@ -53,7 +63,7 @@ async fn main() -> Result<(), Error> {
         ..Options::default()
     };
 
-    let server = soroban_client::Server::new(&rpc_url, options).expect("Cannot create server");
+    let server = soroban_client::Server::new(rpc_url, options).expect("Cannot create server");
 
     let account_data = server.get_account(&source_keypair.public_key()).await?;
     let source_account = Rc::new(RefCell::new(
@@ -64,7 +74,9 @@ async fn main() -> Result<(), Error> {
         .map_err(|e| anyhow::anyhow!("Account::new failed: {}", e))?,
     ));
 
-    let mut ledger = rpc_client.get_latest_ledger().await?.sequence;
+    // The history can be fetched a little further back than 120_000 ledgers, but that's a nice round number.
+    let history_depth = 120_000;
+    let mut ledger = rpc_client.get_latest_ledger().await?.sequence - history_depth;
 
     loop {
         let GetEventsResponse {
@@ -90,8 +102,7 @@ async fn fetch_events(
 ) -> Result<GetEventsResponse, Error> {
     info!("Fetching new loans from Loan Manager.");
 
-    let config = load_config().await?;
-
+    let config = get_config();
     let start = EventStart::Ledger(ledger);
     let event_type = Some(EventType::Contract);
     let contract_ids = vec![config.loan_manager_id.clone()];
@@ -158,12 +169,7 @@ async fn fetch_loan_to_db(
     server: &Server,
     source_account: &Rc<RefCell<Account>>,
 ) -> Result<(), Error> {
-    let BotConfig {
-        loan_manager_id,
-        source_keypair,
-        ..
-    } = load_config().await?;
-
+    let config = get_config();
     let method = "get_loan";
     let loan_owner = &loan[1];
     info!("Fetching loan {} to database", loan_owner);
@@ -174,7 +180,7 @@ async fn fetch_loan_to_db(
     .map_err(|e| anyhow::anyhow!("Address::to_sc_val failed: {}", e))?];
 
     let read_loan_op = Operation::new()
-        .invoke_contract(&loan_manager_id, method, args, None)
+        .invoke_contract(&config.loan_manager_id, method, args, None)
         .expect("Cannot create invoke_contract operation");
 
     // Build the transaction
@@ -189,7 +195,7 @@ async fn fetch_loan_to_db(
     builder.add_operation(read_loan_op);
 
     let mut tx = builder.build();
-    tx.sign(&[source_keypair.clone()]);
+    tx.sign(&[config.source_keypair.clone()]);
 
     // Simulate transaction and handle response
     let response = server.simulate_transaction(tx, None).await?;
@@ -264,11 +270,7 @@ async fn fetch_prices(
 
     info!("Fetching prices from Reflector");
 
-    let BotConfig {
-        oracle_contract_address,
-        source_keypair,
-        ..
-    } = load_config().await?;
+    let config = get_config();
 
     let borrowed_from_uniques = loans.select(borrowed_from).distinct().load(db_connection)?;
     let collateral_from_uniques = loans
@@ -311,7 +313,7 @@ async fn fetch_prices(
         let args = vec![asset_to_scval(&asset)?, amount_of_data_points.clone()];
 
         let fetch_prices_op = Operation::new()
-            .invoke_contract(&oracle_contract_address, method, args, None)
+            .invoke_contract(&config.oracle_contract_address, method, args, None)
             .expect("Cannot create invoke_contract operation");
 
         // Build the transaction
@@ -326,7 +328,7 @@ async fn fetch_prices(
         builder.add_operation(fetch_prices_op);
 
         let mut tx = builder.build();
-        tx.sign(&[source_keypair.clone()]);
+        tx.sign(&[config.source_keypair.clone()]);
 
         // Simulate transaction and handle response
         let response = server.simulate_transaction(tx, None).await?;
@@ -448,11 +450,7 @@ async fn attempt_liquidating(
     server: &Server,
     source_account: &Rc<RefCell<Account>>,
 ) -> Result<(), Error> {
-    let BotConfig {
-        loan_manager_id,
-        source_keypair,
-        ..
-    } = load_config().await?;
+    let config = get_config();
 
     info!("Attempting to liquidate loan: {:#?}", loan);
 
@@ -469,7 +467,7 @@ async fn attempt_liquidating(
 
     let args = vec![
         Address::to_sc_val(
-            &Address::from_string(&source_keypair.public_key())
+            &Address::from_string(&config.source_keypair.public_key())
                 .map_err(|e| anyhow::anyhow!("Account::from_string failed: {}", e))?,
         )
         .map_err(|e| anyhow::anyhow!("Address::to_sc_val failed: {}", e))?,
@@ -482,7 +480,7 @@ async fn attempt_liquidating(
     ];
 
     let read_loan_op = Operation::new()
-        .invoke_contract(&loan_manager_id, method, args.clone(), None)
+        .invoke_contract(&config.loan_manager_id, method, args.clone(), None)
         .expect("Cannot create invoke_contract operation");
 
     //TODO: response now has data like minimal resource fee and if the liquidation would likely be
@@ -513,7 +511,7 @@ async fn attempt_liquidating(
         }
     };
 
-    tx.sign(&[source_keypair.clone()]);
+    tx.sign(&[config.source_keypair.clone()]);
 
     // Send transaction
     let response = match server.send_transaction(tx).await {
@@ -582,6 +580,7 @@ async fn wait_success(server: &Server, hash: String, response: SendTransactionRe
     false
 }
 
+#[derive(Debug)]
 pub struct BotConfig {
     rpc_url: String,
     loan_manager_id: String,
