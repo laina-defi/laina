@@ -31,54 +31,74 @@ use stellar_rpc_client::{self, Event, EventStart, EventType, GetEventsResponse};
 
 const SLEEP_TIME_SECONDS: u64 = 10;
 
-pub struct BotConfig {
-    loan_manager_id: String,
-    server: Server,
-    source_keypair: Keypair,
-    source_public: String,
-    source_account: Rc<RefCell<Account>>,
-}
-
 #[tokio::main]
 async fn main() -> Result<(), Error> {
-    let connection = &mut establish_connection();
     env_logger::init();
 
-    // TODO:Decide on how to handle the initial ledger
-    let mut ledger = 10;
+    let BotConfig {
+        rpc_url,
+        source_keypair,
+        ..
+    } = load_config().await?;
+
+    let db_connection = &mut establish_connection();
+    let rpc_client = stellar_rpc_client::Client::new(&rpc_url)?;
+
+    let allow_http: bool = std::env::var("ALLOW_HTTP")
+        .expect("ALLOW_HTTP must be set in .env")
+        .parse()
+        .expect("ALLOW_HTTP must be 'true' or 'false'");
+    let options = Options {
+        allow_http,
+        ..Options::default()
+    };
+
+    let server = soroban_client::Server::new(&rpc_url, options).expect("Cannot create server");
+
+    let account_data = server.get_account(&source_keypair.public_key()).await?;
+    let source_account = Rc::new(RefCell::new(
+        Account::new(
+            &source_keypair.public_key(),
+            &account_data.sequence_number(),
+        )
+        .map_err(|e| anyhow::anyhow!("Account::new failed: {}", e))?,
+    ));
+
+    let mut ledger = rpc_client.get_latest_ledger().await?.sequence;
 
     loop {
         let GetEventsResponse {
             events,
             latest_ledger: new_ledger,
-        } = fetch_events(ledger).await?;
+        } = fetch_events(ledger, &rpc_client).await?;
         ledger = new_ledger;
-        find_loans_from_events(events, connection).await?;
-        fetch_prices(connection).await?;
-        find_liquidateable(connection).await?;
+
+        find_loans_from_events(events, db_connection, &server, &source_account).await?;
+
+        fetch_prices(db_connection, &server, &source_account).await?;
+
+        find_liquidateable(db_connection, &server, &source_account).await?;
 
         info!("Sleeping for {SLEEP_TIME_SECONDS} seconds.");
         thread::sleep(Duration::from_secs(SLEEP_TIME_SECONDS))
     }
 }
 
-async fn fetch_events(ledger: u32) -> Result<GetEventsResponse, Error> {
-    let BotConfig {
-        loan_manager_id, ..
-    } = load_config().await?;
-
+async fn fetch_events(
+    ledger: u32,
+    rpc_client: &stellar_rpc_client::Client,
+) -> Result<GetEventsResponse, Error> {
     info!("Fetching new loans from Loan Manager.");
-    let url =
-        env::var("PUBLIC_SOROBAN_RPC_URL").expect("PUBLIC_SOROBAN_RPC_URL must be set in .env");
-    let client = stellar_rpc_client::Client::new(&url)?;
+
+    let config = load_config().await?;
 
     let start = EventStart::Ledger(ledger);
     let event_type = Some(EventType::Contract);
-    let contract_ids = vec![loan_manager_id];
+    let contract_ids = vec![config.loan_manager_id.clone()];
     let topics_slice = &[];
     let limit = Some(100);
     //TODO: This could be changed to use the soroban_client for simplicity.
-    let events_response = client
+    let events_response = rpc_client
         .get_events(start, event_type, &contract_ids, topics_slice, limit)
         .await?;
     Ok(events_response)
@@ -86,7 +106,9 @@ async fn fetch_events(ledger: u32) -> Result<GetEventsResponse, Error> {
 
 async fn find_loans_from_events(
     events: Vec<Event>,
-    connection: &mut PgConnection,
+    db_connection: &mut PgConnection,
+    server: &Server,
+    source_account: &Rc<RefCell<Account>>,
 ) -> Result<(), Error> {
     for event in events {
         match decode_topic(event.topic.clone()) {
@@ -103,7 +125,8 @@ async fn find_loans_from_events(
                         match decode_value(event.value.clone()) {
                             Ok(value) => {
                                 info!("Loan modified");
-                                fetch_loan_to_db(value, connection).await?;
+                                fetch_loan_to_db(value, db_connection, server, source_account)
+                                    .await?;
                             }
                             Err(e) => error!("Failed to decode value: {e}"),
                         }
@@ -111,7 +134,7 @@ async fn find_loans_from_events(
                     ["loan", "deleted"] => match decode_value(event.value.clone()) {
                         Ok(value) => {
                             info!("Loan removed");
-                            delete_loan_from_db(value, connection).await?;
+                            delete_loan_from_db(value, db_connection).await?;
                         }
                         Err(e) => error!("Failed to decode value: {e}"),
                     },
@@ -129,12 +152,15 @@ async fn find_loans_from_events(
     Ok(())
 }
 
-async fn fetch_loan_to_db(loan: Vec<String>, connection: &mut PgConnection) -> Result<(), Error> {
+async fn fetch_loan_to_db(
+    loan: Vec<String>,
+    db_connection: &mut PgConnection,
+    server: &Server,
+    source_account: &Rc<RefCell<Account>>,
+) -> Result<(), Error> {
     let BotConfig {
-        server,
-        source_keypair,
         loan_manager_id,
-        source_account,
+        source_keypair,
         ..
     } = load_config().await?;
 
@@ -172,7 +198,7 @@ async fn fetch_loan_to_db(loan: Vec<String>, connection: &mut PgConnection) -> R
     match response.to_result() {
         Some(result) => {
             let loan = decode_loan_from_simulate_response(result)?;
-            save_loan(connection, loan)?;
+            save_loan(db_connection, loan)?;
         }
         None => {
             warn!("Simulation returned None. Loan may not exist (deleted). Skipping.");
@@ -183,12 +209,12 @@ async fn fetch_loan_to_db(loan: Vec<String>, connection: &mut PgConnection) -> R
     Ok(())
 }
 
-pub fn save_loan(connection: &mut PgConnection, loan: Loan) -> Result<(), Error> {
+pub fn save_loan(db_connection: &mut PgConnection, loan: Loan) -> Result<(), Error> {
     use crate::schema::loans::dsl::*;
 
     let existing = loans
         .filter(borrower.eq(&loan.borrower))
-        .first::<Loan>(connection)
+        .first::<Loan>(db_connection)
         .optional()?;
 
     if let Some(existing_loan) = existing {
@@ -200,24 +226,25 @@ pub fn save_loan(connection: &mut PgConnection, loan: Loan) -> Result<(), Error>
                 collateral_from.eq(loan.collateral_from),
                 unpaid_interest.eq(loan.unpaid_interest),
             ))
-            .execute(connection)?;
+            .execute(db_connection)?;
     } else {
         diesel::insert_into(loans)
             .values(&loan)
-            .execute(connection)?;
+            .execute(db_connection)?;
     }
     Ok(())
 }
 
 async fn delete_loan_from_db(
     value: Vec<String>,
-    connection: &mut PgConnection,
+    db_connection: &mut PgConnection,
 ) -> Result<(), Error> {
     use crate::schema::loans::dsl::*;
 
     let loan_owner = &value[1];
 
-    let deleted_rows = diesel::delete(loans.filter(borrower.eq(loan_owner))).execute(connection)?;
+    let deleted_rows =
+        diesel::delete(loans.filter(borrower.eq(loan_owner))).execute(db_connection)?;
 
     if deleted_rows > 0 {
         info!("Deleted loan for borrower: {}", loan_owner);
@@ -228,27 +255,32 @@ async fn delete_loan_from_db(
     Ok(())
 }
 
-async fn fetch_prices(connection: &mut PgConnection) -> Result<(), Error> {
-    info!("Fetching prices from Reflector");
+async fn fetch_prices(
+    db_connection: &mut PgConnection,
+    server: &Server,
+    source_account: &Rc<RefCell<Account>>,
+) -> Result<(), Error> {
     use crate::schema::loans::dsl::*;
 
+    info!("Fetching prices from Reflector");
+
     let BotConfig {
-        server,
+        oracle_contract_address,
         source_keypair,
-        source_account,
         ..
     } = load_config().await?;
 
-    let borrowed_from_uniques = loans.select(borrowed_from).distinct().load(connection)?;
-    let collateral_from_uniques = loans.select(collateral_from).distinct().load(connection)?;
+    let borrowed_from_uniques = loans.select(borrowed_from).distinct().load(db_connection)?;
+    let collateral_from_uniques = loans
+        .select(collateral_from)
+        .distinct()
+        .load(db_connection)?;
     let unique_pools_in_use: HashSet<String> = borrowed_from_uniques
         .into_iter()
         .chain(collateral_from_uniques)
         .collect();
 
     // Build operation
-    let oracle_contract_address =
-        env::var("ORACLE_ADDRESS").expect("ORACLE_ADDRESS must be set in .env");
     let method = "twap"; // Time-weighted average price.
 
     let amount_of_data_points = ScVal::U32(12); // 12 datapoints with 5 min resolution -> average
@@ -310,7 +342,7 @@ async fn fetch_prices(connection: &mut PgConnection) -> Result<(), Error> {
 
         let existing = prices
             .filter(pool_address.eq(&pool))
-            .first::<Price>(connection)
+            .first::<Price>(db_connection)
             .optional()?;
 
         if let Some(existing_price) = existing {
@@ -319,20 +351,24 @@ async fn fetch_prices(connection: &mut PgConnection) -> Result<(), Error> {
                     pool_address.eq(&pool),
                     time_weighted_average_price.eq(price_twap as i64),
                 ))
-                .execute(connection)?;
+                .execute(db_connection)?;
         } else {
             diesel::insert_into(prices)
                 .values((
                     pool_address.eq(&pool),
                     time_weighted_average_price.eq(price_twap as i64),
                 ))
-                .execute(connection)?;
+                .execute(db_connection)?;
         }
     }
     Ok(())
 }
 
-async fn find_liquidateable(connection: &mut PgConnection) -> Result<(), Error> {
+async fn find_liquidateable(
+    connection: &mut PgConnection,
+    server: &Server,
+    source_account: &Rc<RefCell<Account>>,
+) -> Result<(), Error> {
     let all_loans = loans
         .select(Loan::as_select())
         .load(connection)
@@ -394,7 +430,7 @@ async fn find_liquidateable(connection: &mut PgConnection) -> Result<(), Error> 
         let health_factor_threshold = 10_100_000;
         if health_factor < health_factor_threshold {
             info!("Found loan close to liquidation threshold: {:#?}", loan);
-            if let Err(e) = attempt_liquidating(loan.clone()).await {
+            if let Err(e) = attempt_liquidating(loan.clone(), server, source_account).await {
                 warn!(
                     "Failed to liquidate loan for borrower {}: {}",
                     loan.borrower, e
@@ -407,23 +443,18 @@ async fn find_liquidateable(connection: &mut PgConnection) -> Result<(), Error> 
     Ok(())
 }
 
-async fn attempt_liquidating(loan: Loan) -> Result<(), Error> {
-    info!("Attempting to liquidate loan: {:#?}", loan);
-
+async fn attempt_liquidating(
+    loan: Loan,
+    server: &Server,
+    source_account: &Rc<RefCell<Account>>,
+) -> Result<(), Error> {
     let BotConfig {
-        source_keypair,
-        server,
         loan_manager_id,
-        source_public,
+        source_keypair,
         ..
     } = load_config().await?;
 
-    // Refresh account data before transaction to ensure correct sequence number
-    let account_data = server.get_account(&source_public).await?;
-    let source_account = Rc::new(RefCell::new(
-        Account::new(&source_public, &account_data.sequence_number())
-            .map_err(|e| anyhow::anyhow!("Account::new failed: {}", e))?,
-    ));
+    info!("Attempting to liquidate loan: {:#?}", loan);
 
     // Build operation
     let method = "liquidate";
@@ -438,7 +469,7 @@ async fn attempt_liquidating(loan: Loan) -> Result<(), Error> {
 
     let args = vec![
         Address::to_sc_val(
-            &Address::from_string(&source_public)
+            &Address::from_string(&source_keypair.public_key())
                 .map_err(|e| anyhow::anyhow!("Account::from_string failed: {}", e))?,
         )
         .map_err(|e| anyhow::anyhow!("Address::to_sc_val failed: {}", e))?,
@@ -506,7 +537,7 @@ async fn attempt_liquidating(loan: Loan) -> Result<(), Error> {
     // let max_to_liquidate
     //
     let hash = response.hash.clone();
-    if wait_success(&server, hash, response).await {
+    if wait_success(server, hash, response).await {
         info!("Loan {} liquidated!", loan.borrower);
     } else {
         warn!("Failed to liquidate loan for {}", loan.borrower);
@@ -551,44 +582,35 @@ async fn wait_success(server: &Server, hash: String, response: SendTransactionRe
     false
 }
 
+pub struct BotConfig {
+    rpc_url: String,
+    loan_manager_id: String,
+    source_keypair: Keypair,
+    oracle_contract_address: String,
+}
+
 async fn load_config() -> Result<BotConfig, Error> {
     dotenv().ok();
 
-    let url =
+    let rpc_url =
         env::var("PUBLIC_SOROBAN_RPC_URL").expect("PUBLIC_SOROBAN_RPC_URL must be set in .env");
-
-    let allow_http: bool = std::env::var("ALLOW_HTTP")
-        .expect("ALLOW_HTTP must be set in .env")
-        .parse()
-        .expect("ALLOW_HTTP must be 'true' or 'false'");
-    let options = Options {
-        allow_http,
-        ..Options::default()
-    };
-
-    let server = soroban_client::Server::new(&url, options).expect("Cannot create server");
 
     let secret_str =
         env::var("SOROBAN_SECRET_KEY").expect("SOROBAN_SECRET_KEY must be set in .env");
 
     let source_keypair = Keypair::from_secret(&secret_str).expect("No keypair for secret");
+
     let loan_manager_id =
         env::var("CONTRACT_ID_LOAN_MANAGER").expect("CONTRACT_ID_LOAN_MANAGER must be set in .env");
 
-    let source_public = source_keypair.public_key();
-
-    let account_data = server.get_account(&source_public).await?;
-    let source_account = Rc::new(RefCell::new(
-        Account::new(&source_public, &account_data.sequence_number())
-            .map_err(|e| anyhow::anyhow!("Account::new failed: {}", e))?,
-    ));
+    let oracle_contract_address =
+        env::var("ORACLE_ADDRESS").expect("ORACLE_ADDRESS must be set in .env");
 
     let config = BotConfig {
+        rpc_url,
         loan_manager_id,
-        server,
         source_keypair,
-        source_public,
-        source_account,
+        oracle_contract_address,
     };
     Ok(config)
 }
