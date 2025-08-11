@@ -172,6 +172,8 @@ pub fn delete_loan(e: &Env, loan_id: &LoanId) {
     let key = LoanManagerDataKey::Loan(loan_id.clone());
     e.storage().persistent().remove(&key);
     remove_user_loan_id(e, &loan_id.borrower_address, loan_id.nonce);
+    e.events()
+        .publish((symbol_short!("Loan"), symbol_short!("deleted")), key);
 }
 
 // Increment and return the next loan nonce for a user
@@ -211,5 +213,10 @@ pub fn remove_user_loan_id(e: &Env, user: &Address, loan_id: u64) {
     }
 
     let key = (user.clone(), symbol_short!("ids"));
-    e.storage().persistent().set(&key, &new_nonces);
+
+    if new_nonces.is_empty() {
+        e.storage().persistent().remove(&key);
+    } else {
+        e.storage().persistent().set(&key, &new_nonces);
+    }
 }
