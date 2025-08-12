@@ -46,7 +46,14 @@ impl MockPriceOracleContract {
     }
 
     pub fn twap(_e: Env, _asset: Asset, _records: u32) -> Option<i128> {
-        Some(1)
+        if cfg!(test) {
+            Some(1)
+        } else {
+            _e.storage()
+                .persistent()
+                .get(&DataKey::Price(_asset))
+                .map(|data: PriceData| data.price)
+        }
     }
 
     pub fn update_price(e: Env, asset: Asset, price: PriceData) -> Result<(), ReflectorMockError> {
