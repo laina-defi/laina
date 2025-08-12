@@ -17,3 +17,8 @@ services:
     container_name: stellar
     environment:
       - HORIZON_CORS_ALLOWED_ORIGINS=*
+    healthcheck:
+      test: ["CMD", "sh", "-c", "curl -sf http://localhost:8000/health"]
+      interval: 10s
+      timeout: 15s
+      retries: 18
