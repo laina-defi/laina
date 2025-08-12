@@ -7,6 +7,7 @@ import crypto from 'crypto';
 import { CURRENCIES, type Currency } from '../currencies';
 import {
   loadAccount,
+  fundAccount,
   buildContracts,
   createContractBindings,
   createContractImports,
@@ -15,6 +16,7 @@ import {
   installContracts,
   loanManagerAddress,
   readTextFile,
+  writeContractIdsToEnv,
 } from './util_local';
 
 const account = process.env.SOROBAN_ACCOUNT;
@@ -76,6 +78,7 @@ const deployReflectorMock = () => {
 
 // Calling the functions (equivalent to the last part of your bash script)
 loadAccount();
+fundAccount();
 buildContracts();
 installContracts();
 deployLoanManager();
@@ -83,5 +86,6 @@ deployReflectorMock();
 deployLoanPools();
 createContractBindings();
 createContractImports();
+writeContractIdsToEnv();
 
 console.log('\nInitialization successful!');

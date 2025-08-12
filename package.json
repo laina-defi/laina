@@ -39,7 +39,7 @@
     "dev": "astro dev",
     "dev:local": "STELLAR_NETWORK=local astro dev",
     "init": "node --import tsx scripts/initialize.ts",
-    "init:local": "docker compose up -d && DOTENV_CONFIG_PATH=.env.local node --import tsx scripts/initialize_local.ts && DOTENV_CONFIG_PATH=.env.local npm run issue_tokens:local ",
+    "init:local": "docker compose down && docker compose up -d --wait && sleep 10 && DOTENV_CONFIG_PATH=.env.local node --import tsx scripts/initialize_local.ts && DOTENV_CONFIG_PATH=.env.local npm run issue_tokens:local && npm run set-price XLM 17694578912345 1 && npm run set-price USDC 17694578912345 1 && npm run set-price EURC 17694578912345 1",
     "upgrade": "node --import tsx scripts/upgrade.ts",
     "preview": "astro preview",
     "start": "npm run init && astro dev",

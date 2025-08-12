@@ -28,6 +28,10 @@ export const loadAccount = () => {
   exe(`stellar keys add ${process.env.SOROBAN_ACCOUNT}`);
 };
 
+export const fundAccount = () => {
+  exe(`curl "http://localhost:8000/friendbot?addr=GAMX6CTD62UMM7EH24ULHZZWN3K3WI6BVHGQZE5HOCZSRBDNKT2J3I2U"`);
+};
+
 // Function to execute and log shell commands
 export const exe = (command: string) => {
   console.log(command);
@@ -47,7 +51,6 @@ export const installContracts = () => {
 
   install('loan_manager');
   install('loan_pool');
-  install('reflector_oracle_mock');
 };
 
 /* Install a contract */
@@ -68,8 +71,7 @@ export const filenameNoExtension = (filename: string) => {
 export const readTextFile = (path: string): string => readFileSync(path, { encoding: 'utf8' }).trim();
 
 // This is a function so its value can update during init.
-export const loanManagerAddress = (): string =>
-  process.env.CONTRACT_ID_LOAN_MANAGER || readTextFile('./.stellar/contract-ids/loan_manager.txt');
+export const loanManagerAddress = (): string => readTextFile('./.stellar/contract-ids/loan_manager.txt');
 
 export const createContractBindings = () => {
   bind('loan_manager', process.env.CONTRACT_ID_LOAN_MANAGER);
@@ -92,6 +94,45 @@ const bind = (contractName: string, address: string | undefined) => {
 export const createContractImports = () => {
   const CONTRACTS = ['loan_manager', 'pool_xlm', 'pool_usdc', 'pool_eurc'];
   CONTRACTS.forEach(importContract);
+};
+
+export const writeContractIdsToEnv = () => {
+  const loanManagerId = readTextFile('./.stellar/contract-ids/loan_manager.txt');
+  const poolXlmId = readTextFile('./.stellar/contract-ids/pool_xlm.txt');
+  const poolUsdcId = readTextFile('./.stellar/contract-ids/pool_usdc.txt');
+  const poolEurcId = readTextFile('./.stellar/contract-ids/pool_eurc.txt');
+
+  let envContent = '';
+
+  try {
+    // Read existing .env.local file
+    envContent = readFileSync('.env.local', 'utf8');
+  } catch {
+    // File doesn't exist, create new content
+    envContent = '';
+  }
+
+  // Update or add contract ID lines
+  const contractIds = {
+    CONTRACT_ID_LOAN_MANAGER: loanManagerId,
+    CONTRACT_ID_POOL_XLM: poolXlmId,
+    CONTRACT_ID_POOL_USDC: poolUsdcId,
+    CONTRACT_ID_POOL_EURC: poolEurcId,
+  };
+
+  for (const [key, value] of Object.entries(contractIds)) {
+    const regex = new RegExp(`^${key}=.*$`, 'm');
+    if (regex.test(envContent)) {
+      // Update existing line
+      envContent = envContent.replace(regex, `${key}=${value}`);
+    } else {
+      // Add new line
+      envContent += envContent.length > 0 ? `\n${key}=${value}` : `${key}=${value}`;
+    }
+  }
+
+  writeFileSync('.env.local', envContent);
+  console.log('Contract IDs written to .env.local');
 };
 
 const importContract = (contractName: string) => {
