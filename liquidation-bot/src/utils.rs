@@ -183,3 +183,291 @@ pub fn decode_value(value: String) -> Result<Vec<String>, Error> {
 
     Ok(result_parts)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use soroban_client::xdr::{Int128Parts, ScAddress, ScMapEntry};
+    use std::str::FromStr;
+    use stellar_xdr::curr::ScMap;
+
+    #[test]
+    fn scval_to_i128_success() {
+        let parts = Int128Parts { hi: 0, lo: 1000 };
+        let scval = ScVal::I128(parts);
+
+        let result = scval_to_i128(&scval).unwrap();
+        assert_eq!(result, 1000);
+    }
+
+    #[test]
+    fn scval_to_i128_negative() {
+        let parts = Int128Parts {
+            hi: -1,
+            lo: u64::MAX - 999,
+        };
+        let scval = ScVal::I128(parts);
+
+        let result = scval_to_i128(&scval).unwrap();
+        assert_eq!(result, -1000);
+    }
+
+    #[test]
+    fn scval_to_i128_wrong_type() {
+        let scval = ScVal::U32(100);
+        let result = scval_to_i128(&scval);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().to_string(), "Expected ScVal::I128");
+    }
+
+    #[test]
+    fn scval_to_address_string_success() {
+        let address_str = "CCDF2NOJXOW73SXXB6BZRAPGVNJU7VMUURXCVLRHCHHAXHOY2TVRLFFP";
+        let address = ScAddress::from_str(address_str).unwrap();
+        let scval = ScVal::Address(address);
+
+        let result = scval_to_address_string(&scval).unwrap();
+        assert_eq!(result, address_str);
+    }
+
+    #[test]
+    fn scval_to_address_string_wrong_type() {
+        let scval = ScVal::U32(100);
+        let result = scval_to_address_string(&scval);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().to_string(), "Expected ScVal::Address");
+    }
+
+    #[test]
+    fn extract_map_success() {
+        let mut entries = Vec::new();
+        entries.push(ScMapEntry {
+            key: ScVal::Symbol(ScSymbol(StringM::from_str("borrower").unwrap())),
+            val: ScVal::U32(1000),
+        });
+        entries.push(ScMapEntry {
+            key: ScVal::Symbol(ScSymbol(StringM::from_str("amount").unwrap())),
+            val: ScVal::U32(5000),
+        });
+
+        let scmap = ScMap(entries.try_into().unwrap());
+        let scval = ScVal::Map(Some(scmap));
+
+        let result = extract_map(&scval).unwrap();
+        assert_eq!(result.len(), 2);
+        assert!(result.contains_key("borrower"));
+        assert!(result.contains_key("amount"));
+    }
+
+    #[test]
+    fn extract_map_empty() {
+        let entries = Vec::new();
+        let scmap = ScMap(entries.try_into().unwrap());
+        let scval = ScVal::Map(Some(scmap));
+
+        let result = extract_map(&scval).unwrap();
+        assert_eq!(result.len(), 0);
+    }
+
+    #[test]
+    fn extract_map_wrong_type() {
+        let scval = ScVal::U32(100);
+        let result = extract_map(&scval);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().to_string(), "Expected ScVal::Map");
+    }
+
+    #[test]
+    fn extract_map_none() {
+        let scval = ScVal::Map(None);
+        let result = extract_map(&scval);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().to_string(), "Expected ScVal::Map");
+    }
+
+    #[test]
+    fn extract_i128_from_result_success() {
+        let parts = Int128Parts { hi: 0, lo: 2500 };
+        let scval = ScVal::I128(parts);
+        let result = Some((scval, Vec::new()));
+
+        let extracted = extract_i128_from_result(result);
+        assert_eq!(extracted, Some(2500));
+    }
+
+    #[test]
+    fn extract_i128_from_result_none() {
+        let result = extract_i128_from_result(None);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn extract_i128_from_result_wrong_type() {
+        let scval = ScVal::U32(100);
+        let result = Some((scval, Vec::new()));
+
+        let extracted = extract_i128_from_result(result);
+        assert_eq!(extracted, None);
+    }
+
+    #[test]
+    fn extract_i128_from_result_large_number() {
+        let parts = Int128Parts { hi: 1, lo: 0 };
+        let scval = ScVal::I128(parts);
+        let result = Some((scval, Vec::new()));
+
+        let extracted = extract_i128_from_result(result);
+        let expected = i128_from_pieces(1, 0);
+        assert_eq!(extracted, Some(expected));
+    }
+
+    #[test]
+    fn asset_to_scval_other() {
+        let asset = Asset::Other(ScSymbol(StringM::from_str("USDC").unwrap()));
+        let result = asset_to_scval(&asset).unwrap();
+
+        if let ScVal::Vec(Some(vec)) = result {
+            assert_eq!(vec.len(), 2);
+            if let ScVal::Symbol(symbol) = &vec[0] {
+                assert_eq!(symbol.to_string(), "Other");
+            } else {
+                panic!("Expected Symbol for variant");
+            }
+            if let ScVal::Symbol(symbol) = &vec[1] {
+                assert_eq!(symbol.to_string(), "USDC");
+            } else {
+                panic!("Expected Symbol for asset");
+            }
+        } else {
+            panic!("Expected ScVal::Vec");
+        }
+    }
+
+    #[test]
+    fn asset_to_scval_stellar() {
+        let address =
+            Address::from_string("CCDF2NOJXOW73SXXB6BZRAPGVNJU7VMUURXCVLRHCHHAXHOY2TVRLFFP")
+                .unwrap();
+        let asset = Asset::Stellar(address);
+        let result = asset_to_scval(&asset).unwrap();
+
+        if let ScVal::Vec(Some(vec)) = result {
+            assert_eq!(vec.len(), 2);
+            if let ScVal::Symbol(symbol) = &vec[0] {
+                assert_eq!(symbol.to_string(), "Stellar");
+            } else {
+                panic!("Expected Symbol for variant");
+            }
+            if let ScVal::Address(_) = &vec[1] {
+                // Address conversion successful
+            } else {
+                panic!("Expected Address for asset");
+            }
+        } else {
+            panic!("Expected ScVal::Vec");
+        }
+    }
+
+    #[test]
+    fn decode_topic_invalid_base64() {
+        let invalid_topic = vec!["invalid_base64".to_string()];
+        let result = decode_topic(invalid_topic);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn decode_value_invalid_base64() {
+        let invalid_value = "invalid_base64".to_string();
+        let result = decode_value(invalid_value);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn decode_loan_from_simulate_response_missing_keys() {
+        let mut entries = Vec::new();
+        entries.push(ScMapEntry {
+            key: ScVal::Symbol(ScSymbol(StringM::from_str("borrower").unwrap())),
+            val: ScVal::Address(
+                ScAddress::from_str("CCDF2NOJXOW73SXXB6BZRAPGVNJU7VMUURXCVLRHCHHAXHOY2TVRLFFP")
+                    .unwrap(),
+            ),
+        });
+        // Missing required keys
+
+        let scmap = ScMap(entries.try_into().unwrap());
+        let scval = ScVal::Map(Some(scmap));
+        let result = (scval, Vec::new());
+
+        let loan_result = decode_loan_from_simulate_response(result);
+        assert!(loan_result.is_err());
+    }
+
+    #[test]
+    fn decode_loan_from_simulate_response_success() {
+        let mut entries = Vec::new();
+        entries.push(ScMapEntry {
+            key: ScVal::Symbol(ScSymbol(StringM::from_str("borrower").unwrap())),
+            val: ScVal::Address(
+                ScAddress::from_str("CCDF2NOJXOW73SXXB6BZRAPGVNJU7VMUURXCVLRHCHHAXHOY2TVRLFFP")
+                    .unwrap(),
+            ),
+        });
+        entries.push(ScMapEntry {
+            key: ScVal::Symbol(ScSymbol(StringM::from_str("borrowed_from").unwrap())),
+            val: ScVal::Address(
+                ScAddress::from_str("CAXTXTUCA6ILFHCPIN34TWWVL4YL2QDDHYI65MVVQCEMDANFZLXVIEIK")
+                    .unwrap(),
+            ),
+        });
+        entries.push(ScMapEntry {
+            key: ScVal::Symbol(ScSymbol(StringM::from_str("borrowed_amount").unwrap())),
+            val: ScVal::I128(Int128Parts {
+                hi: 0,
+                lo: 1000000000,
+            }),
+        });
+        entries.push(ScMapEntry {
+            key: ScVal::Symbol(ScSymbol(StringM::from_str("collateral_amount").unwrap())),
+            val: ScVal::I128(Int128Parts {
+                hi: 0,
+                lo: 2000000000,
+            }),
+        });
+        entries.push(ScMapEntry {
+            key: ScVal::Symbol(ScSymbol(StringM::from_str("collateral_from").unwrap())),
+            val: ScVal::Address(
+                ScAddress::from_str("CDUFMIS6ZH3JM5MPNTWMDLBXPNQYV5FBPBGCFT2WWG4EXKGEPOCBNGCZ")
+                    .unwrap(),
+            ),
+        });
+        entries.push(ScMapEntry {
+            key: ScVal::Symbol(ScSymbol(StringM::from_str("unpaid_interest").unwrap())),
+            val: ScVal::I128(Int128Parts {
+                hi: 0,
+                lo: 50000000,
+            }),
+        });
+
+        let scmap = ScMap(entries.try_into().unwrap());
+        let scval = ScVal::Map(Some(scmap));
+        let result = (scval, Vec::new());
+
+        let loan = decode_loan_from_simulate_response(result).unwrap();
+        assert_eq!(
+            loan.borrower,
+            "CCDF2NOJXOW73SXXB6BZRAPGVNJU7VMUURXCVLRHCHHAXHOY2TVRLFFP"
+        );
+        assert_eq!(
+            loan.borrowed_from,
+            "CAXTXTUCA6ILFHCPIN34TWWVL4YL2QDDHYI65MVVQCEMDANFZLXVIEIK"
+        );
+        assert_eq!(loan.borrowed_amount, 1000000000);
+        assert_eq!(loan.collateral_amount, 2000000000);
+        assert_eq!(
+            loan.collateral_from,
+            "CDUFMIS6ZH3JM5MPNTWMDLBXPNQYV5FBPBGCFT2WWG4EXKGEPOCBNGCZ"
+        );
+        assert_eq!(loan.unpaid_interest, 50000000);
+        assert_eq!(loan.id, 1);
+    }
+}
