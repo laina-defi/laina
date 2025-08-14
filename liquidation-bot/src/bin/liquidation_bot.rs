@@ -45,7 +45,7 @@ async fn main() -> Result<(), Error> {
     env_logger::init();
 
     // TODO:Decide on how to handle the initial ledger
-    let mut ledger = 10;
+    let mut ledger = 979481;
 
     loop {
         let GetEventsResponse {
