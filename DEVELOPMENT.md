@@ -101,30 +101,18 @@ Copy the example:
 cp .local.env.example .env.local
 ```
 
-## Setting Up the Local Network
+## Setting Up an Account for Local Network
 
-We are using a ephemeral mode, which means that every time you start the container the database starts empty. Due to this, there's a bit more to setting up to do. First, you should start the container:
-
-```sh
-docker compose up
-```
-
-This will start both the liquidation bots database and the whole local Stellar network including Horizon, RPC, and Friendbot. After the network has started and synced you need to create an account. If you don't have existing stellar id's you can run:
+Simply create an alias with
 
 ```sh
-stellar keys generate ci_local --network local
+stellar keys generate ci_local
 ```
 
 Then print out your new public key:
 
 ```sh
 stellar keys address ci_local
-```
-
-And then fund the account using the local friendbot. Note, you need to change your public key to the url. If you had existing account alias you could skip generating a new one.
-
-```sh
-curl "http://localhost:8000/friendbot?addr=GAMX6...J3I2U"
 ```
 
 Finally, print out your secret key:
@@ -141,63 +129,17 @@ SOROBAN_SECRET_KEY="S...SZG"
 
 ## Deploying Contracts
 
-First we need to build the contracts.
-
-```sh
-make build
-```
-
-Then we need to deploy a mock price oracle as we need it's address for the loan manager.
-
-```sh
-stellar contract deploy --wasm ./target/wasm32v1-none/release/reflector_oracle_mock.wasm --network local --source-account ci_local --ignore-checks --salt 1
-```
-
-Using `--salt 1` is optional, but having constant salt removes the need to change the oracle address on every restart of the local network. After this you should change the returned contract ID to `laina/contracts/loan_manager/src/contract.rs`
-
-```rust
-const REFLECTOR_ADDRESS: &str = "CBLPQLLG3I2VN3MSULBVHYJNQNPMDHF44RW5I24VZUI3NRAKI7PZ3ZYM";
-```
-
-Then add the same address to `.env.local`:
-
-```sh
-ORACLE_ADDRESS="CAIZU6FXBMNR4O2ZBS6P2Z7JZMUIHM6MK2GL7TLAOBEIM4KKEONT3LAE"
-```
-
-Now you can simply run the initialization script:
+You can simply run the following command:
 
 ```sh
 npm run init:local
 ```
 
-This will deploy all of the contracts, generate TypeScript bindings, and issue and create sell offers for two custom tokens USDC and EURC. When the script has ran it will show you something like this:
-
-```sh
-🚀 Deploying Stellar Asset Contracts...
-ℹ️ Signing transaction: a513751201b712e9c80df2b1cdbad08e8b8a4b87fc92349192bb4a570fcbb0f5
-✅ USDC Contract Address: CDU4BRSZXYHAN3XINOJEKGUQ4WNLSLVQC5H6F6N75ORBU5YMNTPIJH7H
-ℹ️ Signing transaction: a5dfeea136bf3e75b673f9fc270131730b59b828431a5881f02ea78dc7562cfe
-✅ EURC Contract Address: CBA4EB6OXQOP3VOT36P7JX3ALWMRNGVEDIILIY42H5K7SKJTNXXM24FN
-
-📋 Asset Summary:
-USDC Issuer: GAMX6CTD62UMM7EH24ULHZZWN3K3WI6BVHGQZE5HOCZSRBDNKT2J3I2U
-USDC Contract: CDU4BRSZXYHAN3XINOJEKGUQ4WNLSLVQC5H6F6N75ORBU5YMNTPIJH7H
-EURC Issuer: GAMX6CTD62UMM7EH24ULHZZWN3K3WI6BVHGQZE5HOCZSRBDNKT2J3I2U
-EURC Contract: CBA4EB6OXQOP3VOT36P7JX3ALWMRNGVEDIILIY42H5K7SKJTNXXM24FN
-```
-
-Finally, we need to deploy a SAC (Stellar Asset Contract) for the native token, XLM:
-
-```sh
-stellar contract asset deploy --asset native --network local --source-account ci_local
-```
-
-You can use this addresses from asset summary and SAC deployment to setup `currencies_local.ts` to use these local network custom tokens.
+This will deploy all of the contracts, generate TypeScript bindings, issue and create sell offers for two custom tokens USDC and EURC, set token prices, deploy XLM SAC, etc.
 
 ## Frontend
 
-After you have updated `currencies_local.ts` to use the abovementioned addresses, you can simply run:
+After the init script has finished running, you can start the frontend server by running:
 
 ```sh
 npm run dev:local
