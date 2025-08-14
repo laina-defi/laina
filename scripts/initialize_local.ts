@@ -38,12 +38,16 @@ const deployLoanManager = () => {
 
   deploy(`./target/wasm32v1-none/release/loan_manager.wasm`);
 
+  // Read oracle address after it has been deployed
+  const oracle = readTextFile('./.stellar/contract-ids/reflector_oracle_mock.txt');
+
   exe(`stellar contract invoke \
 --id ${loanManagerAddress()} \
 --source-account ${account} \
 --network local \
 -- initialize \
---admin ${account}`);
+--admin ${account} \
+--oracle_address ${oracle}`);
 };
 
 /** Deploy liquidity pools using the loan-manager as a factory contract */
@@ -76,16 +80,21 @@ const deployReflectorMock = () => {
   deploy(`./target/wasm32v1-none/release/reflector_oracle_mock.wasm`);
 };
 
+const deployNativeStellarAssetContract = () => {
+  exe(`stellar contract asset deploy --asset native --network local --source-account ${account}`);
+};
+
 // Calling the functions (equivalent to the last part of your bash script)
 loadAccount();
 fundAccount();
 buildContracts();
 installContracts();
-deployLoanManager();
 deployReflectorMock();
+deployLoanManager();
 deployLoanPools();
 createContractBindings();
 createContractImports();
 writeContractIdsToEnv();
+deployNativeStellarAssetContract();
 
 console.log('\nInitialization successful!');
