@@ -14,4 +14,5 @@ pub enum LoanManagerError {
     InvalidLoanToken = 8,
     InvalidCollateralToken = 9,
     InvalidLiquidation = 10,
+    OracleNotFound = 11,
 }

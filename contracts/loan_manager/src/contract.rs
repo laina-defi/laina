@@ -2,17 +2,11 @@ use crate::error::LoanManagerError;
 use crate::oracle::{self, Asset};
 use crate::storage::{self, Loan};
 
-use soroban_sdk::{contract, contractimpl, token, Address, BytesN, Env, String, Symbol};
+use soroban_sdk::{contract, contractimpl, token, Address, BytesN, Env, Symbol};
 
 mod loan_pool {
     soroban_sdk::contractimport!(file = "../../target/wasm32v1-none/release/loan_pool.wasm");
 }
-
-// This is the real address of the Reflector Oracle in Testnet.
-// We use the same address to mock it for testing.
-// const REFLECTOR_ADDRESS: &str = "CCYOZJCOPG34LLQQ7N24YXBM7LL62R7ONMZ3G6WZAAYPB5OYKOMJRN63";
-// This is now the generated id from the mock contract on local network
-const REFLECTOR_ADDRESS: &str = "CBZCZMHCQS3TLYJJLGMHWUB7TCYCKGSGCJHQBM2S2GZESKREHWQBELDZ";
 
 #[contract]
 struct LoanManager;
@@ -21,11 +15,17 @@ struct LoanManager;
 #[contractimpl]
 impl LoanManager {
     /// Set the admin that's allowed to upgrade the wasm.
-    pub fn initialize(e: Env, admin: Address) -> Result<(), LoanManagerError> {
+    pub fn initialize(
+        e: Env,
+        admin: Address,
+        oracle_address: Address,
+    ) -> Result<(), LoanManagerError> {
         if storage::admin_exists(&e) {
             return Err(LoanManagerError::AlreadyInitialized);
         }
         storage::write_admin(&e, &admin);
+
+        storage::write_oracle(&e, &oracle_address);
 
         Ok(())
     }
@@ -244,7 +244,7 @@ impl LoanManager {
         token_collateral_address: Address,
     ) -> Result<i128, LoanManagerError> {
         const DECIMAL_TO_INT_MULTIPLIER: i128 = 10000000;
-        let reflector_address = Address::from_string(&String::from_str(e, REFLECTOR_ADDRESS));
+        let reflector_address = storage::read_oracle(e)?;
         let reflector_contract = oracle::Client::new(e, &reflector_address);
 
         // get the price and calculate the value of the collateral
@@ -282,12 +282,16 @@ impl LoanManager {
         Ok(health_factor)
     }
 
+    pub fn get_oracle(e: Env) -> Result<Address, LoanManagerError> {
+        storage::read_oracle(&e)
+    }
+
     pub fn get_loan(e: &Env, user: Address) -> Result<Loan, LoanManagerError> {
         storage::read_loan(e, user).ok_or(LoanManagerError::LoanNotFound)
     }
 
     pub fn get_price(e: &Env, token: Symbol) -> Result<i128, LoanManagerError> {
-        let reflector_address = Address::from_string(&String::from_str(e, REFLECTOR_ADDRESS));
+        let reflector_address = storage::read_oracle(e)?;
         let reflector_contract = oracle::Client::new(e, &reflector_address);
 
         let asset = Asset::Other(token);
@@ -536,23 +540,25 @@ mod tests {
     fn initialize() {
         let e = Env::default();
         let admin = Address::generate(&e);
+        let oracle = Address::generate(&e);
         let manager_addr = e.register(LoanManager, ());
         let manager_client = LoanManagerClient::new(&e, &manager_addr);
 
-        assert!(manager_client.try_initialize(&admin).is_ok());
+        assert!(manager_client.try_initialize(&admin, &oracle).is_ok());
     }
 
     #[test]
     fn cannot_re_initialize() {
         let e = Env::default();
         let admin = Address::generate(&e);
+        let oracle = Address::generate(&e);
 
         let contract_id = e.register(LoanManager, ());
         let client = LoanManagerClient::new(&e, &contract_id);
 
-        client.initialize(&admin);
+        client.initialize(&admin, &oracle);
 
-        assert!(client.try_initialize(&admin).is_err())
+        assert!(client.try_initialize(&admin, &oracle).is_err())
     }
 
     #[test]
@@ -700,7 +706,9 @@ mod tests {
             li.timestamp = 1 + 31_556_926;
         });
 
-        let reflector_addr = Address::from_string(&String::from_str(&e, REFLECTOR_ADDRESS));
+        let reflector_addr = e
+            .as_contract(&manager_addr, || storage::read_oracle(&e))
+            .unwrap();
         e.register_at(&reflector_addr, oracle::WASM, ());
 
         // ASSERT
@@ -744,6 +752,7 @@ mod tests {
         let TestEnv {
             user,
             admin,
+            manager_addr,
             manager_client,
             pool_xlm_addr,
             pool_usdc_addr,
@@ -766,7 +775,9 @@ mod tests {
         });
 
         // A new instance of reflector mock needs to be created, they only live for one ledger.
-        let reflector_addr = Address::from_string(&String::from_str(&e, REFLECTOR_ADDRESS));
+        let reflector_addr = e
+            .as_contract(&manager_addr, || storage::read_oracle(&e))
+            .unwrap();
         e.register_at(&reflector_addr, oracle::WASM, ());
 
         // ASSERT
@@ -871,6 +882,7 @@ mod tests {
 
         let TestEnv {
             user,
+            manager_addr,
             manager_client,
             pool_xlm_addr,
             pool_usdc_addr,
@@ -897,7 +909,9 @@ mod tests {
         });
 
         // A new instance of reflector mock needs to be created, they only live for one ledger.
-        let reflector_addr = Address::from_string(&String::from_str(&e, REFLECTOR_ADDRESS));
+        let reflector_addr = e
+            .as_contract(&manager_addr, || storage::read_oracle(&e))
+            .unwrap();
         e.register_at(&reflector_addr, oracle::WASM, ());
 
         manager_client.add_interest(&user);
@@ -925,6 +939,7 @@ mod tests {
         let TestEnv {
             user,
             manager_client,
+            manager_addr,
             pool_xlm_addr,
             pool_usdc_addr,
             pool_xlm_client,
@@ -944,7 +959,9 @@ mod tests {
         });
 
         // A new instance of reflector mock needs to be created, they only live for one ledger.
-        let reflector_addr = Address::from_string(&String::from_str(&e, REFLECTOR_ADDRESS));
+        let reflector_addr = e
+            .as_contract(&manager_addr, || storage::read_oracle(&e))
+            .unwrap();
         e.register_at(&reflector_addr, oracle::WASM, ());
 
         // ASSERT
@@ -981,6 +998,7 @@ mod tests {
 
         let TestEnv {
             user,
+            manager_addr,
             manager_client,
             xlm_asset_client,
             pool_xlm_client,
@@ -1003,7 +1021,9 @@ mod tests {
 
         // ASSERT
         // A new instance of reflector mock needs to be created, they only live for one ledger.
-        let reflector_addr = Address::from_string(&String::from_str(&e, REFLECTOR_ADDRESS));
+        let reflector_addr = e
+            .as_contract(&manager_addr, || storage::read_oracle(&e))
+            .unwrap();
         e.register_at(&reflector_addr, oracle::WASM, ());
 
         assert_eq!(xlm_token_client.balance(&user), 100);
@@ -1063,6 +1083,7 @@ mod tests {
         let TestEnv {
             admin,
             user,
+            manager_addr,
             manager_client,
             pool_xlm_addr,
             pool_xlm_client,
@@ -1098,7 +1119,9 @@ mod tests {
         });
 
         // A new instance of reflector mock needs to be created, they only live for one ledger.
-        let reflector_addr = Address::from_string(&String::from_str(&e, REFLECTOR_ADDRESS));
+        let reflector_addr = e
+            .as_contract(&manager_addr, || storage::read_oracle(&e))
+            .unwrap();
         e.register_at(&reflector_addr, oracle::WASM, ());
 
         manager_client.add_interest(&user);
@@ -1113,7 +1136,9 @@ mod tests {
             li.sequence_number = 100_000 + 1_000;
         });
 
-        let reflector_addr = Address::from_string(&String::from_str(&e, REFLECTOR_ADDRESS));
+        let reflector_addr = e
+            .as_contract(&manager_addr, || storage::read_oracle(&e))
+            .unwrap();
         e.register_at(&reflector_addr, oracle::WASM, ());
 
         manager_client.liquidate(&admin, &user, &5_000);
@@ -1144,11 +1169,12 @@ mod tests {
         let admin = Address::generate(e);
         let admin2 = Address::generate(e);
         let user = Address::generate(e);
+        let oracle = Address::generate(e);
 
         // loan manager
         let manager_addr = e.register(LoanManager, ());
         let manager_client = LoanManagerClient::new(e, &manager_addr);
-        manager_client.initialize(&admin);
+        manager_client.initialize(&admin, &oracle);
 
         // XLM asset
         let xlm_ticker = Symbol::new(e, "XLM");
@@ -1178,7 +1204,9 @@ mod tests {
         usdc_asset_client.mint(&user, &1_000);
 
         // Setup mock price oracle
-        let reflector_addr = Address::from_string(&String::from_str(e, REFLECTOR_ADDRESS));
+        let reflector_addr = e
+            .as_contract(&manager_addr, || storage::read_oracle(e))
+            .unwrap();
         e.register_at(&reflector_addr, oracle::WASM, ());
 
         // Deposit some of the admin's tokens for borrowing.

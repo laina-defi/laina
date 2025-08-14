@@ -7,6 +7,7 @@ use crate::error::LoanManagerError;
 #[contracttype]
 pub enum LoanManagerDataKey {
     Admin,
+    Oracle,
     PoolAddresses,
     Loan(Address),
     LastUpdated,
@@ -48,6 +49,21 @@ pub fn read_admin(e: &Env) -> Result<Address, LoanManagerError> {
         .persistent()
         .get(&LoanManagerDataKey::Admin)
         .ok_or(LoanManagerError::AdminNotFound)
+}
+
+pub fn write_oracle(e: &Env, oracle: &Address) {
+    e.storage()
+        .persistent()
+        .set(&LoanManagerDataKey::Oracle, &oracle);
+    e.events()
+        .publish((LoanManagerDataKey::Oracle, symbol_short!("added")), oracle);
+}
+
+pub fn read_oracle(e: &Env) -> Result<Address, LoanManagerError> {
+    e.storage()
+        .persistent()
+        .get(&LoanManagerDataKey::Oracle)
+        .ok_or(LoanManagerError::OracleNotFound)
 }
 
 pub fn append_pool_address(e: &Env, pool_address: Address) {
