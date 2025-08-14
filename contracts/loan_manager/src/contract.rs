@@ -706,9 +706,7 @@ mod tests {
             li.timestamp = 1 + 31_556_926;
         });
 
-        let reflector_addr = e
-            .as_contract(&manager_addr, || storage::read_oracle(&e))
-            .unwrap();
+        let reflector_addr = manager_client.get_oracle();
         e.register_at(&reflector_addr, oracle::WASM, ());
 
         // ASSERT
@@ -752,7 +750,6 @@ mod tests {
         let TestEnv {
             user,
             admin,
-            manager_addr,
             manager_client,
             pool_xlm_addr,
             pool_usdc_addr,
@@ -775,9 +772,7 @@ mod tests {
         });
 
         // A new instance of reflector mock needs to be created, they only live for one ledger.
-        let reflector_addr = e
-            .as_contract(&manager_addr, || storage::read_oracle(&e))
-            .unwrap();
+        let reflector_addr = manager_client.get_oracle();
         e.register_at(&reflector_addr, oracle::WASM, ());
 
         // ASSERT
@@ -882,7 +877,6 @@ mod tests {
 
         let TestEnv {
             user,
-            manager_addr,
             manager_client,
             pool_xlm_addr,
             pool_usdc_addr,
@@ -909,9 +903,7 @@ mod tests {
         });
 
         // A new instance of reflector mock needs to be created, they only live for one ledger.
-        let reflector_addr = e
-            .as_contract(&manager_addr, || storage::read_oracle(&e))
-            .unwrap();
+        let reflector_addr = manager_client.get_oracle();
         e.register_at(&reflector_addr, oracle::WASM, ());
 
         manager_client.add_interest(&user);
@@ -939,7 +931,6 @@ mod tests {
         let TestEnv {
             user,
             manager_client,
-            manager_addr,
             pool_xlm_addr,
             pool_usdc_addr,
             pool_xlm_client,
@@ -959,9 +950,7 @@ mod tests {
         });
 
         // A new instance of reflector mock needs to be created, they only live for one ledger.
-        let reflector_addr = e
-            .as_contract(&manager_addr, || storage::read_oracle(&e))
-            .unwrap();
+        let reflector_addr = manager_client.get_oracle();
         e.register_at(&reflector_addr, oracle::WASM, ());
 
         // ASSERT
@@ -998,7 +987,6 @@ mod tests {
 
         let TestEnv {
             user,
-            manager_addr,
             manager_client,
             xlm_asset_client,
             pool_xlm_client,
@@ -1021,9 +1009,7 @@ mod tests {
 
         // ASSERT
         // A new instance of reflector mock needs to be created, they only live for one ledger.
-        let reflector_addr = e
-            .as_contract(&manager_addr, || storage::read_oracle(&e))
-            .unwrap();
+        let reflector_addr = manager_client.get_oracle();
         e.register_at(&reflector_addr, oracle::WASM, ());
 
         assert_eq!(xlm_token_client.balance(&user), 100);
@@ -1083,7 +1069,6 @@ mod tests {
         let TestEnv {
             admin,
             user,
-            manager_addr,
             manager_client,
             pool_xlm_addr,
             pool_xlm_client,
@@ -1119,9 +1104,7 @@ mod tests {
         });
 
         // A new instance of reflector mock needs to be created, they only live for one ledger.
-        let reflector_addr = e
-            .as_contract(&manager_addr, || storage::read_oracle(&e))
-            .unwrap();
+        let reflector_addr = manager_client.get_oracle();
         e.register_at(&reflector_addr, oracle::WASM, ());
 
         manager_client.add_interest(&user);
@@ -1136,9 +1119,7 @@ mod tests {
             li.sequence_number = 100_000 + 1_000;
         });
 
-        let reflector_addr = e
-            .as_contract(&manager_addr, || storage::read_oracle(&e))
-            .unwrap();
+        let reflector_addr = manager_client.get_oracle();
         e.register_at(&reflector_addr, oracle::WASM, ());
 
         manager_client.liquidate(&admin, &user, &5_000);
@@ -1204,9 +1185,7 @@ mod tests {
         usdc_asset_client.mint(&user, &1_000);
 
         // Setup mock price oracle
-        let reflector_addr = e
-            .as_contract(&manager_addr, || storage::read_oracle(e))
-            .unwrap();
+        let reflector_addr = manager_client.get_oracle();
         e.register_at(&reflector_addr, oracle::WASM, ());
 
         // Deposit some of the admin's tokens for borrowing.
