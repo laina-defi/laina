@@ -237,10 +237,27 @@ impl LoanPoolContract {
         };
 
         if user_available_tokens? > 0 {
-            if amount < user_available_tokens? {
-                Self::withdraw_internal(e.clone(), user.clone(), amount)?;
+            // Get the pool's available balance to ensure we don't try to withdraw more than available
+            let pool_available_balance = Self::get_available_balance(e.clone())?;
+
+            // Calculate how much we can actually withdraw (minimum of user's available tokens, requested amount, and pool's available balance)
+            let withdrawable_amount = if amount < user_available_tokens? {
+                if amount < pool_available_balance {
+                    amount
+                } else {
+                    pool_available_balance
+                }
             } else {
-                Self::withdraw_internal(e.clone(), user.clone(), user_available_tokens?)?;
+                if user_available_tokens? < pool_available_balance {
+                    user_available_tokens?
+                } else {
+                    pool_available_balance
+                }
+            };
+
+            // Only attempt withdrawal if there's something to withdraw
+            if withdrawable_amount > 0 {
+                Self::withdraw_internal(e.clone(), user.clone(), withdrawable_amount)?;
             }
         }
 

@@ -23,7 +23,7 @@ const LoansView = ({ onClose, onRepay }: LoansViewProps) => {
         <table className="table">
           <thead className="text-base text-grey">
             <tr>
-              <th className="w-20" />
+              <th>Loan</th>
               <th>Borrowed</th>
               <th>Collateral</th>
               <th>Health</th>
@@ -33,7 +33,7 @@ const LoansView = ({ onClose, onRepay }: LoansViewProps) => {
           </thead>
           <tbody>
             {loans.map((loan) => (
-              <TableRow key={loan.borrowedTicker} loan={loan} onRepay={onRepay} />
+              <TableRow key={loan.loanId.nonce} loan={loan} onRepay={onRepay} />
             ))}
           </tbody>
         </table>
@@ -72,12 +72,8 @@ const TableRow = ({ loan, onRepay }: TableRowProps) => {
     loanAmountCents && loanAmountCents > 0n ? Number(collateralAmountCents) / Number(loanAmountCents) : 0;
 
   return (
-    <tr key={borrowedTicker} className="text-base">
-      <td>
-        <div className="h-12 w-12">
-          <img src={CURRENCY_BINDINGS[borrowedTicker].icon} alt="" />
-        </div>
-      </td>
+    <tr key={loan.loanId.nonce} className="text-base">
+      <td>{loan.loanId.nonce}</td>
       <td>
         <div>
           <p>
