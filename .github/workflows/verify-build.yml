@@ -72,6 +72,7 @@ jobs:
           SOROBAN_NETWORK: testnet
           SOROBAN_ACCOUNT: ${{ secrets.SOROBAN_ACCOUNT }}
           SOROBAN_SECRET_KEY: ${{ secrets.SOROBAN_SECRET_KEY }}
+          ORACLE_ADDRESS: ${{ secrets.ORACLE_ADDRESS }}
         run: |
           npm install
           npm run init
