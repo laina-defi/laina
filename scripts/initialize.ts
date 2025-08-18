@@ -15,6 +15,7 @@ import {
 } from './util';
 
 const account = process.env.SOROBAN_ACCOUNT;
+const oracle = process.env.ORACLE_ADDRESS;
 
 console.log('######################Initializing contracts ########################');
 
@@ -38,7 +39,8 @@ const deployLoanManager = () => {
 --source-account ${account} \
 --network testnet \
 -- initialize \
---admin ${account}`);
+--admin ${account} \
+--oracle_address ${oracle}`);
 };
 
 /** Deploy liquidity pools using the loan-manager as a factory contract */
