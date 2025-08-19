@@ -34,20 +34,20 @@ pub struct MockPriceOracleContract;
 
 #[contractimpl]
 impl MockPriceOracleContract {
-    pub fn lastprice(_e: Env, _asset: Asset) -> Option<PriceData> {
-        _e.storage()
+    pub fn lastprice(e: Env, asset: Asset) -> Option<PriceData> {
+        e.storage()
             .persistent()
-            .get(&DataKey::Price(_asset))
+            .get(&DataKey::Price(asset))
             .or(Some(PriceData {
                 price: 1,
                 timestamp: 1,
             }))
     }
 
-    pub fn twap(_e: Env, _asset: Asset, _records: u32) -> Option<i128> {
-        _e.storage()
+    pub fn twap(e: Env, asset: Asset, _records: u32) -> Option<i128> {
+        e.storage()
             .persistent()
-            .get(&DataKey::Price(_asset))
+            .get(&DataKey::Price(asset))
             .map(|data: PriceData| data.price)
             .or(Some(1))
     }
