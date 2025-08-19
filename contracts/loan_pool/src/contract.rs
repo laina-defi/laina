@@ -247,12 +247,10 @@ impl LoanPoolContract {
                 } else {
                     pool_available_balance
                 }
+            } else if user_available_tokens? < pool_available_balance {
+                user_available_tokens?
             } else {
-                if user_available_tokens? < pool_available_balance {
-                    user_available_tokens?
-                } else {
-                    pool_available_balance
-                }
+                pool_available_balance
             };
 
             // Only attempt withdrawal if there's something to withdraw
@@ -394,12 +392,20 @@ impl LoanPoolContract {
 
         Self::add_interest_to_accrual(e.clone())?;
 
-        let amount_to_admin = if amount < unpaid_interest {
-            amount / 10
+        // Split the repayment into interest and principal portions
+        let interest_paid = if amount < unpaid_interest {
+            amount
         } else {
-            unpaid_interest / 10
+            unpaid_interest
         };
+        let principal_paid = amount
+            .checked_sub(interest_paid)
+            .ok_or(LoanPoolError::OverOrUnderFlow)?;
 
+        // Admin fee applies only to the interest portion (10%)
+        let amount_to_admin = interest_paid / 10;
+
+        // Net amount that stays in the pool contract
         let amount_to_storage = amount
             .checked_sub(amount_to_admin)
             .ok_or(LoanPoolError::OverOrUnderFlow)?;
@@ -408,9 +414,24 @@ impl LoanPoolContract {
         client.transfer(&user, &e.current_contract_address(), &amount_to_storage);
         client.transfer(&user, &loan_manager_addr, &amount_to_admin);
 
-        positions::decrease_positions(&e, user, 0, amount, 0)?;
+        // Get current user liabilities to ensure we don't decrease by more than they have
+        let user_positions = storage::read_positions(&e, &user);
+        let current_liabilities = user_positions.liabilities;
+
+        // Only decrease liabilities by the minimum of principal_paid and current_liabilities
+        let liabilities_to_decrease = if principal_paid > current_liabilities {
+            current_liabilities
+        } else {
+            principal_paid
+        };
+
+        positions::decrease_positions(&e, user, 0, liabilities_to_decrease, 0)?;
+
+        // All net paid funds (principal + interest - admin) increase available liquidity
         storage::adjust_available_balance(&e, amount - amount_to_admin)?;
-        storage::adjust_total_balance(&e, unpaid_interest - amount_to_admin)?;
+
+        // Only the interest portion (net of admin) increases the pool's total balance
+        storage::adjust_total_balance(&e, interest_paid - amount_to_admin)?;
         Ok(())
     }
 

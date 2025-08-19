@@ -215,6 +215,11 @@ impl LoanManager {
             .checked_add(borrow_change)
             .ok_or(LoanManagerError::OverOrUnderFlow)?;
 
+        // Update the pool's positions to reflect the increased liabilities from interest
+        if borrow_change > 0 {
+            borrow_pool_client.increase_liabilities(&loan_id.borrower_address, &borrow_change);
+        }
+
         let updated_loan = Loan {
             loan_id: loan_id.clone(),
             borrowed_from,
