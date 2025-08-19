@@ -5,7 +5,6 @@ import { type Loan, useLoans } from '@contexts/loan-context';
 import { usePools } from '@contexts/pool-context';
 import { formatAPR, formatAmount, toCents, toDollarsFormatted } from '@lib/formatting';
 import { isNil } from 'ramda';
-import { CURRENCY_BINDINGS } from 'src/currency-bindings';
 
 interface LoansViewProps {
   onClose: () => void;

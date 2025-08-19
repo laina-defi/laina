@@ -1,7 +1,8 @@
+import { Button } from '@components/Button';
+import { Loading } from '@components/Loading';
 import type { PropsWithChildren } from 'react';
 import { FaCircleCheck as CheckMarkIcon, FaCircleXmark as XMarkIcon } from 'react-icons/fa6';
-import { Button } from './Button';
-import { Loading } from './Loading';
+import { parseErrorMessage } from './error-parsing';
 
 export interface DialogProps {
   modalId: string;
@@ -51,11 +52,19 @@ export const SuccessDialogContent = ({
   </div>
 );
 
-export const ErrorDialogContent = ({ error, onClick }: { error: Error; onClick: VoidFunction }) => (
-  <div className="min-w-96 flex flex-col items-center">
-    <XMarkIcon className="text-red mb-4" size="2rem" />
-    <h3 className="font-bold text-xl mb-4 ">Error</h3>
-    <p className="text-lg mb-8">{error.message}</p>
-    <Button onClick={onClick}>Close</Button>
-  </div>
-);
+export const ErrorDialogContent = ({ error, onClick }: { error: Error; onClick: VoidFunction }) => {
+  // Parse the error message
+  const parsedError = parseErrorMessage(error.message);
+  console.log(parsedError);
+
+  return (
+    <div className="min-w-96 flex flex-col items-center">
+      <XMarkIcon className="text-red mb-4" size="2rem" />
+      <h3 className="font-bold text-xl mb-4 ">Error</h3>
+      <pre>
+        <p className="text-sm mb-8 whitespace-pre-wrap">{error.message}</p>
+      </pre>
+      <Button onClick={onClick}>Close</Button>
+    </div>
+  );
+};
