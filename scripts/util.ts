@@ -21,7 +21,8 @@ const GENESIS_ACCOUNTS = {
 };
 
 // @ts-ignore
-export const GENESIS_ACCOUNT = GENESIS_ACCOUNTS[process.env.SOROBAN_NETWORK] ?? GENESIS_ACCOUNTS.testnet;
+const network = process.env.SOROBAN_NETWORK;
+export const GENESIS_ACCOUNT = GENESIS_ACCOUNTS[network as keyof typeof GENESIS_ACCOUNTS] ?? GENESIS_ACCOUNTS.testnet;
 
 export const loadAccount = () => {
   // This takes the secret key from SOROBAN_SECRET_KEY env-variable, so make sure you have that set.
@@ -81,10 +82,7 @@ const bind = (contractName: string, address: string | undefined) => {
   exe(
     `stellar contract bindings typescript --contract-id ${address_} --output-dir ./packages/${contractName} --overwrite`,
   );
-  // TODO: Remove the extra `install @stellar/stellar-sdk@14.0.0-rc.3 after mainnet updates to protocol 23.`
-  exe(
-    `cd ./packages/${contractName} && npm install @stellar/stellar-sdk@14.0.0-rc.3 && npm install && npm run build && cd ../..`,
-  );
+  exe(`cd ./packages/${contractName} && npm install && npm run build && cd ../..`);
 };
 
 export const createContractImports = () => {

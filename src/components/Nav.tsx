@@ -3,7 +3,6 @@ import Identicon from '@components/Identicon';
 import { useWallet } from '@contexts/wallet-context';
 import type { PropsWithChildren } from 'react';
 import { Link } from 'react-router-dom';
-import logo from '/public/laina_v3_shrinked.png';
 
 export default function Nav() {
   const { wallet, openConnectWalletModal, disconnectWallet } = useWallet();
@@ -12,7 +11,7 @@ export default function Nav() {
     <nav className="relative mx-auto flex justify-between items-center pt-12 pb-6 px-4 max-w-full w-[74rem]">
       <div>
         <Link to="/">
-          <img src={logo.src} alt="logo" className="w-32" />
+          <img src="laina_v3_shrinked.png" alt="logo" className="w-32" />
         </Link>
       </div>
 
