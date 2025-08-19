@@ -1,22 +1,22 @@
-// Import the parsing function and types
 export interface EventLogEntry {
   index: number;
-  type:
-    | 'Diagnostic Event'
-    | 'Failed Diagnostic Event (not emitted)'
-    | 'Failed Contract Event (not emitted)'
-    | 'Contract Event';
+  type: EventType;
   contract: string | undefined;
   topics: string[];
   data: string;
 }
+
+export type EventType =
+  | 'Diagnostic Event'
+  | 'Failed Diagnostic Event (not emitted)'
+  | 'Failed Contract Event (not emitted)'
+  | 'Contract Event';
 
 export interface ParsedError {
   mainError: string;
   eventLog: EventLogEntry[];
 }
 
-// Parser function for error messages (copied from ErrorDialog.tsx)
 export function parseErrorMessage(message: string): ParsedError {
   const lines = message.split('\n');
   const mainError = lines[0] || '';
@@ -33,7 +33,6 @@ export function parseErrorMessage(message: string): ParsedError {
     }
 
     // Check if this is an event log entry (starts with a number)
-    // Updated regex to handle complex topics with nested brackets and comma after contract
     const eventMatch = line.match(
       /^\s*(\d+)\s*:\s*\[([^\]]+)\]\s*(?:contract:([^\s,]+),\s*)?topics:\[(.+?)\],\s*data:(.+)$/,
     );
@@ -44,7 +43,7 @@ export function parseErrorMessage(message: string): ParsedError {
         eventLog.push(currentEntry as EventLogEntry);
       }
 
-      // Parse topics more carefully - split by comma but respect nested brackets
+      // Parse topics: split by comma but respect nested brackets
       const topicsStr = eventMatch[4];
       const topics: string[] = [];
       let currentTopic = '';

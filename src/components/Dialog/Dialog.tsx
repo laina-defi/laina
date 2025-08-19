@@ -1,8 +1,13 @@
 import { Button } from '@components/Button';
 import { Loading } from '@components/Loading';
+import { contractId as loanManagerContractId } from '@contracts/loan_manager';
+import { contractId as poolEurcContractId } from '@contracts/pool_eurc';
+import { contractId as poolUsdcContractId } from '@contracts/pool_usdc';
+import { contractId as poolXlmContractId } from '@contracts/pool_xlm';
 import type { PropsWithChildren } from 'react';
-import { FaCircleCheck as CheckMarkIcon, FaCircleXmark as XMarkIcon } from 'react-icons/fa6';
-import { parseErrorMessage } from './error-parsing';
+import { FaCircleCheck as CheckMarkIcon, FaCircleInfo as InfoIcon, FaCircleXmark as XMarkIcon } from 'react-icons/fa6';
+import { BINDING_EURC, BINDING_USDC, BINDING_XLM } from 'src/currency-bindings';
+import { type EventType, parseErrorMessage } from './error-parsing';
 
 export interface DialogProps {
   modalId: string;
@@ -53,18 +58,65 @@ export const SuccessDialogContent = ({
 );
 
 export const ErrorDialogContent = ({ error, onClick }: { error: Error; onClick: VoidFunction }) => {
-  // Parse the error message
   const parsedError = parseErrorMessage(error.message);
-  console.log(parsedError);
 
   return (
     <div className="min-w-96 flex flex-col items-center">
-      <XMarkIcon className="text-red mb-4" size="2rem" />
-      <h3 className="font-bold text-xl mb-4 ">Error</h3>
-      <pre>
-        <p className="text-sm mb-8 whitespace-pre-wrap">{error.message}</p>
-      </pre>
+      <h3 className="font-bold text-xl mb-4 w-full">
+        <XMarkIcon className="text-red mb-1 mr-2 inline-block" size="2rem" />
+        {parsedError.mainError}
+      </h3>
+      <div className="w-full">
+        {parsedError.eventLog.map((event) => (
+          <pre key={event.index} className="my-2">
+            <h4 className="font-bold">
+              {eventTypeToIcon(event.type)} {event.index}: {contractIdToName(event.contract)}{' '}
+              <span className="font-normal">– {event.type}</span>
+            </h4>
+            <p className="text-sm whitespace-pre-wrap">{event.topics.join(', ')}</p>
+            <p className="text-sm whitespace-pre-wrap">{event.data}</p>
+          </pre>
+        ))}
+      </div>
       <Button onClick={onClick}>Close</Button>
     </div>
   );
+};
+
+const eventTypeToIcon = (type: EventType) => {
+  switch (type) {
+    case 'Diagnostic Event':
+      return <InfoIcon className="text-blue inline-block mb-1" size="1rem" />;
+    case 'Contract Event':
+      return <CheckMarkIcon className="text-green inline-block mb-1" size="1rem" />;
+    case 'Failed Diagnostic Event (not emitted)':
+      return <XMarkIcon className="text-red inline-block mb-1" size="1rem" />;
+    case 'Failed Contract Event (not emitted)':
+      return <XMarkIcon className="text-red inline-block mb-1" size="1rem" />;
+  }
+};
+
+const contractIdToName = (contractId: string | undefined) => {
+  if (!contractId) return 'Unknown';
+  switch (contractId) {
+    case loanManagerContractId:
+      return 'Loan Manager';
+    case poolXlmContractId:
+      return 'XLM Pool';
+    case poolUsdcContractId:
+      return 'USDC Pool';
+    case poolEurcContractId:
+      return 'EURC Pool';
+    // Testnet Reflector address.
+    case 'CCYOZJCOPG34LLQQ7N24YXBM7LL62R7ONMZ3G6WZAAYPB5OYKOMJRN63':
+      return 'Oracle';
+    case BINDING_XLM.tokenContractAddress:
+      return 'XLM Asset Contract';
+    case BINDING_USDC.tokenContractAddress:
+      return 'USDC Asset Contract';
+    case BINDING_EURC.tokenContractAddress:
+      return 'EURC Asset Contract';
+    default:
+      return contractId;
+  }
 };
