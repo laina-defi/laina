@@ -691,6 +691,7 @@ mod tests {
             xlm_asset_client,
             usdc_asset_client,
             admin,
+            reflector_addr,
         } = setup_test_env(&e);
 
         xlm_asset_client.mint(&admin, &9_001);
@@ -706,7 +707,6 @@ mod tests {
             li.timestamp = 1 + 31_556_926;
         });
 
-        let reflector_addr = manager_client.get_oracle();
         e.register_at(&reflector_addr, oracle::WASM, ());
 
         // ASSERT
@@ -757,6 +757,7 @@ mod tests {
             usdc_token_client,
             pool_xlm_client,
             xlm_asset_client,
+            reflector_addr,
             ..
         } = setup_test_env(&e);
 
@@ -772,7 +773,6 @@ mod tests {
         });
 
         // A new instance of reflector mock needs to be created, they only live for one ledger.
-        let reflector_addr = manager_client.get_oracle();
         e.register_at(&reflector_addr, oracle::WASM, ());
 
         // ASSERT
@@ -881,6 +881,7 @@ mod tests {
             pool_xlm_addr,
             pool_usdc_addr,
             usdc_token_client,
+            reflector_addr,
             ..
         } = setup_test_env(&e);
 
@@ -903,7 +904,6 @@ mod tests {
         });
 
         // A new instance of reflector mock needs to be created, they only live for one ledger.
-        let reflector_addr = manager_client.get_oracle();
         e.register_at(&reflector_addr, oracle::WASM, ());
 
         manager_client.add_interest(&user);
@@ -936,6 +936,7 @@ mod tests {
             pool_xlm_client,
             xlm_token_client,
             usdc_token_client,
+            reflector_addr,
             ..
         } = setup_test_env(&e);
 
@@ -950,7 +951,6 @@ mod tests {
         });
 
         // A new instance of reflector mock needs to be created, they only live for one ledger.
-        let reflector_addr = manager_client.get_oracle();
         e.register_at(&reflector_addr, oracle::WASM, ());
 
         // ASSERT
@@ -994,6 +994,7 @@ mod tests {
             pool_usdc_addr,
             xlm_token_client,
             usdc_token_client,
+            reflector_addr,
             ..
         } = setup_test_env(&e);
 
@@ -1009,7 +1010,6 @@ mod tests {
 
         // ASSERT
         // A new instance of reflector mock needs to be created, they only live for one ledger.
-        let reflector_addr = manager_client.get_oracle();
         e.register_at(&reflector_addr, oracle::WASM, ());
 
         assert_eq!(xlm_token_client.balance(&user), 100);
@@ -1075,6 +1075,7 @@ mod tests {
             pool_usdc_addr,
             xlm_asset_client,
             usdc_asset_client,
+            reflector_addr,
             ..
         } = setup_test_env(&e);
 
@@ -1104,7 +1105,6 @@ mod tests {
         });
 
         // A new instance of reflector mock needs to be created, they only live for one ledger.
-        let reflector_addr = manager_client.get_oracle();
         e.register_at(&reflector_addr, oracle::WASM, ());
 
         manager_client.add_interest(&user);
@@ -1119,7 +1119,6 @@ mod tests {
             li.sequence_number = 100_000 + 1_000;
         });
 
-        let reflector_addr = manager_client.get_oracle();
         e.register_at(&reflector_addr, oracle::WASM, ());
 
         manager_client.liquidate(&admin, &user, &5_000);
@@ -1144,6 +1143,7 @@ mod tests {
         pool_xlm_addr: Address,
         pool_xlm_client: loan_pool::Client<'a>,
         pool_usdc_addr: Address,
+        reflector_addr: Address,
     }
 
     fn setup_test_env(e: &Env) -> TestEnv {
@@ -1203,6 +1203,7 @@ mod tests {
             pool_xlm_addr,
             pool_xlm_client,
             pool_usdc_addr,
+            reflector_addr,
         }
     }
 
