@@ -552,31 +552,22 @@ async fn wait_success(server: &Server, hash: String, response: SendTransactionRe
 }
 
 async fn load_config() -> Result<BotConfig, Error> {
-    #[cfg(feature = "local")]
-    dotenvy::from_filename(".env.local").ok();
-
-    #[cfg(not(feature = "local"))]
     dotenv().ok();
 
     let url =
         env::var("PUBLIC_SOROBAN_RPC_URL").expect("PUBLIC_SOROBAN_RPC_URL must be set in .env");
 
-    #[cfg(feature = "local")]
+    let allow_http: bool = std::env::var("ALLOW_HTTP")
+        .expect("ALLOW_HTTP must be set in .env")
+        .parse()
+        .expect("ALLOW_HTTP must be 'true' or 'false'");
     let options = Options {
-        allow_http: true,
+        allow_http: allow_http,
         ..Options::default()
     };
 
-    #[cfg(not(feature = "local"))]
-    let options = Options::default();
-
     let server = soroban_client::Server::new(&url, options).expect("Cannot create server");
 
-    #[cfg(feature = "local")]
-    let secret_str =
-        env::var("SOROBAN_SECRET_KEY").expect("SOROBAN_SECRET_KEY must be set in .env.local");
-
-    #[cfg(not(feature = "local"))]
     let secret_str =
         env::var("SOROBAN_SECRET_KEY").expect("SOROBAN_SECRET_KEY must be set in .env");
 

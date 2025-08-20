@@ -98,7 +98,7 @@ Same as in Testnet.
 Copy the example:
 
 ```sh
-cp .local.env.example .env.local
+cp .env.local.example .env
 ```
 
 ## Setting Up an Account for Local Network
