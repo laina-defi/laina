@@ -72,7 +72,7 @@ const Context = createContext<WalletContext>({
 });
 
 const kit = new StellarWalletsKit({
-  network: WalletNetwork.TESTNET,
+  network: import.meta.env.STELLAR_NETWORK === 'local' ? WalletNetwork.STANDALONE : WalletNetwork.TESTNET,
   selectedWalletId: FREIGHTER_ID,
   modules: allowAllModules(),
 });
@@ -106,7 +106,10 @@ const createBalanceRecord = (balances: StellarSdk.Horizon.HorizonApi.BalanceLine
         balanceLine.asset_type === 'credit_alphanum4' &&
         isSupportedCurrency(balanceLine.asset_code, balanceLine.asset_issuer)
       ) {
-        acc[balanceLine.asset_code as SupportedCurrency] = { trustLine: true, balanceLine };
+        acc[balanceLine.asset_code as SupportedCurrency] = {
+          trustLine: true,
+          balanceLine,
+        };
       }
       return acc;
     },

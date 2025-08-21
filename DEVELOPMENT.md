@@ -1,4 +1,4 @@
-# Development
+# Development (Testnet)
 
 This document describes how to develop the application on your local computer.
 
@@ -83,4 +83,64 @@ Start liquidation-bot
 
 ```
 cargo run
+```
+
+# Development (Local network)
+
+Development in the local network gives some added benefits compared to testnet. In this case, much faster ledger times and possibility to modify time and in addition mock contracts without loading testnet.
+
+## Prerequirements
+
+Same as in Testnet.
+
+## Environment
+
+Copy the example:
+
+```sh
+cp .env.local.example .env
+```
+
+## Setting Up an Account for Local Network
+
+Simply create an alias with
+
+```sh
+stellar keys generate ci_local
+```
+
+Then print out your new public key:
+
+```sh
+stellar keys address ci_local
+```
+
+Finally, print out your secret key:
+
+```sh
+stellar keys show ci_local
+```
+
+And add it to `.env.local`
+
+```sh
+SOROBAN_SECRET_KEY="S...SZG"
+```
+
+## Deploying Contracts
+
+You can simply run the following command:
+
+```sh
+npm run init:local
+```
+
+This will deploy all of the contracts, generate TypeScript bindings, issue and create sell offers for two custom tokens USDC and EURC, set token prices, deploy XLM SAC, etc.
+
+## Frontend
+
+After the init script has finished running, you can start the frontend server by running:
+
+```sh
+npm run dev:local
 ```

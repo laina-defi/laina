@@ -1,3 +1,5 @@
+import dotenv from 'dotenv';
+
 export type SupportedCurrency = 'XLM' | 'USDC' | 'EURC';
 
 export const isSupportedCurrency = (obj: unknown): obj is SupportedCurrency =>
@@ -12,14 +14,44 @@ export type Currency = {
   issuer?: string;
 };
 
-// The addresses here are for testnet.
-// TODO: use environment variables for the addresses.
+const envConfig = {
+  CONTRACT_ADDRESS_XLM: getEnvVar('PUBLIC_CONTRACT_ADDRESS_XLM'),
+  CONTRACT_ADDRESS_USDC: getEnvVar('PUBLIC_CONTRACT_ADDRESS_USDC'),
+  CONTRACT_ADDRESS_EURC: getEnvVar('PUBLIC_CONTRACT_ADDRESS_EURC'),
+  ISSUER_ADDRESS_USDC: getEnvVar('PUBLIC_ISSUER_ADDRESS_USDC'),
+  ISSUER_ADDRESS_EURC: getEnvVar('PUBLIC_ISSUER_ADDRESS_EURC'),
+} as const;
+
+// Utility function to get environment variables from either meta.env (Astro) or process.env (Node.js)
+function getEnvVar(key: string): string {
+  // Check if we're in an Astro environment (meta.env is available)
+  if (typeof import.meta !== 'undefined' && import.meta.env) {
+    const value = import.meta.env[key];
+    if (value !== undefined) {
+      return value;
+    }
+  }
+
+  // Fall back to process.env (Node.js environment)
+  if (typeof process !== 'undefined' && process.env) {
+    // Use DOTENV_CONFIG_PATH if set, otherwise default to .env
+    dotenv.config({ path: process.env.DOTENV_CONFIG_PATH || '.env' });
+
+    const value = process.env[key];
+    if (value !== undefined) {
+      return value;
+    }
+  }
+
+  // If neither is available, throw an error
+  throw new Error(`Environment variable ${key} is not set`);
+}
 
 export const CURRENCY_XLM: Currency = {
   name: 'Stellar Lumens',
   ticker: 'XLM',
   issuerName: 'native',
-  tokenContractAddress: 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC',
+  tokenContractAddress: envConfig.CONTRACT_ADDRESS_XLM,
   loanPoolName: 'pool_xlm',
 } as const;
 
@@ -27,18 +59,18 @@ export const CURRENCY_USDC: Currency = {
   name: 'USD Coin',
   ticker: 'USDC',
   issuerName: 'centre.io',
-  tokenContractAddress: 'CBCM4ACDLAIG5VNG2UQCXYO5DCQO4VCPUUNRS3FOVBIPQIG73NQVWLPP',
+  tokenContractAddress: envConfig.CONTRACT_ADDRESS_USDC,
   loanPoolName: 'pool_usdc',
-  issuer: 'GCBLC2EMFHHODLPKTM4DGXKGU66KDGY3B4UL4R2UFNC7UVP6N3DB5DV5',
+  issuer: envConfig.ISSUER_ADDRESS_USDC,
 } as const;
 
 export const CURRENCY_EURC: Currency = {
   name: 'Euro Coin',
   ticker: 'EURC',
   issuerName: 'centre.io',
-  tokenContractAddress: 'CDUVQWSSXV2QR35ONLT3FWLGEO6TKENZUMUKXE5BVT3YKCRXRZJDPX4J',
+  tokenContractAddress: envConfig.CONTRACT_ADDRESS_EURC,
   loanPoolName: 'pool_eurc',
-  issuer: 'GCBLC2EMFHHODLPKTM4DGXKGU66KDGY3B4UL4R2UFNC7UVP6N3DB5DV5',
+  issuer: envConfig.ISSUER_ADDRESS_EURC,
 } as const;
 
 export const CURRENCIES: Currency[] = [CURRENCY_XLM, CURRENCY_USDC, CURRENCY_EURC] as const;

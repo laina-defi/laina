@@ -1,5 +1,5 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, Symbol};
+use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, Env, Symbol};
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -17,18 +17,43 @@ pub struct PriceData {
     pub timestamp: u64,
 }
 
+#[contracttype]
+pub enum DataKey {
+    Price(Asset),
+}
+
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum ReflectorMockError {
+    CannotSetPrice = 1,
+}
+
 #[contract]
 pub struct MockPriceOracleContract;
 
 #[contractimpl]
 impl MockPriceOracleContract {
-    pub fn lastprice(_e: Env, _asset: Asset) -> Option<PriceData> {
-        Some(PriceData {
-            price: 1,
-            timestamp: 1,
-        })
+    pub fn lastprice(e: Env, asset: Asset) -> Option<PriceData> {
+        e.storage()
+            .persistent()
+            .get(&DataKey::Price(asset))
+            .or(Some(PriceData {
+                price: 1,
+                timestamp: 1,
+            }))
     }
-    pub fn twap(_e: Env, _asset: Asset, _records: u32) -> Option<i128> {
-        Some(1)
+
+    pub fn twap(e: Env, asset: Asset, _records: u32) -> Option<i128> {
+        e.storage()
+            .persistent()
+            .get(&DataKey::Price(asset))
+            .map(|data: PriceData| data.price)
+            .or(Some(1))
+    }
+
+    pub fn update_price(e: Env, asset: Asset, price: PriceData) -> Result<(), ReflectorMockError> {
+        e.storage().persistent().set(&DataKey::Price(asset), &price);
+        Ok(())
     }
 }

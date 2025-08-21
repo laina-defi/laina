@@ -1,9 +1,13 @@
-import 'dotenv/config';
+import { config } from 'dotenv';
+
+// Load local environment variables
+config();
 import { mkdirSync } from 'fs';
 import crypto from 'crypto';
 import { CURRENCIES, type Currency } from '../currencies';
 import {
   loadAccount,
+  fundAccount,
   buildContracts,
   createContractBindings,
   createContractImports,
@@ -12,16 +16,16 @@ import {
   installContracts,
   loanManagerAddress,
   readTextFile,
-} from './util';
+  writeContractIdsToEnv,
+} from './util_local';
 
 const account = process.env.SOROBAN_ACCOUNT;
-const oracle = process.env.ORACLE_ADDRESS;
 
 console.log('######################Initializing contracts ########################');
 
 const deploy = (wasm: string) => {
   exe(
-    `stellar contract deploy --wasm ${wasm} --ignore-checks > ./.stellar/contract-ids/${filenameNoExtension(wasm)}.txt`,
+    `stellar contract deploy --wasm ${wasm} --network local --ignore-checks > ./.stellar/contract-ids/${filenameNoExtension(wasm)}.txt`,
   );
 };
 
@@ -34,10 +38,13 @@ const deployLoanManager = () => {
 
   deploy(`./target/wasm32v1-none/release/loan_manager.wasm`);
 
+  // Read oracle address after it has been deployed
+  const oracle = readTextFile('./.stellar/contract-ids/reflector_oracle_mock.txt');
+
   exe(`stellar contract invoke \
 --id ${loanManagerAddress()} \
 --source-account ${account} \
---network testnet \
+--network local \
 -- initialize \
 --admin ${account} \
 --oracle_address ${oracle}`);
@@ -53,7 +60,7 @@ const deployLoanPools = () => {
       `stellar contract invoke \
 --id ${loanManagerAddress()} \
 --source-account ${account} \
---network testnet \
+--network local \
 -- deploy_pool \
 --wasm_hash ${wasmHash} \
 --salt ${salt} \
@@ -65,13 +72,29 @@ const deployLoanPools = () => {
   });
 };
 
+/** Deploy reflector_mock contract */
+const deployReflectorMock = () => {
+  const contractsDir = `.stellar/contract-ids`;
+  mkdirSync(contractsDir, { recursive: true });
+
+  deploy(`./target/wasm32v1-none/release/reflector_oracle_mock.wasm`);
+};
+
+const deployNativeStellarAssetContract = () => {
+  exe(`stellar contract asset deploy --asset native --network local --source-account ${account}`);
+};
+
 // Calling the functions (equivalent to the last part of your bash script)
 loadAccount();
+fundAccount();
 buildContracts();
 installContracts();
+deployReflectorMock();
 deployLoanManager();
 deployLoanPools();
 createContractBindings();
 createContractImports();
+writeContractIdsToEnv();
+deployNativeStellarAssetContract();
 
 console.log('\nInitialization successful!');

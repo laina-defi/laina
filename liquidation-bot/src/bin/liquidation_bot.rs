@@ -45,7 +45,7 @@ async fn main() -> Result<(), Error> {
     env_logger::init();
 
     // TODO:Decide on how to handle the initial ledger
-    let mut ledger = 1350000;
+    let mut ledger = 10;
 
     loop {
         let GetEventsResponse {
@@ -152,7 +152,13 @@ async fn fetch_loan_to_db(loan: Vec<String>, connection: &mut PgConnection) -> R
         .expect("Cannot create invoke_contract operation");
 
     // Build the transaction
-    let mut builder = TransactionBuilder::new(source_account.clone(), Networks::testnet(), None);
+    #[cfg(feature = "local")]
+    let network = Networks::standalone();
+
+    #[cfg(not(feature = "local"))]
+    let network = Networks::testnet();
+
+    let mut builder = TransactionBuilder::new(source_account.clone(), network, None);
     builder.fee(1000u32);
     builder.add_operation(read_loan_op);
 
@@ -248,12 +254,18 @@ async fn fetch_prices(connection: &mut PgConnection) -> Result<(), Error> {
     let amount_of_data_points = ScVal::U32(12); // 12 datapoints with 5 min resolution -> average
                                                 // of one hour
 
+    let xlm_pool =
+        env::var("CONTRACT_ID_POOL_XLM").expect("CONTRACT_ID_POOL_XLM must be set in .env");
+    let usdc_pool =
+        env::var("CONTRACT_ID_POOL_USDC").expect("CONTRACT_ID_POOL_USDC must be set in .env");
+    let eurc_pool =
+        env::var("CONTRACT_ID_POOL_EURC").expect("CONTRACT_ID_POOL_EURC must be set in .env");
+
     for pool in unique_pools_in_use {
-        // Temporary
         let currency = match pool.as_str() {
-            "CCDF2NOJXOW73SXXB6BZRAPGVNJU7VMUURXCVLRHCHHAXHOY2TVRLFFP" => "XLM",
-            "CAXTXTUCA6ILFHCPIN34TWWVL4YL2QDDHYI65MVVQCEMDANFZLXVIEIK" => "USDC",
-            "CDUFMIS6ZH3JM5MPNTWMDLBXPNQYV5FBPBGCFT2WWG4EXKGEPOCBNGCZ" => "EURC",
+            p if p == xlm_pool => "XLM",
+            p if p == usdc_pool => "USDC",
+            p if p == eurc_pool => "EURC",
             _ => "None",
         };
 
@@ -271,8 +283,13 @@ async fn fetch_prices(connection: &mut PgConnection) -> Result<(), Error> {
             .expect("Cannot create invoke_contract operation");
 
         // Build the transaction
-        let mut builder =
-            TransactionBuilder::new(source_account.clone(), Networks::testnet(), None);
+        #[cfg(feature = "local")]
+        let network = Networks::standalone();
+
+        #[cfg(not(feature = "local"))]
+        let network = Networks::testnet();
+
+        let mut builder = TransactionBuilder::new(source_account.clone(), network, None);
         builder.fee(1000u32);
         builder.add_operation(fetch_prices_op);
 
@@ -377,7 +394,13 @@ async fn find_liquidateable(connection: &mut PgConnection) -> Result<(), Error> 
         let health_factor_threshold = 10_100_000;
         if health_factor < health_factor_threshold {
             info!("Found loan close to liquidation threshold: {:#?}", loan);
-            attempt_liquidating(loan).await?;
+            if let Err(e) = attempt_liquidating(loan.clone()).await {
+                warn!(
+                    "Failed to liquidate loan for borrower {}: {}",
+                    loan.borrower, e
+                );
+                // Continue processing other loans instead of crashing the bot
+            }
         }
     }
 
@@ -392,8 +415,15 @@ async fn attempt_liquidating(loan: Loan) -> Result<(), Error> {
         server,
         loan_manager_id,
         source_public,
-        source_account,
+        ..
     } = load_config().await?;
+
+    // Refresh account data before transaction to ensure correct sequence number
+    let account_data = server.get_account(&source_public).await?;
+    let source_account = Rc::new(RefCell::new(
+        Account::new(&source_public, &account_data.sequence_number())
+            .map_err(|e| anyhow::anyhow!("Account::new failed: {}", e))?,
+    ));
 
     // Build operation
     let method = "liquidate";
@@ -428,26 +458,59 @@ async fn attempt_liquidating(loan: Loan) -> Result<(), Error> {
     //succesful. To truly optimize the system we should first do this simulation, then calculate
     //liquidation profitability, then using this data send an actual transaction.
 
-    let mut builder = TransactionBuilder::new(source_account.clone(), Networks::testnet(), None);
+    #[cfg(feature = "local")]
+    let network = Networks::standalone();
+
+    #[cfg(not(feature = "local"))]
+    let network = Networks::testnet();
+
+    let mut builder = TransactionBuilder::new(source_account.clone(), network, None);
     builder.fee(10000_u32);
     builder.add_operation(read_loan_op);
 
     let mut tx = builder.build();
-    tx = server.prepare_transaction(tx).await?;
+
+    // Prepare transaction (includes simulation)
+    tx = match server.prepare_transaction(tx).await {
+        Ok(prepared_tx) => prepared_tx,
+        Err(e) => {
+            warn!(
+                "Transaction simulation failed for loan {}: {}",
+                loan.borrower, e
+            );
+            return Err(anyhow::anyhow!("Simulation failed: {}", e));
+        }
+    };
+
     tx.sign(&[source_keypair.clone()]);
-    let response = server.send_transaction(tx).await?;
-    println!("{:#?}", response);
+
+    // Send transaction
+    let response = match server.send_transaction(tx).await {
+        Ok(resp) => resp,
+        Err(e) => {
+            warn!(
+                "Transaction sending failed for loan {}: {}",
+                loan.borrower, e
+            );
+            return Err(anyhow::anyhow!("Transaction sending failed: {}", e));
+        }
+    };
+
+    info!("Liquidation transaction response: {:#?}", response);
+
+    // Increment sequence number after sending transaction (regardless of success/failure)
+    source_account.borrow_mut().increment_sequence_number();
 
     // Profitability calculation
     // let bot_balance
     // let max_to_liquidate
     //
     let hash = response.hash.clone();
-    if !wait_success(&server, hash, response).await {
-        warn!("Failed to liquidate.");
+    if wait_success(&server, hash, response).await {
+        info!("Loan {} liquidated!", loan.borrower);
+    } else {
+        warn!("Failed to liquidate loan for {}", loan.borrower);
     }
-
-    info!("Loan {} liquidated!", loan.borrower);
     Ok(())
 }
 
@@ -494,8 +557,16 @@ async fn load_config() -> Result<BotConfig, Error> {
     let url =
         env::var("PUBLIC_SOROBAN_RPC_URL").expect("PUBLIC_SOROBAN_RPC_URL must be set in .env");
 
-    let server =
-        soroban_client::Server::new(&url, Options::default()).expect("Cannot create server");
+    let allow_http: bool = std::env::var("ALLOW_HTTP")
+        .expect("ALLOW_HTTP must be set in .env")
+        .parse()
+        .expect("ALLOW_HTTP must be 'true' or 'false'");
+    let options = Options {
+        allow_http,
+        ..Options::default()
+    };
+
+    let server = soroban_client::Server::new(&url, options).expect("Cannot create server");
 
     let secret_str =
         env::var("SOROBAN_SECRET_KEY").expect("SOROBAN_SECRET_KEY must be set in .env");
