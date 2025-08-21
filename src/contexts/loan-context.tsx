@@ -5,13 +5,18 @@ import { type PropsWithChildren, createContext, useCallback, useContext, useEffe
 import { CURRENCY_BINDINGS_BY_ADDRESS, type PoolAddress } from 'src/currency-bindings';
 
 export type Loan = {
-  borrower: string;
+  loanId: LoanId;
   borrowedAmount: bigint;
   borrowedTicker: SupportedCurrency;
   collateralAmount: bigint;
   collateralTicker: SupportedCurrency;
   healthFactor: bigint;
   unpaidInterest: bigint;
+};
+
+export type LoanId = {
+  borrower_address: string;
+  nonce: bigint;
 };
 
 export type LoansContext = {
@@ -35,19 +40,17 @@ export const LoansProvider = ({ children }: PropsWithChildren) => {
       return;
     }
     try {
-      const { result } = await loanManagerClient.get_loan({ user: wallet.address });
-      const loan = result.unwrap();
-      setLoans([
-        {
-          borrower: loan.borrower,
-          borrowedAmount: loan.borrowed_amount,
-          borrowedTicker: CURRENCY_BINDINGS_BY_ADDRESS[loan.borrowed_from as PoolAddress].ticker,
-          collateralAmount: loan.collateral_amount,
-          collateralTicker: CURRENCY_BINDINGS_BY_ADDRESS[loan.collateral_from as PoolAddress].ticker,
-          healthFactor: loan.health_factor,
-          unpaidInterest: loan.unpaid_interest,
-        },
-      ]);
+      const { result } = await loanManagerClient.get_loans({ user: wallet.address });
+      const loans = result.map((loan) => ({
+        loanId: loan.loan_id,
+        borrowedAmount: loan.borrowed_amount,
+        borrowedTicker: CURRENCY_BINDINGS_BY_ADDRESS[loan.borrowed_from as PoolAddress].ticker,
+        collateralAmount: loan.collateral_amount,
+        collateralTicker: CURRENCY_BINDINGS_BY_ADDRESS[loan.collateral_from as PoolAddress].ticker,
+        healthFactor: loan.health_factor,
+        unpaidInterest: loan.unpaid_interest,
+      }));
+      setLoans(loans);
     } catch (err) {
       console.error('Error fetching user loan:', err);
       setLoans([]);

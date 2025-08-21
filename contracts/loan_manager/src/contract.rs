@@ -1,8 +1,8 @@
 use crate::error::LoanManagerError;
 use crate::oracle::{self, Asset};
-use crate::storage::{self, Loan};
+use crate::storage::{self, Loan, LoanId, NewLoan};
 
-use soroban_sdk::{contract, contractimpl, token, Address, BytesN, Env, Symbol};
+use soroban_sdk::{contract, contractimpl, token, Address, BytesN, Env, Symbol, Vec};
 
 mod loan_pool {
     soroban_sdk::contractimport!(file = "../../target/wasm32v1-none/release/loan_pool.wasm");
@@ -108,12 +108,8 @@ impl LoanManager {
         borrowed_from: Address,
         collateral: i128,
         collateral_from: Address,
-    ) -> Result<(), LoanManagerError> {
+    ) -> Result<Loan, LoanManagerError> {
         user.require_auth();
-
-        if storage::loan_exists(&e, user.clone()) {
-            return Err(LoanManagerError::LoanAlreadyExists);
-        }
 
         let pool_addresses = storage::read_pool_addresses(&e);
         if !pool_addresses.contains(&borrowed_from) {
@@ -153,8 +149,8 @@ impl LoanManager {
 
         let unpaid_interest = 0;
 
-        let loan = Loan {
-            borrower: user.clone(),
+        let new_loan = NewLoan {
+            borrower_address: user.clone(),
             borrowed_amount,
             borrowed_from,
             collateral_amount,
@@ -164,15 +160,14 @@ impl LoanManager {
             last_accrual: borrow_pool_client.get_accrual(),
         };
 
-        storage::write_loan(&e, user.clone(), loan);
+        let loan = storage::create_loan(&e, user.clone(), new_loan);
 
-        Ok(())
+        Ok(loan)
     }
 
-    pub fn add_interest(e: &Env, user: Address) -> Result<(), LoanManagerError> {
-        const DECIMAL: i128 = 10000000;
+    /// add interest to a loan
+    pub fn add_interest(e: &Env, loan_id: LoanId) -> Result<Loan, LoanManagerError> {
         let Loan {
-            borrower,
             borrowed_from,
             collateral_amount,
             borrowed_amount,
@@ -180,14 +175,15 @@ impl LoanManager {
             unpaid_interest,
             last_accrual,
             ..
-        } = storage::read_loan(e, user.clone()).ok_or(LoanManagerError::LoanNotFound)?;
+        } = Self::get_loan(e, loan_id.clone())?;
 
         let borrow_pool_client = loan_pool::Client::new(e, &borrowed_from);
         let collateral_pool_client = loan_pool::Client::new(e, &collateral_from);
 
         let token_ticker = borrow_pool_client.get_currency().ticker;
-
         let token_collateral_ticker = collateral_pool_client.get_currency().ticker;
+
+        const DECIMAL: i128 = 10000000;
 
         borrow_pool_client.add_interest_to_accrual();
         let current_accrual = borrow_pool_client.get_accrual();
@@ -219,8 +215,13 @@ impl LoanManager {
             .checked_add(borrow_change)
             .ok_or(LoanManagerError::OverOrUnderFlow)?;
 
+        // Update the pool's positions to reflect the increased liabilities from interest
+        if borrow_change > 0 {
+            borrow_pool_client.increase_liabilities(&loan_id.borrower_address, &borrow_change);
+        }
+
         let updated_loan = Loan {
-            borrower,
+            loan_id: loan_id.clone(),
             borrowed_from,
             collateral_amount,
             borrowed_amount: new_borrowed_amount,
@@ -230,9 +231,9 @@ impl LoanManager {
             last_accrual: current_accrual,
         };
 
-        storage::write_loan(e, user.clone(), updated_loan.clone());
+        storage::write_loan(e, &loan_id, &updated_loan);
 
-        Ok(())
+        Ok(updated_loan)
     }
 
     pub fn calculate_health_factor(
@@ -286,10 +287,17 @@ impl LoanManager {
         storage::read_oracle(&e)
     }
 
-    pub fn get_loan(e: &Env, user: Address) -> Result<Loan, LoanManagerError> {
-        storage::read_loan(e, user).ok_or(LoanManagerError::LoanNotFound)
+    /// Get the loans for a specific user
+    pub fn get_loans(e: &Env, user: Address) -> Vec<Loan> {
+        storage::read_user_loans(e, &user)
     }
 
+    /// Get a single loan by id
+    pub fn get_loan(e: &Env, loan_id: LoanId) -> Result<Loan, LoanManagerError> {
+        storage::read_loan(e, &loan_id).ok_or(LoanManagerError::LoanNotFound)
+    }
+
+    /// Get the price of a token
     pub fn get_price(e: &Env, token: Symbol) -> Result<i128, LoanManagerError> {
         let reflector_address = storage::read_oracle(e)?;
         let reflector_contract = oracle::Client::new(e, &reflector_address);
@@ -302,13 +310,11 @@ impl LoanManager {
         Ok(asset_pricedata.price)
     }
 
-    pub fn repay(e: &Env, user: Address, amount: i128) -> Result<(i128, i128), LoanManagerError> {
+    pub fn repay(e: &Env, loan_id: LoanId, amount: i128) -> Result<(i128, i128), LoanManagerError> {
+        let user = loan_id.borrower_address.clone();
         user.require_auth();
 
-        Self::add_interest(e, user.clone())?;
-
         let Loan {
-            borrower,
             borrowed_amount,
             borrowed_from,
             collateral_amount,
@@ -316,7 +322,7 @@ impl LoanManager {
             unpaid_interest,
             last_accrual,
             ..
-        } = storage::read_loan(e, user.clone()).ok_or(LoanManagerError::LoanNotFound)?;
+        } = Self::add_interest(e, loan_id.clone())?;
 
         assert!(
             amount <= borrowed_amount,
@@ -348,30 +354,31 @@ impl LoanManager {
             collateral_from.clone(),
         )?;
 
-        let loan = Loan {
-            borrower,
-            borrowed_amount: new_borrowed_amount,
-            borrowed_from,
-            collateral_amount,
-            collateral_from,
-            health_factor: new_health_factor,
-            unpaid_interest: new_unpaid_interest,
-            last_accrual,
-        };
-
-        storage::write_loan(e, user, loan);
+        storage::write_loan(
+            e,
+            &loan_id,
+            &Loan {
+                loan_id: loan_id.clone(),
+                borrowed_amount: new_borrowed_amount,
+                borrowed_from,
+                collateral_amount,
+                collateral_from,
+                health_factor: new_health_factor,
+                unpaid_interest: new_unpaid_interest,
+                last_accrual,
+            },
+        );
 
         Ok((borrowed_amount, new_borrowed_amount))
     }
 
     pub fn repay_and_close_manager(
         e: &Env,
-        user: Address,
         max_allowed_amount: i128,
+        loan_id: LoanId,
     ) -> Result<i128, LoanManagerError> {
+        let user = loan_id.borrower_address.clone();
         user.require_auth();
-
-        Self::add_interest(e, user.clone())?;
 
         let Loan {
             borrowed_amount,
@@ -380,7 +387,7 @@ impl LoanManager {
             collateral_from,
             unpaid_interest,
             ..
-        } = storage::read_loan(e, user.clone()).ok_or(LoanManagerError::LoanNotFound)?;
+        } = Self::add_interest(e, loan_id.clone())?;
 
         let borrow_pool_client = loan_pool::Client::new(e, &borrowed_from);
         borrow_pool_client.repay_and_close(
@@ -393,22 +400,20 @@ impl LoanManager {
         let collateral_pool_client = loan_pool::Client::new(e, &collateral_from);
         collateral_pool_client.withdraw_collateral(&user, &collateral_amount);
 
-        storage::delete_loan(e, user);
+        storage::delete_loan(e, &loan_id);
         Ok(borrowed_amount)
     }
 
     pub fn liquidate(
         e: Env,
         user: Address,
-        borrower: Address,
+        loan_id: LoanId,
         amount: i128,
-    ) -> Result<(i128, i128), LoanManagerError> {
+    ) -> Result<Loan, LoanManagerError> {
         user.require_auth();
 
-        Self::add_interest(&e, borrower.clone())?;
-
         let Loan {
-            borrower,
+            loan_id,
             borrowed_amount,
             borrowed_from,
             collateral_from,
@@ -416,7 +421,7 @@ impl LoanManager {
             unpaid_interest,
             last_accrual,
             ..
-        } = storage::read_loan(&e, borrower.clone()).ok_or(LoanManagerError::LoanNotFound)?;
+        } = Self::add_interest(&e, loan_id.clone())?;
 
         let borrow_pool_client = loan_pool::Client::new(&e, &borrowed_from);
         let collateral_pool_client = loan_pool::Client::new(&e, &collateral_from);
@@ -475,12 +480,12 @@ impl LoanManager {
             .checked_div(10_000_000)
             .ok_or(LoanManagerError::OverOrUnderFlow)?;
 
-        borrow_pool_client.liquidate(&user, &amount, &unpaid_interest, &borrower);
+        borrow_pool_client.liquidate(&user, &amount, &unpaid_interest, &loan_id.borrower_address);
 
         collateral_pool_client.liquidate_transfer_collateral(
             &user,
             &collateral_amount_bonus,
-            &borrower,
+            &loan_id.borrower_address,
         );
 
         let new_borrowed_amount = borrowed_amount
@@ -504,7 +509,7 @@ impl LoanManager {
         }
 
         let new_loan = Loan {
-            borrower: borrower.clone(),
+            loan_id: loan_id.clone(),
             borrowed_amount: new_borrowed_amount,
             borrowed_from,
             collateral_from,
@@ -514,9 +519,9 @@ impl LoanManager {
             last_accrual,
         };
 
-        storage::write_loan(&e, borrower, new_loan);
+        storage::write_loan(&e, &loan_id, &new_loan);
 
-        Ok((new_borrowed_amount, new_collateral_amount))
+        Ok(new_loan)
     }
 }
 
@@ -570,7 +575,9 @@ mod tests {
         // ACT
         // Deploy contract using loan_manager as factory
         let TestEnv {
-            pool_xlm_client, ..
+            pool_usdc_client,
+            pool_eurc_client,
+            ..
         } = setup_test_env(&e);
 
         // ASSERT
@@ -578,8 +585,10 @@ mod tests {
         // assert_eq!(e.auths(), &[]);
 
         // Invoke contract to check that it is initialized.
-        let pool_balance = pool_xlm_client.get_contract_balance();
-        assert_eq!(pool_balance, 1000);
+        let usdc_balance = pool_usdc_client.get_contract_balance();
+        assert_eq!(usdc_balance, 1000);
+        let eurc_balance = pool_eurc_client.get_contract_balance();
+        assert_eq!(eurc_balance, 1000);
     }
 
     #[test]
@@ -692,6 +701,7 @@ mod tests {
             usdc_asset_client,
             admin,
             reflector_addr,
+            ..
         } = setup_test_env(&e);
 
         xlm_asset_client.mint(&admin, &9_001);
@@ -699,7 +709,8 @@ mod tests {
         usdc_asset_client.mint(&user, &100_000);
 
         // Create a loan.
-        manager_client.create_loan(&user, &1_000, &pool_xlm_addr, &100_000, &pool_usdc_addr);
+        let loan =
+            manager_client.create_loan(&user, &1_000, &pool_xlm_addr, &100_000, &pool_usdc_addr);
 
         // Move in time
         e.ledger().with_mut(|li| {
@@ -710,22 +721,22 @@ mod tests {
         e.register_at(&reflector_addr, oracle::WASM, ());
 
         // ASSERT
-        assert_eq!(xlm_token_client.balance(&user), 1_000);
-        assert_eq!(usdc_token_client.balance(&user), 1_000);
+        assert_eq!(xlm_token_client.balance(&user), 2_000);
+        assert_eq!(usdc_token_client.balance(&user), 0);
 
-        let mut user_loan = manager_client.get_loan(&user);
+        let user_loan = manager_client.get_loan(&loan.loan_id);
 
         assert_eq!(user_loan.borrowed_amount, 1_000);
         assert_eq!(user_loan.collateral_amount, 100_000);
 
-        manager_client.repay(&user, &100);
+        manager_client.repay(&loan.loan_id, &100);
         e.ledger().with_mut(|li| {
             li.sequence_number = 100_000 + 100_000 + 1;
         });
 
-        user_loan = manager_client.get_loan(&user);
+        let user_loan = manager_client.get_loan(&loan.loan_id);
 
-        assert_eq!(user_loan.borrowed_amount, 928);
+        assert_eq!(user_loan.borrowed_amount, 929);
         assert_eq!(user_loan.collateral_amount, 100_000);
         assert_eq!(xlm_token_client.balance(&manager_addr), 2);
 
@@ -755,16 +766,17 @@ mod tests {
             pool_usdc_addr,
             xlm_token_client,
             usdc_token_client,
-            pool_xlm_client,
-            xlm_asset_client,
+            pool_usdc_client,
             reflector_addr,
+            usdc_asset_client,
             ..
         } = setup_test_env(&e);
 
         // ACT
         // Create a loan.
-        manager_client.create_loan(&user, &100, &pool_xlm_addr, &500, &pool_usdc_addr);
-        assert_eq!(pool_xlm_client.get_available_balance(), 900);
+        let mut loan =
+            manager_client.create_loan(&user, &100, &pool_usdc_addr, &500, &pool_xlm_addr);
+        assert_eq!(pool_usdc_client.get_available_balance(), 900);
 
         // Move in time
         e.ledger().with_mut(|li| {
@@ -776,29 +788,29 @@ mod tests {
         e.register_at(&reflector_addr, oracle::WASM, ());
 
         // ASSERT
-        assert_eq!(xlm_token_client.balance(&user), 100);
-        assert_eq!(usdc_token_client.balance(&user), 500);
+        assert_eq!(xlm_token_client.balance(&user), 500);
+        assert_eq!(usdc_token_client.balance(&user), 100);
 
-        let user_loan = manager_client.get_loan(&user);
+        loan = manager_client.get_loan(&loan.loan_id);
 
-        assert_eq!(user_loan.borrowed_amount, 100);
-        assert_eq!(user_loan.collateral_amount, 500);
+        assert_eq!(loan.borrowed_amount, 100);
+        assert_eq!(loan.collateral_amount, 500);
 
-        manager_client.repay(&user, &50);
-        let user_loan = manager_client.get_loan(&user);
-        assert_eq!(user_loan.borrowed_amount, 52);
+        manager_client.repay(&loan.loan_id, &50);
+        loan = manager_client.get_loan(&loan.loan_id);
+        assert_eq!(loan.borrowed_amount, 52);
 
-        assert_eq!((52, 2), manager_client.repay(&user, &50));
-        assert_eq!(1000, pool_xlm_client.get_available_balance());
-        assert_eq!(1002, pool_xlm_client.get_contract_balance());
-        assert_eq!(1000, pool_xlm_client.get_total_balance_shares());
+        assert_eq!((52, 2), manager_client.repay(&loan.loan_id, &50));
+        assert_eq!(1000, pool_usdc_client.get_available_balance());
+        assert_eq!(1002, pool_usdc_client.get_contract_balance());
+        assert_eq!(1000, pool_usdc_client.get_total_balance_shares());
 
         // Create a new user that should not be able to withdraw more than what they have deposited even if the pool already has interest
         let new_user = Address::generate(&e);
-        xlm_asset_client.mint(&new_user, &1_000);
+        usdc_asset_client.mint(&new_user, &1_000);
 
-        pool_xlm_client.deposit(&new_user, &1000);
-        assert_eq!(2002, pool_xlm_client.get_contract_balance());
+        pool_usdc_client.deposit(&new_user, &1000);
+        assert_eq!(2002, pool_usdc_client.get_contract_balance());
         let positions_new_user = Positions {
             collateral: 0,
             liabilities: 0,
@@ -806,7 +818,7 @@ mod tests {
         };
         assert_eq!(
             positions_new_user,
-            pool_xlm_client.get_user_positions(&new_user)
+            pool_usdc_client.get_user_positions(&new_user)
         );
 
         let test_positions_admin = Positions {
@@ -816,7 +828,7 @@ mod tests {
         };
         assert_eq!(
             test_positions_admin,
-            pool_xlm_client.get_user_positions(&admin)
+            pool_usdc_client.get_user_positions(&admin)
         );
         let pool_state = PoolState {
             annual_interest_rate: 200887,
@@ -824,18 +836,10 @@ mod tests {
             total_balance_shares: 1998,
             total_balance_tokens: 2002,
         };
-        assert_eq!(pool_state, pool_xlm_client.get_pool_state());
+        assert_eq!(pool_state, pool_usdc_client.get_pool_state());
 
-        let state_after_first_withdraw = pool_xlm_client.withdraw(&new_user, &1002);
-        assert_eq!(state_after_first_withdraw, pool_xlm_client.get_pool_state());
-
-        let pool_state = PoolState {
-            annual_interest_rate: 200887,
-            available_balance_tokens: 998,
-            total_balance_shares: 998,
-            total_balance_tokens: 1000,
-        };
-        assert_eq!(pool_state, pool_xlm_client.get_pool_state());
+        // Should panic because the user has no xlm to withdraw
+        pool_usdc_client.withdraw(&new_user, &1002);
     }
 
     #[test]
@@ -849,17 +853,36 @@ mod tests {
             manager_client,
             pool_xlm_addr,
             pool_usdc_addr,
+            pool_eurc_addr,
             xlm_token_client,
             usdc_token_client,
+            eurc_token_client,
             ..
         } = setup_test_env(&e);
 
         // ACT
-        manager_client.create_loan(&user, &10, &pool_xlm_addr, &100, &pool_usdc_addr);
+        manager_client.create_loan(&user, &10, &pool_usdc_addr, &100, &pool_xlm_addr);
+        manager_client.create_loan(&user, &30, &pool_eurc_addr, &300, &pool_xlm_addr);
 
         // ASSERT
-        assert_eq!(xlm_token_client.balance(&user), 10);
-        assert_eq!(usdc_token_client.balance(&user), 900);
+        assert_eq!(xlm_token_client.balance(&user), 600);
+        assert_eq!(usdc_token_client.balance(&user), 10);
+        assert_eq!(eurc_token_client.balance(&user), 30);
+
+        let loans = manager_client.get_loans(&user);
+        assert_eq!(loans.len(), 2);
+
+        let loan_usdc = loans.get(0).unwrap();
+        assert_eq!(loan_usdc.borrowed_amount, 10);
+        assert_eq!(loan_usdc.collateral_amount, 100);
+        assert_eq!(loan_usdc.borrowed_from, pool_usdc_addr);
+        assert_eq!(loan_usdc.collateral_from, pool_xlm_addr);
+
+        let loan_eurc = loans.get(1).unwrap();
+        assert_eq!(loan_eurc.borrowed_amount, 30);
+        assert_eq!(loan_eurc.collateral_amount, 300);
+        assert_eq!(loan_eurc.borrowed_from, pool_eurc_addr);
+        assert_eq!(loan_eurc.collateral_from, pool_xlm_addr);
     }
 
     #[test]
@@ -880,6 +903,7 @@ mod tests {
             manager_client,
             pool_xlm_addr,
             pool_usdc_addr,
+            xlm_token_client,
             usdc_token_client,
             reflector_addr,
             ..
@@ -888,14 +912,14 @@ mod tests {
         // ACT
 
         // Create a loan.
-        manager_client.create_loan(&user, &100, &pool_xlm_addr, &1000, &pool_usdc_addr);
-
-        let user_loan = manager_client.get_loan(&user);
+        let mut loan =
+            manager_client.create_loan(&user, &100, &pool_usdc_addr, &1000, &pool_xlm_addr);
 
         // Here borrowed amount should be the same as time has not moved. add_interest() is only called to store the LastUpdate sequence number.
-        assert_eq!(user_loan.borrowed_amount, 100);
-        assert_eq!(user_loan.health_factor, 80_000_000);
-        assert_eq!(usdc_token_client.balance(&user), 0);
+        assert_eq!(loan.borrowed_amount, 100);
+        assert_eq!(loan.health_factor, 80_000_000);
+        assert_eq!(xlm_token_client.balance(&user), 0);
+        assert_eq!(usdc_token_client.balance(&user), 100);
 
         // Move time
         e.ledger().with_mut(|li| {
@@ -906,13 +930,11 @@ mod tests {
         // A new instance of reflector mock needs to be created, they only live for one ledger.
         e.register_at(&reflector_addr, oracle::WASM, ());
 
-        manager_client.add_interest(&user);
+        loan = manager_client.add_interest(&loan.loan_id);
 
-        let user_loan = manager_client.get_loan(&user);
-
-        assert_eq!(user_loan.borrowed_amount, 102);
-        assert_eq!(user_loan.health_factor, 78_431_372);
-        assert_eq!(user_loan.collateral_amount, 1000);
+        assert_eq!(loan.borrowed_amount, 102);
+        assert_eq!(loan.health_factor, 78_431_372);
+        assert_eq!(loan.collateral_amount, 1000);
     }
 
     #[test]
@@ -933,16 +955,22 @@ mod tests {
             manager_client,
             pool_xlm_addr,
             pool_usdc_addr,
-            pool_xlm_client,
+            pool_eurc_addr,
+            pool_usdc_client,
+            pool_eurc_client,
             xlm_token_client,
             usdc_token_client,
             reflector_addr,
+            eurc_token_client,
             ..
         } = setup_test_env(&e);
 
         // ACT
         // Create a loan.
-        manager_client.create_loan(&user, &100, &pool_xlm_addr, &500, &pool_usdc_addr);
+        let mut loan_usdc =
+            manager_client.create_loan(&user, &100, &pool_usdc_addr, &500, &pool_xlm_addr);
+        let mut loan_eurc =
+            manager_client.create_loan(&user, &100, &pool_eurc_addr, &500, &pool_xlm_addr);
 
         // Move in time
         e.ledger().with_mut(|li| {
@@ -954,22 +982,30 @@ mod tests {
         e.register_at(&reflector_addr, oracle::WASM, ());
 
         // ASSERT
-        assert_eq!(xlm_token_client.balance(&user), 100);
-        assert_eq!(usdc_token_client.balance(&user), 500);
+        assert_eq!(xlm_token_client.balance(&user), 0);
+        assert_eq!(usdc_token_client.balance(&user), 100);
+        assert_eq!(eurc_token_client.balance(&user), 100);
 
-        let user_loan = manager_client.get_loan(&user);
+        loan_usdc = manager_client.get_loan(&loan_usdc.loan_id);
+        assert_eq!(loan_usdc.borrowed_amount, 100);
+        assert_eq!(loan_usdc.collateral_amount, 500);
 
-        assert_eq!(user_loan.borrowed_amount, 100);
-        assert_eq!(user_loan.collateral_amount, 500);
+        manager_client.repay(&loan_usdc.loan_id, &50);
+        loan_usdc = manager_client.get_loan(&loan_usdc.loan_id);
+        assert_eq!(loan_usdc.borrowed_amount, 52);
+        assert_eq!(loan_usdc.collateral_amount, 500);
 
-        manager_client.repay(&user, &50);
-        let user_loan = manager_client.get_loan(&user);
-        assert_eq!(user_loan.borrowed_amount, 52);
+        assert_eq!((52, 2), manager_client.repay(&loan_usdc.loan_id, &50));
+        assert_eq!(1000, pool_usdc_client.get_available_balance());
+        assert_eq!(1002, pool_usdc_client.get_contract_balance());
+        assert_eq!(1000, pool_usdc_client.get_total_balance_shares());
 
-        assert_eq!((52, 2), manager_client.repay(&user, &50));
-        assert_eq!(1000, pool_xlm_client.get_available_balance());
-        assert_eq!(1002, pool_xlm_client.get_contract_balance());
-        assert_eq!(1000, pool_xlm_client.get_total_balance_shares());
+        loan_eurc = manager_client.get_loan(&loan_eurc.loan_id);
+        assert_eq!(loan_eurc.borrowed_amount, 100);
+        assert_eq!(loan_eurc.collateral_amount, 500);
+        assert_eq!(900, pool_eurc_client.get_available_balance());
+        assert_eq!(1000, pool_eurc_client.get_contract_balance());
+        assert_eq!(1000, pool_eurc_client.get_total_balance_shares());
     }
 
     #[test]
@@ -988,19 +1024,77 @@ mod tests {
         let TestEnv {
             user,
             manager_client,
-            xlm_asset_client,
-            pool_xlm_client,
             pool_xlm_addr,
             pool_usdc_addr,
             xlm_token_client,
+            usdc_token_client,
+            reflector_addr,
+            pool_usdc_client,
+            usdc_asset_client,
+            ..
+        } = setup_test_env(&e);
+
+        // ACT
+        // Create a loan.
+        let loan = manager_client.create_loan(&user, &100, &pool_usdc_addr, &300, &pool_xlm_addr);
+
+        // Move in time
+        e.ledger().with_mut(|li| {
+            li.sequence_number = 100_000 + 100_000;
+            li.timestamp = 1 + 31_556_926;
+        });
+
+        // A new instance of reflector mock needs to be created, they only live for one ledger.
+        e.register_at(&reflector_addr, oracle::WASM, ());
+
+        // ASSERT
+        assert_eq!(xlm_token_client.balance(&user), 700);
+        assert_eq!(usdc_token_client.balance(&user), 100);
+
+        let loans = manager_client.get_loans(&user);
+        assert_eq!(loans.len(), 1);
+
+        // mint the user some money so they can repay.
+        usdc_asset_client.mint(&user, &45);
+        manager_client.repay_and_close_manager(&145, &loan.loan_id);
+
+        let loans = manager_client.get_loans(&user);
+        assert_eq!(loans.len(), 0);
+        assert_eq!(1002, pool_usdc_client.get_available_balance());
+        assert_eq!(1002, pool_usdc_client.get_contract_balance());
+        assert_eq!(1000, pool_usdc_client.get_total_balance_shares());
+    }
+
+    #[test]
+    fn repay_and_close_with_multiple_loans() {
+        // ARRANGE
+        let e = Env::default();
+        e.mock_all_auths_allowing_non_root_auth();
+        e.ledger().with_mut(|li| {
+            li.sequence_number = 100_000;
+            li.timestamp = 1;
+            li.min_persistent_entry_ttl = 1_000_000;
+            li.min_temp_entry_ttl = 1_000_000;
+            li.max_entry_ttl = 1_000_001;
+        });
+
+        let TestEnv {
+            user,
+            manager_client,
+            usdc_asset_client,
+            pool_usdc_client,
+            pool_xlm_addr,
+            pool_usdc_addr,
+            pool_eurc_addr,
             usdc_token_client,
             reflector_addr,
             ..
         } = setup_test_env(&e);
 
         // ACT
-        // Create a loan.
-        manager_client.create_loan(&user, &100, &pool_xlm_addr, &300, &pool_usdc_addr);
+        let mut usdc_loan =
+            manager_client.create_loan(&user, &100, &pool_usdc_addr, &300, &pool_xlm_addr);
+        manager_client.create_loan(&user, &100, &pool_eurc_addr, &300, &pool_xlm_addr);
 
         // Move in time
         e.ledger().with_mut(|li| {
@@ -1012,25 +1106,32 @@ mod tests {
         // A new instance of reflector mock needs to be created, they only live for one ledger.
         e.register_at(&reflector_addr, oracle::WASM, ());
 
-        assert_eq!(xlm_token_client.balance(&user), 100);
-        assert_eq!(usdc_token_client.balance(&user), 700);
+        let loans = manager_client.get_loans(&user);
+        assert_eq!(loans.len(), 2);
+        usdc_loan = manager_client.get_loan(&usdc_loan.loan_id);
 
-        let user_loan = manager_client.get_loan(&user);
-
-        assert_eq!(user_loan.borrowed_amount, 100);
-        assert_eq!(user_loan.collateral_amount, 300);
+        assert_eq!(usdc_loan.borrowed_amount, 100);
+        assert_eq!(usdc_loan.collateral_amount, 300);
 
         // mint the user some money so they can repay.
-        xlm_asset_client.mint(&user, &45);
+        usdc_asset_client.mint(&user, &45);
         assert_eq!(
             102,
-            manager_client.repay_and_close_manager(&user, &(user_loan.borrowed_amount + 45))
+            manager_client
+                .repay_and_close_manager(&(usdc_loan.borrowed_amount + 45), &usdc_loan.loan_id)
         );
 
-        assert_eq!(1002, pool_xlm_client.get_available_balance());
-        assert_eq!(1002, pool_xlm_client.get_contract_balance());
-        assert_eq!(1000, pool_xlm_client.get_total_balance_shares());
-        assert_eq!(1000, usdc_token_client.balance(&user));
+        assert_eq!(1002, pool_usdc_client.get_available_balance());
+        assert_eq!(1002, pool_usdc_client.get_contract_balance());
+        assert_eq!(1000, pool_usdc_client.get_total_balance_shares());
+        assert_eq!(43, usdc_token_client.balance(&user));
+
+        // The eurc loan should still be there after repaying the usdc loan
+        let loans = manager_client.get_loans(&user);
+        assert_eq!(loans.len(), 1);
+        let eurc_loan = loans.get(0).unwrap();
+        assert_eq!(eurc_loan.borrowed_amount, 100);
+        assert_eq!(eurc_loan.collateral_amount, 300);
     }
 
     #[test]
@@ -1049,14 +1150,16 @@ mod tests {
 
         // ACT
         // Create a loan.
-        manager_client.create_loan(&user, &100, &pool_xlm_addr, &1000, &pool_usdc_addr);
+        let loan = manager_client.create_loan(&user, &100, &pool_usdc_addr, &1000, &pool_xlm_addr);
 
-        manager_client.repay(&user, &2_000);
+        manager_client.repay(&loan.loan_id, &2_000);
     }
+
     #[test]
     fn liquidate() {
         // ARRANGE
         let e = Env::default();
+
         e.mock_all_auths_allowing_non_root_auth();
         e.ledger().with_mut(|li| {
             li.sequence_number = 100_000;
@@ -1071,8 +1174,11 @@ mod tests {
             user,
             manager_client,
             pool_xlm_addr,
-            pool_xlm_client,
             pool_usdc_addr,
+            pool_eurc_addr,
+            pool_usdc_client,
+            pool_eurc_client,
+            eurc_asset_client,
             xlm_asset_client,
             usdc_asset_client,
             reflector_addr,
@@ -1080,23 +1186,25 @@ mod tests {
         } = setup_test_env(&e);
 
         // print more money
-        xlm_asset_client.mint(&admin, &9_001);
-        pool_xlm_client.deposit(&admin, &9_001);
-        usdc_asset_client.mint(&user, &12_000);
+        usdc_asset_client.mint(&admin, &9_001);
+        eurc_asset_client.mint(&admin, &9_001);
+        xlm_asset_client.mint(&user, &30_000);
+        pool_usdc_client.deposit(&admin, &9_001);
+        pool_eurc_client.deposit(&admin, &9_001);
 
         // ACT
-        // Create a loan.
-        manager_client.create_loan(&user, &10_000, &pool_xlm_addr, &12_505, &pool_usdc_addr);
+        // Create two loans, one to liquidate.
+        let mut usdc_loan =
+            manager_client.create_loan(&user, &10_000, &pool_usdc_addr, &12_505, &pool_xlm_addr);
+        let mut eurc_loan =
+            manager_client.create_loan(&user, &10_000, &pool_eurc_addr, &12_505, &pool_xlm_addr);
 
-        let user_loan = manager_client.get_loan(&user);
-
-        assert_eq!(user_loan.borrowed_amount, 10_000);
-
-        manager_client.add_interest(&user);
+        manager_client.add_interest(&usdc_loan.loan_id);
+        manager_client.add_interest(&eurc_loan.loan_id);
 
         // Here borrowed amount should be the same as time has not moved. add_interest() is only called to store the LastUpdate sequence number.
-        assert_eq!(user_loan.borrowed_amount, 10_000);
-        assert_eq!(user_loan.health_factor, 10_004_000);
+        assert_eq!(usdc_loan.borrowed_amount, 10_000);
+        assert_eq!(usdc_loan.health_factor, 10_004_000);
 
         // Move time
         e.ledger().with_mut(|li| {
@@ -1107,13 +1215,14 @@ mod tests {
         // A new instance of reflector mock needs to be created, they only live for one ledger.
         e.register_at(&reflector_addr, oracle::WASM, ());
 
-        manager_client.add_interest(&user);
+        manager_client.add_interest(&usdc_loan.loan_id);
+        manager_client.add_interest(&eurc_loan.loan_id);
 
-        let user_loan = manager_client.get_loan(&user);
+        usdc_loan = manager_client.get_loan(&usdc_loan.loan_id);
 
-        assert_eq!(user_loan.borrowed_amount, 10_760);
-        assert_eq!(user_loan.health_factor, 9_297_397);
-        assert_eq!(user_loan.collateral_amount, 12_505);
+        assert_eq!(usdc_loan.borrowed_amount, 10_760);
+        assert_eq!(usdc_loan.health_factor, 9_297_397);
+        assert_eq!(usdc_loan.collateral_amount, 12_505);
 
         e.ledger().with_mut(|li| {
             li.sequence_number = 100_000 + 1_000;
@@ -1121,13 +1230,57 @@ mod tests {
 
         e.register_at(&reflector_addr, oracle::WASM, ());
 
-        manager_client.liquidate(&admin, &user, &5_000);
+        manager_client.liquidate(&admin, &usdc_loan.loan_id, &5_000);
 
-        let user_loan = manager_client.get_loan(&user);
+        usdc_loan = manager_client.get_loan(&usdc_loan.loan_id);
+        assert_eq!(usdc_loan.borrowed_amount, 5_760);
+        assert_eq!(usdc_loan.health_factor, 9_729_166);
+        assert_eq!(usdc_loan.collateral_amount, 7_005);
 
-        assert_eq!(user_loan.borrowed_amount, 5_760);
-        assert_eq!(user_loan.health_factor, 9_729_166);
-        assert_eq!(user_loan.collateral_amount, 7_005);
+        eurc_loan = manager_client.get_loan(&eurc_loan.loan_id);
+        assert_eq!(eurc_loan.borrowed_amount, 10_760);
+        assert_eq!(eurc_loan.health_factor, 9_297_397);
+        assert_eq!(eurc_loan.collateral_amount, 12_505);
+    }
+
+    #[test]
+    fn test_new_storage_layout() {
+        // Test that the new storage layout works correctly
+        let e = Env::default();
+        e.mock_all_auths_allowing_non_root_auth();
+
+        let TestEnv {
+            user,
+            manager_client,
+            pool_xlm_addr,
+            pool_usdc_addr,
+            xlm_asset_client,
+            ..
+        } = setup_test_env(&e);
+
+        // Give user more XLM for collateral
+        xlm_asset_client.mint(&user, &10_000);
+
+        // Create multiple loans for the same user
+        let mut loan1 =
+            manager_client.create_loan(&user, &100, &pool_usdc_addr, &1000, &pool_xlm_addr);
+        let mut loan2 =
+            manager_client.create_loan(&user, &200, &pool_usdc_addr, &2000, &pool_xlm_addr);
+        let mut loan3 =
+            manager_client.create_loan(&user, &300, &pool_usdc_addr, &3000, &pool_xlm_addr);
+
+        // Verify all loans are stored and retrievable
+        let loans = manager_client.get_loans(&user);
+        assert_eq!(loans.len(), 3);
+
+        // Verify individual loans can be accessed by loan id
+        loan1 = manager_client.get_loan(&loan1.loan_id);
+        loan2 = manager_client.get_loan(&loan2.loan_id);
+        loan3 = manager_client.get_loan(&loan3.loan_id);
+
+        assert_eq!(loan1.borrowed_amount, 100);
+        assert_eq!(loan2.borrowed_amount, 200);
+        assert_eq!(loan3.borrowed_amount, 300);
     }
 
     /* Test setup helpers */
@@ -1144,11 +1297,17 @@ mod tests {
         pool_xlm_client: loan_pool::Client<'a>,
         pool_usdc_addr: Address,
         reflector_addr: Address,
+        pool_usdc_client: loan_pool::Client<'a>,
+        eurc_asset_client: StellarAssetClient<'a>,
+        eurc_token_client: TokenClient<'a>,
+        pool_eurc_addr: Address,
+        pool_eurc_client: loan_pool::Client<'a>,
     }
 
     fn setup_test_env(e: &Env) -> TestEnv {
         let admin = Address::generate(e);
         let admin2 = Address::generate(e);
+        let admin3 = Address::generate(e);
         let user = Address::generate(e);
         let oracle = Address::generate(e);
 
@@ -1179,17 +1338,32 @@ mod tests {
 
         // USDC pool
         let pool_usdc_addr = setup_test_pool(e, &manager_client, &usdc_ticker, &usdc_addr);
+        let pool_usdc_client = loan_pool::Client::new(e, &pool_usdc_addr);
+
+        // EURC asset
+        let eurc_ticker = Symbol::new(e, "EURC");
+        let eurc_addr = e
+            .register_stellar_asset_contract_v2(admin3.clone())
+            .address();
+        let eurc_asset_client = StellarAssetClient::new(e, &eurc_addr);
+        let eurc_token_client = TokenClient::new(e, &eurc_addr);
+
+        // EURC pool
+        let pool_eurc_addr = setup_test_pool(e, &manager_client, &eurc_ticker, &eurc_addr);
+        let pool_eurc_client = loan_pool::Client::new(e, &pool_eurc_addr);
 
         // Mint the admin and the user some coins
-        xlm_asset_client.mint(&admin, &1_000_000);
-        usdc_asset_client.mint(&user, &1_000);
+        xlm_asset_client.mint(&user, &1_000);
+        usdc_asset_client.mint(&admin, &1_000_000);
+        eurc_asset_client.mint(&admin, &1_000_000);
 
         // Setup mock price oracle
         let reflector_addr = manager_client.get_oracle();
         e.register_at(&reflector_addr, oracle::WASM, ());
 
         // Deposit some of the admin's tokens for borrowing.
-        pool_xlm_client.deposit(&admin, &1_000);
+        pool_usdc_client.deposit(&admin, &1_000);
+        pool_eurc_client.deposit(&admin, &1_000);
 
         TestEnv {
             admin,
@@ -1204,6 +1378,11 @@ mod tests {
             pool_xlm_client,
             pool_usdc_addr,
             reflector_addr,
+            pool_usdc_client,
+            eurc_asset_client,
+            eurc_token_client,
+            pool_eurc_addr,
+            pool_eurc_client,
         }
     }
 

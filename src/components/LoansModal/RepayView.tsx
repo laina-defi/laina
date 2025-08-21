@@ -44,7 +44,7 @@ const RepayView = ({ loan, onBack }: RepayViewProps) => {
 
     setIsRepaying(true);
 
-    const tx = await loanManagerClient.repay({ user: wallet.address, amount });
+    const tx = await loanManagerClient.repay({ loan_id: loan.loanId, amount });
     try {
       await tx.signAndSend({ signTransaction });
       setSuccess('PARTIAL_REPAY_SUCCESS');
@@ -63,7 +63,7 @@ const RepayView = ({ loan, onBack }: RepayViewProps) => {
     setIsRepayingAll(true);
 
     const tx = await loanManagerClient.repay_and_close_manager({
-      user: wallet.address,
+      loan_id: loan.loanId,
       // +5% to liabilities. TEMPORARY hard-coded solution for max allowance.
       max_allowed_amount: (loanBalance * 5n) / 100n + loanBalance,
     });

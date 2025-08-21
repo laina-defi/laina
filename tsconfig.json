@@ -11,7 +11,11 @@
       "@pages/*": ["src/pages/*"],
       "@contracts/*": ["src/contracts/*"],
       "@lib/*": ["src/lib/*"],
-      "@contexts/*": ["src/contexts/*"]
+      "@contexts/*": ["src/contexts/*"],
+      "loan_manager": ["contracts/loan_manager"],
+      "pool_xlm": ["contracts/pool_xlm"],
+      "pool_usdc": ["contracts/pool_usdc"],
+      "pool_eurc": ["contracts/pool_eurc"]
     }
   }
 }
