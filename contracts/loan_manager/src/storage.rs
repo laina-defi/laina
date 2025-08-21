@@ -106,7 +106,7 @@ pub fn read_pool_addresses(e: &Env) -> Vec<Address> {
 }
 
 pub fn create_loan(e: &Env, user: Address, new_loan: NewLoan) -> Loan {
-    let nonce = get_and_increment_loan_nonce(e, &user);
+    let nonce = get_next_loan_nonce(e, &user);
     let loan_id = LoanId {
         borrower_address: user.clone(),
         nonce,
@@ -177,7 +177,7 @@ pub fn delete_loan(e: &Env, loan_id: &LoanId) {
 }
 
 // Increment and return the next loan nonce for a user
-fn get_and_increment_loan_nonce(e: &Env, user: &Address) -> u64 {
+fn get_next_loan_nonce(e: &Env, user: &Address) -> u64 {
     let key = (user.clone(), symbol_short!("nonce"));
 
     let prev_nonce = e.storage().persistent().get(&key).unwrap_or(0);
