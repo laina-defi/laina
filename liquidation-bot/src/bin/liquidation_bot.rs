@@ -562,7 +562,7 @@ async fn load_config() -> Result<BotConfig, Error> {
         .parse()
         .expect("ALLOW_HTTP must be 'true' or 'false'");
     let options = Options {
-        allow_http: allow_http,
+        allow_http,
         ..Options::default()
     };
 
