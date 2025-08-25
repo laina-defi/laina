@@ -44,6 +44,11 @@ jobs:
         env:
           PUBLIC_SOROBAN_NETWORK_PASSPHRASE: Test SDF Network ; September 2015
           PUBLIC_SOROBAN_RPC_URL: https://soroban-testnet.stellar.org/
+          PUBLIC_CONTRACT_ADDRESS_XLM: ${{ secrets.PUBLIC_CONTRACT_ADDRESS_XLM }}
+          PUBLIC_CONTRACT_ADDRESS_USDC: ${{ secrets.PUBLIC_CONTRACT_ADDRESS_USDC }}
+          PUBLIC_CONTRACT_ADDRESS_EURC: ${{ secrets.PUBLIC_CONTRACT_ADDRESS_EURC }}
+          PUBLIC_ISSUER_ADDRESS_USDC: ${{ secrets.PUBLIC_ISSUER_ADDRESS_USDC }}
+          PUBLIC_ISSUER_ADDRESS_EURC: ${{ secrets.PUBLIC_ISSUER_ADDRESS_EURC }}
         uses: withastro/action@v2
 
   deploy:
