@@ -7,6 +7,7 @@ import {
   installContracts,
   loadAccount,
   loanManagerAddress,
+  logDeploymentInfo,
   readTextFile,
 } from './util';
 
@@ -35,3 +36,4 @@ createContractBindings();
 createContractImports();
 
 console.log('\nUpgrade successful!');
+logDeploymentInfo();

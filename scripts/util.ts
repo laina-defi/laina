@@ -113,3 +113,12 @@ const importContract = (contractName: string) => {
   writeFileSync(outputPath, importContent);
   console.log(`Created import for ${contractName}`);
 };
+
+export const logDeploymentInfo = () => {
+  console.log(`  Network: ${process.env.SOROBAN_NETWORK}`);
+  console.log(`  Account: ${process.env.SOROBAN_ACCOUNT}`);
+  console.log(`  Loan Manager address: ${readTextFile('./.stellar/contract-ids/loan_manager.txt')}`);
+  console.log(`  XLM Pool address: ${readTextFile('./.stellar/contract-ids/pool_xlm.txt')}`);
+  console.log(`  USDC Pool address: ${readTextFile('./.stellar/contract-ids/pool_usdc.txt')}`);
+  console.log(`  EURC Pool address: ${readTextFile('./.stellar/contract-ids/pool_eurc.txt')}`);
+};
