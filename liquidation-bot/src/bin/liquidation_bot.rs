@@ -75,7 +75,11 @@ async fn main() -> Result<(), Error> {
     ));
 
     // The history can be fetched a little further back than 120_000 ledgers, but that's a nice round number.
+    #[cfg(feature = "local")]
+    let history_depth = 0;
+    #[cfg(not(feature = "local"))]
     let history_depth = 120_000;
+
     let mut ledger = rpc_client.get_latest_ledger().await?.sequence - history_depth;
 
     loop {
