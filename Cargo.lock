@@ -1691,6 +1691,7 @@ dependencies = [
  "dotenvy",
  "env_logger",
  "log",
+ "once_cell",
  "serde",
  "serde_json",
  "soroban-client",
