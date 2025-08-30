@@ -117,8 +117,16 @@ const importContract = (contractName: string) => {
 export const logDeploymentInfo = () => {
   console.log(`  Network: ${process.env.SOROBAN_NETWORK}`);
   console.log(`  Account: ${process.env.SOROBAN_ACCOUNT}`);
-  console.log(`  Loan Manager address: ${readTextFile('./.stellar/contract-ids/loan_manager.txt')}`);
-  console.log(`  XLM Pool address: ${readTextFile('./.stellar/contract-ids/pool_xlm.txt')}`);
-  console.log(`  USDC Pool address: ${readTextFile('./.stellar/contract-ids/pool_usdc.txt')}`);
-  console.log(`  EURC Pool address: ${readTextFile('./.stellar/contract-ids/pool_eurc.txt')}`);
+  console.log(
+    `  Loan Manager address: ${process.env.CONTRACT_ID_LOAN_MANAGER || readTextFile('./.stellar/contract-ids/loan_manager.txt')}`,
+  );
+  console.log(
+    `  XLM Pool address: ${process.env.CONTRACT_ID_POOL_XLM || readTextFile('./.stellar/contract-ids/pool_xlm.txt')}`,
+  );
+  console.log(
+    `  USDC Pool address: ${process.env.CONTRACT_ID_POOL_USDC || readTextFile('./.stellar/contract-ids/pool_usdc.txt')}`,
+  );
+  console.log(
+    `  EURC Pool address: ${process.env.CONTRACT_ID_POOL_EURC || readTextFile('./.stellar/contract-ids/pool_eurc.txt')}`,
+  );
 };
