@@ -7,8 +7,9 @@ use base64::engine::general_purpose::STANDARD as base64_engine;
 use base64::Engine;
 use soroban_client::address::{Address, AddressTrait};
 use soroban_client::xdr::int128_helpers::i128_from_pieces;
-use soroban_client::xdr::{Int128Parts, ScSymbol, ScVal, StringM, VecM};
-use stellar_xdr::curr::{Limits, ReadXdr, SorobanAuthorizationEntry};
+use soroban_client::xdr::{
+    Int128Parts, Limits, ReadXdr, ScSymbol, ScVal, SorobanAuthorizationEntry, StringM, VecM,
+};
 
 pub enum Asset {
     Stellar(Address),

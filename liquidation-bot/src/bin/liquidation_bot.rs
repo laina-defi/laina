@@ -1,10 +1,10 @@
 use core::time::Duration;
 use dotenvy::dotenv;
-use log::{error, info, warn};
+use log::{info, warn};
 use once_cell::sync::OnceCell;
+use soroban_sdk::xdr::StringM;
 use std::collections::HashSet;
 use std::{cell::RefCell, env, rc::Rc, str::FromStr, thread};
-use stellar_xdr::curr::StringM;
 
 use self::models::{Loan, Price};
 use self::schema::loans::dsl::loans;
