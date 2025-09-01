@@ -2,10 +2,9 @@ use core::time::Duration;
 use dotenvy::dotenv;
 use log::{error, info, warn};
 use once_cell::sync::OnceCell;
-use soroban_sdk::xdr::{ScSymbol, StringM};
+use soroban_client::xdr::{ScSymbol, ScVal, StringM};
 use std::collections::HashSet;
 use std::{cell::RefCell, env, rc::Rc, str::FromStr, thread};
-use stellar_xdr::curr::ScVal;
 
 use self::models::{Loan, Price};
 use self::schema::loans::dsl::loans;
@@ -86,6 +85,7 @@ async fn main() -> Result<(), Error> {
         let GetEventsResponse {
             events,
             latest_ledger: new_ledger,
+            ..
         } = fetch_events(ledger, &rpc_client).await?;
         ledger = new_ledger;
 
@@ -202,7 +202,7 @@ async fn fetch_loan_to_db(
     tx.sign(std::slice::from_ref(&config.source_keypair));
 
     // Simulate transaction and handle response
-    let response = server.simulate_transaction(tx, None).await?;
+    let response = server.simulate_transaction(&tx, None).await?;
 
     // TODO: Add test
     match response.to_result() {
@@ -342,7 +342,7 @@ async fn fetch_prices(
         tx.sign(std::slice::from_ref(&config.source_keypair));
 
         // Simulate transaction and handle response
-        let response = server.simulate_transaction(tx, None).await?;
+        let response = server.simulate_transaction(&tx, None).await?;
 
         let results = response.to_result();
 
@@ -511,7 +511,7 @@ async fn attempt_liquidating(
     let mut tx = builder.build();
 
     // Prepare transaction (includes simulation)
-    tx = match server.prepare_transaction(tx).await {
+    tx = match server.prepare_transaction(&tx).await {
         Ok(prepared_tx) => prepared_tx,
         Err(e) => {
             warn!(
