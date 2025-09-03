@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::str::FromStr;
 
-use crate::models::Loan;
+use crate::models::{Loan, LoanId};
 use anyhow::{anyhow, Error, Result};
 use base64::engine::general_purpose::STANDARD as base64_engine;
 use base64::Engine;
@@ -70,12 +70,16 @@ pub fn decode_loan_from_simulate_response(
         map.get("unpaid_interest")
             .ok_or(Error::msg("no key found"))?,
     )? as i64;
+    let nonce_value = match map.get("nonce") {
+        Some(ScVal::U64(n)) => *n as i64,
+        _ => return Err(anyhow::anyhow!("nonce not found or invalid type")),
+    };
 
     let loan = Loan {
-        borrower: borrower_value,
-        borrowed_from: borrowed_from_value,
-        id: 1,
+        borrower_address: borrower_value,
+        nonce: nonce_value,
         borrowed_amount: borrowed_amount_value as i64,
+        borrowed_from: borrowed_from_value,
         collateral_amount: collateral_amount_value,
         collateral_from: collateral_from_value,
         unpaid_interest: unpaid_interest_value,
@@ -183,6 +187,34 @@ pub fn decode_value(value: String) -> Result<Vec<String>, Error> {
     }
 
     Ok(result_parts)
+}
+
+pub fn decode_loan_event(value: String) -> Result<LoanId, Error> {
+    let decoded = base64_engine.decode(value)?;
+    let scval = ScVal::from_xdr(
+        decoded,
+        Limits {
+            depth: 64,
+            len: 10000,
+        },
+    )?;
+
+    let map = extract_map(&scval)?;
+
+    let borrower_address = scval_to_address_string(
+        map.get("borrower_address")
+            .ok_or(Error::msg("borrower_address not found"))?,
+    )?;
+
+    let nonce = match map.get("nonce") {
+        Some(ScVal::U64(n)) => *n as i64,
+        _ => return Err(Error::msg("nonce not found or invalid type")),
+    };
+
+    Ok(LoanId {
+        borrower_address,
+        nonce,
+    })
 }
 
 #[cfg(test)]
@@ -448,6 +480,10 @@ mod tests {
                 lo: 50000000,
             }),
         });
+        entries.push(ScMapEntry {
+            key: ScVal::Symbol(ScSymbol(StringM::from_str("nonce").unwrap())),
+            val: ScVal::U64(0),
+        });
 
         let scmap = ScMap(entries.try_into().unwrap());
         let scval = ScVal::Map(Some(scmap));
@@ -455,7 +491,7 @@ mod tests {
 
         let loan = decode_loan_from_simulate_response(result).unwrap();
         assert_eq!(
-            loan.borrower,
+            loan.borrower_address,
             "CCDF2NOJXOW73SXXB6BZRAPGVNJU7VMUURXCVLRHCHHAXHOY2TVRLFFP"
         );
         assert_eq!(
@@ -469,6 +505,6 @@ mod tests {
             "CDUFMIS6ZH3JM5MPNTWMDLBXPNQYV5FBPBGCFT2WWG4EXKGEPOCBNGCZ"
         );
         assert_eq!(loan.unpaid_interest, 50000000);
-        assert_eq!(loan.id, 1);
+        assert_eq!(loan.nonce, 0);
     }
 }
