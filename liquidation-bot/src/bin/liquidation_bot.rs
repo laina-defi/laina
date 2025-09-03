@@ -465,8 +465,10 @@ async fn attempt_liquidating(
     info!("Attempting to liquidate loan: {:#?}", loan);
 
     // Build operation
-    let method = "liquidate";
-    let loan_owner = &loan.borrower_address;
+    let loan_id = LoanId {
+        borrower_address: loan.borrower_address.clone(),
+        nonce: loan.nonce,
+    };
 
     //TODO: This has to be optimized somehow. Sometimes half of the loan can be too much. Then
     //again sometimes very small liquidations don't help.
@@ -481,16 +483,12 @@ async fn attempt_liquidating(
                 .map_err(|e| anyhow::anyhow!("Account::from_string failed: {}", e))?,
         )
         .map_err(|e| anyhow::anyhow!("Address::to_sc_val failed: {}", e))?,
-        Address::to_sc_val(
-            &Address::from_string(loan_owner)
-                .map_err(|e| anyhow::anyhow!("Account::from_string failed: {}", e))?,
-        )
-        .map_err(|e| anyhow::anyhow!("Address::to_sc_val failed: {}", e))?,
+        ScVal::String(StringM::from_str(&loan_id.to_string()).unwrap().into()),
         amount.into(),
     ];
 
     let read_loan_op = Operation::new()
-        .invoke_contract(&config.loan_manager_id, method, args.clone(), None)
+        .invoke_contract(&config.loan_manager_id, "liquidate", args.clone(), None)
         .expect("Cannot create invoke_contract operation");
 
     //TODO: response now has data like minimal resource fee and if the liquidation would likely be
