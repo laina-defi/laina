@@ -2,19 +2,18 @@ use core::time::Duration;
 use dotenvy::dotenv;
 use log::{error, info, warn};
 use once_cell::sync::OnceCell;
-use soroban_sdk::xdr::{ScSymbol, StringM};
+use soroban_client::xdr::{ScSymbol, ScVal, StringM};
 use std::collections::HashSet;
 use std::{cell::RefCell, env, rc::Rc, str::FromStr, thread};
-use stellar_xdr::curr::ScVal;
 
-use self::models::{Loan, Price};
+use self::models::{Loan, LoanId, Price};
 use self::schema::loans::dsl::loans;
 use self::schema::prices::dsl::prices;
 
 use anyhow::{Error, Result};
 use diesel::prelude::*;
 use liquidation_bot::utils::{
-    asset_to_scval, decode_loan_from_simulate_response, decode_topic, decode_value,
+    asset_to_scval, decode_loan_event, decode_loan_from_simulate_response, decode_topic,
     extract_i128_from_result, Asset,
 };
 use liquidation_bot::*;
@@ -86,6 +85,7 @@ async fn main() -> Result<(), Error> {
         let GetEventsResponse {
             events,
             latest_ledger: new_ledger,
+            ..
         } = fetch_events(ledger, &rpc_client).await?;
         ledger = new_ledger;
 
@@ -137,21 +137,21 @@ async fn find_loans_from_events(
                     .as_slice()
                 {
                     ["loan", "created"] | ["loan", "updated"] => {
-                        match decode_value(event.value.clone()) {
-                            Ok(value) => {
-                                info!("Loan modified");
-                                fetch_loan_to_db(value, db_connection, server, source_account)
+                        match decode_loan_event(event.value.clone()) {
+                            Ok(loan_id) => {
+                                info!("Loan modified: {}", loan_id);
+                                fetch_loan_to_db(loan_id, db_connection, server, source_account)
                                     .await?;
                             }
-                            Err(e) => error!("Failed to decode value: {e}"),
+                            Err(e) => error!("Failed to decode loan event: {e}"),
                         }
                     }
-                    ["loan", "deleted"] => match decode_value(event.value.clone()) {
-                        Ok(value) => {
-                            info!("Loan removed");
-                            delete_loan_from_db(value, db_connection).await?;
+                    ["loan", "deleted"] => match decode_loan_event(event.value.clone()) {
+                        Ok(loan_id) => {
+                            info!("Loan removed: {}", loan_id);
+                            delete_loan_from_db(&loan_id, db_connection).await?;
                         }
-                        Err(e) => error!("Failed to decode value: {e}"),
+                        Err(e) => error!("Failed to decode loan event: {e}"),
                     },
                     _ => {
                         warn!("Not a loan event, skipping.");
@@ -168,17 +168,16 @@ async fn find_loans_from_events(
 }
 
 async fn fetch_loan_to_db(
-    loan: Vec<String>,
+    loan_id: LoanId,
     db_connection: &mut PgConnection,
     server: &Server,
     source_account: &Rc<RefCell<Account>>,
 ) -> Result<(), Error> {
     let config = get_config();
     let method = "get_loan";
-    let loan_owner = &loan[1];
-    info!("Fetching loan {} to database", loan_owner);
+    info!("Fetching loan {} to database", loan_id);
     let args = vec![Address::to_sc_val(
-        &Address::from_string(loan_owner)
+        &Address::from_string(&loan_id.borrower_address)
             .map_err(|e| anyhow::anyhow!("Account::from_string failed: {}", e))?,
     )
     .map_err(|e| anyhow::anyhow!("Address::to_sc_val failed: {}", e))?];
@@ -202,7 +201,7 @@ async fn fetch_loan_to_db(
     tx.sign(&[config.source_keypair.clone()]);
 
     // Simulate transaction and handle response
-    let response = server.simulate_transaction(tx, None).await?;
+    let response = server.simulate_transaction(&tx, None).await?;
 
     // TODO: Add test
     match response.to_result() {
@@ -223,24 +222,35 @@ pub fn save_loan(db_connection: &mut PgConnection, loan: Loan) -> Result<(), Err
     use crate::schema::loans::dsl::*;
 
     let existing = loans
-        .filter(borrower.eq(&loan.borrower))
+        .filter(
+            borrower_address
+                .eq(&loan.borrower_address)
+                .and(nonce.eq(loan.nonce)),
+        )
         .first::<Loan>(db_connection)
         .optional()?;
 
-    if let Some(existing_loan) = existing {
-        diesel::update(loans.filter(id.eq(existing_loan.id)))
-            .set((
-                borrowed_amount.eq(loan.borrowed_amount),
-                borrowed_from.eq(loan.borrowed_from),
-                collateral_amount.eq(loan.collateral_amount),
-                collateral_from.eq(loan.collateral_from),
-                unpaid_interest.eq(loan.unpaid_interest),
-            ))
-            .execute(db_connection)?;
+    if let Some(_existing_loan) = existing {
+        diesel::update(
+            loans.filter(
+                borrower_address
+                    .eq(&loan.borrower_address)
+                    .and(nonce.eq(loan.nonce)),
+            ),
+        )
+        .set((
+            borrowed_amount.eq(loan.borrowed_amount),
+            borrowed_from.eq(loan.borrowed_from),
+            collateral_amount.eq(loan.collateral_amount),
+            collateral_from.eq(loan.collateral_from),
+            unpaid_interest.eq(loan.unpaid_interest),
+        ))
+        .execute(db_connection)?;
     } else {
         diesel::insert_into(loans)
             .values((
-                crate::schema::loans::borrower.eq(&loan.borrower),
+                crate::schema::loans::borrower_address.eq(&loan.borrower_address),
+                crate::schema::loans::nonce.eq(loan.nonce),
                 crate::schema::loans::borrowed_amount.eq(loan.borrowed_amount),
                 crate::schema::loans::borrowed_from.eq(&loan.borrowed_from),
                 crate::schema::loans::collateral_amount.eq(loan.collateral_amount),
@@ -253,20 +263,30 @@ pub fn save_loan(db_connection: &mut PgConnection, loan: Loan) -> Result<(), Err
 }
 
 async fn delete_loan_from_db(
-    value: Vec<String>,
+    loan_id: &LoanId,
     db_connection: &mut PgConnection,
 ) -> Result<(), Error> {
     use crate::schema::loans::dsl::*;
 
-    let loan_owner = &value[1];
-
-    let deleted_rows =
-        diesel::delete(loans.filter(borrower.eq(loan_owner))).execute(db_connection)?;
+    let deleted_rows = diesel::delete(
+        loans.filter(
+            borrower_address
+                .eq(&loan_id.borrower_address)
+                .and(nonce.eq(loan_id.nonce)),
+        ),
+    )
+    .execute(db_connection)?;
 
     if deleted_rows > 0 {
-        info!("Deleted loan for borrower: {}", loan_owner);
+        info!(
+            "Deleted loan for borrower: {} with nonce: {}",
+            loan_id.borrower_address, loan_id.nonce
+        );
     } else {
-        warn!("No loan found to delete for borrower: {}", loan_owner);
+        warn!(
+            "No loan found to delete for borrower: {} with nonce: {}",
+            loan_id.borrower_address, loan_id.nonce
+        );
     }
 
     Ok(())
@@ -342,7 +362,7 @@ async fn fetch_prices(
         tx.sign(&[config.source_keypair.clone()]);
 
         // Simulate transaction and handle response
-        let response = server.simulate_transaction(tx, None).await?;
+        let response = server.simulate_transaction(&tx, None).await?;
 
         let results = response.to_result();
 
@@ -446,7 +466,7 @@ async fn find_liquidateable(
             if let Err(e) = attempt_liquidating(loan.clone(), server, source_account).await {
                 warn!(
                     "Failed to liquidate loan for borrower {}: {}",
-                    loan.borrower, e
+                    loan.borrower_address, e
                 );
                 // Continue processing other loans instead of crashing the bot
             }
@@ -466,8 +486,10 @@ async fn attempt_liquidating(
     info!("Attempting to liquidate loan: {:#?}", loan);
 
     // Build operation
-    let method = "liquidate";
-    let loan_owner = &loan.borrower;
+    let loan_id = LoanId {
+        borrower_address: loan.borrower_address.clone(),
+        nonce: loan.nonce,
+    };
 
     //TODO: This has to be optimized somehow. Sometimes half of the loan can be too much. Then
     //again sometimes very small liquidations don't help.
@@ -482,16 +504,12 @@ async fn attempt_liquidating(
                 .map_err(|e| anyhow::anyhow!("Account::from_string failed: {}", e))?,
         )
         .map_err(|e| anyhow::anyhow!("Address::to_sc_val failed: {}", e))?,
-        Address::to_sc_val(
-            &Address::from_string(loan_owner)
-                .map_err(|e| anyhow::anyhow!("Account::from_string failed: {}", e))?,
-        )
-        .map_err(|e| anyhow::anyhow!("Address::to_sc_val failed: {}", e))?,
+        ScVal::String(StringM::from_str(&loan_id.to_string()).unwrap().into()),
         amount.into(),
     ];
 
     let read_loan_op = Operation::new()
-        .invoke_contract(&config.loan_manager_id, method, args.clone(), None)
+        .invoke_contract(&config.loan_manager_id, "liquidate", args.clone(), None)
         .expect("Cannot create invoke_contract operation");
 
     //TODO: response now has data like minimal resource fee and if the liquidation would likely be
@@ -511,12 +529,12 @@ async fn attempt_liquidating(
     let mut tx = builder.build();
 
     // Prepare transaction (includes simulation)
-    tx = match server.prepare_transaction(tx).await {
+    tx = match server.prepare_transaction(&tx).await {
         Ok(prepared_tx) => prepared_tx,
         Err(e) => {
             warn!(
                 "Transaction simulation failed for loan {}: {}",
-                loan.borrower, e
+                loan.borrower_address, e
             );
             return Err(anyhow::anyhow!("Simulation failed: {}", e));
         }
@@ -530,7 +548,7 @@ async fn attempt_liquidating(
         Err(e) => {
             warn!(
                 "Transaction sending failed for loan {}: {}",
-                loan.borrower, e
+                loan.borrower_address, e
             );
             return Err(anyhow::anyhow!("Transaction sending failed: {}", e));
         }
@@ -546,10 +564,14 @@ async fn attempt_liquidating(
     // let max_to_liquidate
     //
     let hash = response.hash.clone();
+    let loan_id = LoanId {
+        borrower_address: loan.borrower_address.clone(),
+        nonce: loan.nonce,
+    };
     if wait_success(server, hash, response).await {
-        info!("Loan {} liquidated!", loan.borrower);
+        info!("Loan {} liquidated!", loan_id);
     } else {
-        warn!("Failed to liquidate loan for {}", loan.borrower);
+        warn!("Failed to liquidate loan for {}", loan_id);
     }
     Ok(())
 }
@@ -628,7 +650,7 @@ async fn load_config() -> Result<BotConfig, Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema::loans::dsl::{borrower as borrower_col, loans};
+    use crate::schema::loans::dsl::{borrower_address as borrower_col, loans};
     use crate::schema::prices::dsl::prices;
     use crate::schema::prices::{
         pool_address as pool_address_col, time_weighted_average_price as price_col,
@@ -645,8 +667,8 @@ mod tests {
 
     fn create_test_loan(borrower: &str) -> Loan {
         Loan {
-            id: 0,
-            borrower: borrower.to_string(),
+            borrower_address: borrower.to_string(),
+            nonce: 0,
             borrowed_amount: 1000000000, // 1000 tokens with 7 decimals
             borrowed_from: "CCDF2NOJXOW73SXXB6BZRAPGVNJU7VMUURXCVLRHCHHAXHOY2TVRLFFP".to_string(),
             collateral_amount: 2000000000, // 2000 tokens with 7 decimals
@@ -691,8 +713,8 @@ mod tests {
         clean_test_data(&mut conn, "TEST_BORROWER");
 
         let test_loan = Loan {
-            id: 0,
-            borrower: "TEST_BORROWER".into(),
+            borrower_address: "TEST_BORROWER".into(),
+            nonce: 0,
             borrowed_amount: 100,
             borrowed_from: "SourceA".into(),
             collateral_amount: 50,
@@ -738,7 +760,7 @@ mod tests {
             .first::<Loan>(&mut conn)
             .unwrap();
 
-        assert_eq!(saved.borrower, test_borrower);
+        assert_eq!(saved.borrower_address, test_borrower);
         assert_eq!(saved.borrowed_amount, test_loan.borrowed_amount);
         assert_eq!(saved.collateral_amount, test_loan.collateral_amount);
 
@@ -776,8 +798,11 @@ mod tests {
         assert_eq!(count_before, 1);
 
         // Delete loan
-        let value = vec!["loan".to_string(), test_borrower.to_string()];
-        delete_loan_from_db(value, &mut conn).await.unwrap();
+        let loan_id = LoanId {
+            borrower_address: test_borrower.to_string(),
+            nonce: 0,
+        };
+        delete_loan_from_db(&loan_id, &mut conn).await.unwrap();
 
         // Verify loan is deleted
         let count_after = loans
@@ -1017,8 +1042,11 @@ mod tests {
         clean_test_data(&mut conn, test_borrower);
 
         // Try to delete non-existent loan
-        let value = vec!["loan".to_string(), test_borrower.to_string()];
-        let result = delete_loan_from_db(value, &mut conn).await;
+        let loan_id = LoanId {
+            borrower_address: test_borrower.to_string(),
+            nonce: 1,
+        };
+        let result = delete_loan_from_db(&loan_id, &mut conn).await;
 
         // Should succeed (no error) even if loan doesn't exist
         assert!(result.is_ok());
@@ -1074,8 +1102,8 @@ mod tests {
 
         // Test with zero amounts
         let zero_loan = Loan {
-            id: 0,
-            borrower: test_borrower.to_string(),
+            borrower_address: test_borrower.to_string(),
+            nonce: 0,
             borrowed_amount: 0,
             borrowed_from: "POOL1".to_string(),
             collateral_amount: 0,
@@ -1088,8 +1116,8 @@ mod tests {
 
         // Test with large values (but not MAX to avoid potential DB constraints)
         let large_loan = Loan {
-            id: 0,
-            borrower: format!("{}_LARGE", test_borrower),
+            borrower_address: format!("{}_LARGE", test_borrower),
+            nonce: 0,
             borrowed_amount: 1_000_000_000_000_000, // 1 quadrillion
             borrowed_from: "POOL1".to_string(),
             collateral_amount: 2_000_000_000_000_000, // 2 quadrillion
