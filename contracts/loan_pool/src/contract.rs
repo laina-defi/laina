@@ -70,7 +70,7 @@ impl LoanPoolContract {
             let token_address = storage::read_currency(&e)?.token_address;
 
             let client = token::Client::new(&e, &token_address);
-            client.transfer(&user, &e.current_contract_address(), &amount);
+            client.transfer(&user, e.current_contract_address(), &amount);
 
             let current_shares = Self::get_total_balance_shares(e.clone())?;
             let current_contract_balance = Self::get_contract_balance(e.clone())?;
@@ -261,7 +261,7 @@ impl LoanPoolContract {
 
         let token_address = &storage::read_currency(&e)?.token_address;
         let client = token::Client::new(&e, token_address);
-        client.transfer(&user, &e.current_contract_address(), &amount);
+        client.transfer(&user, e.current_contract_address(), &amount);
 
         let liabilities: i128 = 0;
         let receivables: i128 = 0;
@@ -411,7 +411,7 @@ impl LoanPoolContract {
             .ok_or(LoanPoolError::OverOrUnderFlow)?;
 
         let client = token::Client::new(&e, &storage::read_currency(&e)?.token_address);
-        client.transfer(&user, &e.current_contract_address(), &amount_to_storage);
+        client.transfer(&user, e.current_contract_address(), &amount_to_storage);
         client.transfer(&user, &loan_manager_addr, &amount_to_admin);
 
         // Get current user liabilities to ensure we don't decrease by more than they have
@@ -463,7 +463,7 @@ impl LoanPoolContract {
             .ok_or(LoanPoolError::OverOrUnderFlow)?;
 
         let client = token::Client::new(&e, &storage::read_currency(&e)?.token_address);
-        client.transfer(&user, &e.current_contract_address(), &max_allowed_amount);
+        client.transfer(&user, e.current_contract_address(), &max_allowed_amount);
         client.transfer(
             &e.current_contract_address(),
             &loan_manager_addr,
@@ -506,7 +506,7 @@ impl LoanPoolContract {
             .ok_or(LoanPoolError::OverOrUnderFlow)?;
 
         let client = token::Client::new(&e, &storage::read_currency(&e)?.token_address);
-        client.transfer(&user, &e.current_contract_address(), &amount_to_storage);
+        client.transfer(&user, e.current_contract_address(), &amount_to_storage);
         client.transfer(&user, &loan_manager_addr, &amount_to_admin);
 
         positions::decrease_positions(&e, loan_owner, 0, amount, 0)?;
