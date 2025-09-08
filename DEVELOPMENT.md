@@ -7,6 +7,7 @@ This document describes how to develop the application on your local computer.
 Tools you will need:
 
 - [Rust & Cargo](https://www.rust-lang.org/learn/get-started)
+- [Stellar CLI](https://developers.stellar.org/docs/tools/cli/install-cli)
 - [Node.js - check version from .nvmrc](https://nodejs.org/en)
 - [Docker & docker-compose](https://docs.docker.com/compose/install/)
 - [Diesel CLI](https://diesel.rs/guides/getting-started#installing-diesel-cli)
