@@ -1304,7 +1304,7 @@ mod tests {
         pool_eurc_client: loan_pool::Client<'a>,
     }
 
-    fn setup_test_env(e: &Env) -> TestEnv {
+    fn setup_test_env(e: &Env) -> TestEnv<'_> {
         let admin = Address::generate(e);
         let admin2 = Address::generate(e);
         let admin3 = Address::generate(e);

@@ -199,7 +199,7 @@ async fn fetch_loan_to_db(
     builder.add_operation(read_loan_op);
 
     let mut tx = builder.build();
-    tx.sign(&[config.source_keypair.clone()]);
+    tx.sign(std::slice::from_ref(&config.source_keypair));
 
     // Simulate transaction and handle response
     let response = server.simulate_transaction(tx, None).await?;
@@ -339,7 +339,7 @@ async fn fetch_prices(
         builder.add_operation(fetch_prices_op);
 
         let mut tx = builder.build();
-        tx.sign(&[config.source_keypair.clone()]);
+        tx.sign(std::slice::from_ref(&config.source_keypair));
 
         // Simulate transaction and handle response
         let response = server.simulate_transaction(tx, None).await?;
@@ -522,7 +522,7 @@ async fn attempt_liquidating(
         }
     };
 
-    tx.sign(&[config.source_keypair.clone()]);
+    tx.sign(std::slice::from_ref(&config.source_keypair));
 
     // Send transaction
     let response = match server.send_transaction(tx).await {

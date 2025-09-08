@@ -1,4 +1,4 @@
-use soroban_sdk::{contracttype, symbol_short, vec, Address, Env, Vec};
+use soroban_sdk::{contractevent, contracttype, symbol_short, vec, Address, Env, Vec};
 
 use crate::error::LoanManagerError;
 
@@ -46,6 +46,39 @@ pub struct Loan {
     pub last_accrual: i128,
 }
 
+/* Contract events */
+#[contractevent(topics = ["AdminAdded"])]
+pub struct EventAdminAdded {
+    pub admin: Address,
+}
+
+#[contractevent(topics = ["OracleAdded"])]
+pub struct EventOracleAdded {
+    pub oracle: Address,
+}
+
+#[contractevent(topics = ["PoolAddressAdded"])]
+pub struct EventPoolAddressAdded {
+    pub pool_address: Address,
+}
+
+#[contractevent(topics = ["LoanCreated"])]
+pub struct EventLoanCreated {
+    pub loan_id: LoanId,
+    pub loan: Loan,
+}
+
+#[contractevent(topics = ["LoanUpdated"])]
+pub struct EventLoanUpdated {
+    pub loan_id: LoanId,
+    pub loan: Loan,
+}
+
+#[contractevent(topics = ["LoanDeleted"])]
+pub struct EventLoanDeleted {
+    pub loan_id: LoanId,
+}
+
 /* Ledger Thresholds */
 pub(crate) const DAY_IN_LEDGERS: u32 = 17280; // if ledger takes 5 seconds
 
@@ -56,8 +89,10 @@ pub fn write_admin(e: &Env, admin: &Address) {
     e.storage()
         .persistent()
         .set(&LoanManagerDataKey::Admin, &admin);
-    e.events()
-        .publish((LoanManagerDataKey::Admin, symbol_short!("added")), admin);
+    EventAdminAdded {
+        admin: admin.clone(),
+    }
+    .publish(e);
 }
 
 pub fn admin_exists(e: &Env) -> bool {
@@ -75,8 +110,10 @@ pub fn write_oracle(e: &Env, oracle: &Address) {
     e.storage()
         .persistent()
         .set(&LoanManagerDataKey::Oracle, &oracle);
-    e.events()
-        .publish((LoanManagerDataKey::Oracle, symbol_short!("added")), oracle);
+    EventOracleAdded {
+        oracle: oracle.clone(),
+    }
+    .publish(e);
 }
 
 pub fn read_oracle(e: &Env) -> Result<Address, LoanManagerError> {
@@ -92,10 +129,10 @@ pub fn append_pool_address(e: &Env, pool_address: Address) {
     e.storage()
         .persistent()
         .set(&LoanManagerDataKey::PoolAddresses, &pool_addresses);
-    e.events().publish(
-        (LoanManagerDataKey::PoolAddresses, symbol_short!("added")),
-        &pool_address,
-    );
+    EventPoolAddressAdded {
+        pool_address: pool_address.clone(),
+    }
+    .publish(e);
 }
 
 pub fn read_pool_addresses(e: &Env) -> Vec<Address> {
@@ -114,7 +151,7 @@ pub fn create_loan(e: &Env, user: Address, new_loan: NewLoan) -> Loan {
 
     let key = LoanManagerDataKey::Loan(loan_id.clone());
     let loan = Loan {
-        loan_id,
+        loan_id: loan_id.clone(),
         borrowed_amount: new_loan.borrowed_amount,
         borrowed_from: new_loan.borrowed_from,
         collateral_amount: new_loan.collateral_amount,
@@ -130,8 +167,11 @@ pub fn create_loan(e: &Env, user: Address, new_loan: NewLoan) -> Loan {
 
     add_user_loan_id(e, &user, nonce);
 
-    e.events()
-        .publish((symbol_short!("Loan"), symbol_short!("created")), key);
+    EventLoanCreated {
+        loan_id,
+        loan: loan.clone(),
+    }
+    .publish(e);
 
     loan
 }
@@ -142,8 +182,11 @@ pub fn write_loan(e: &Env, loan_id: &LoanId, loan: &Loan) {
     e.storage()
         .persistent()
         .extend_ttl(&key, POSITIONS_LIFETIME_THRESHOLD, POSITIONS_BUMP_AMOUNT);
-    e.events()
-        .publish((symbol_short!("Loan"), symbol_short!("updated")), key);
+    EventLoanUpdated {
+        loan_id: loan_id.clone(),
+        loan: loan.clone(),
+    }
+    .publish(e);
 }
 
 pub fn read_loan(e: &Env, loan_id: &LoanId) -> Option<Loan> {
@@ -172,8 +215,10 @@ pub fn delete_loan(e: &Env, loan_id: &LoanId) {
     let key = LoanManagerDataKey::Loan(loan_id.clone());
     e.storage().persistent().remove(&key);
     remove_user_loan_id(e, &loan_id.borrower_address, loan_id.nonce);
-    e.events()
-        .publish((symbol_short!("Loan"), symbol_short!("deleted")), key);
+    EventLoanDeleted {
+        loan_id: loan_id.clone(),
+    }
+    .publish(e);
 }
 
 // Increment and return the next loan nonce for a user

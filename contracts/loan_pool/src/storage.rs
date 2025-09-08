@@ -1,4 +1,4 @@
-use soroban_sdk::{contracttype, symbol_short, Address, Env, Symbol};
+use soroban_sdk::{contractevent, contracttype, Address, Env, Symbol};
 
 use crate::error::LoanPoolError;
 
@@ -63,6 +63,63 @@ enum PoolDataKey {
     PoolStatus,
 }
 
+/* Contract events */
+#[contractevent(topics = ["PoolStatusUpdated"])]
+pub struct EventPoolStatusUpdated {
+    pub pool_status: PoolStatus,
+}
+
+#[contractevent(topics = ["LoanManagerAddressAdded"])]
+pub struct EventLoanManagerAddressAdded {
+    pub loan_manager_addr: Address,
+}
+
+#[contractevent(topics = ["CurrencyAdded"])]
+pub struct EventCurrencyAdded {
+    pub currency: Currency,
+}
+
+#[contractevent(topics = ["LiquidationThresholdChanged"])]
+pub struct EventLiquidationThresholdChanged {
+    pub threshold: i128,
+}
+
+#[contractevent(topics = ["TotalSharesUpdated"])]
+pub struct EventTotalSharesUpdated {
+    pub amount: i128,
+}
+
+#[contractevent(topics = ["TotalBalanceChanged"])]
+pub struct EventTotalBalanceChanged {
+    pub amount: i128,
+}
+
+#[contractevent(topics = ["AvailableBalanceChanged"])]
+pub struct EventAvailableBalanceChanged {
+    pub amount: i128,
+}
+
+#[contractevent(topics = ["AccrualChanged"])]
+pub struct EventAccrualChanged {
+    pub accrual: i128,
+}
+
+#[contractevent(topics = ["AccrualLastUpdated"])]
+pub struct EventAccrualLastUpdated {
+    pub timestamp: u64,
+}
+
+#[contractevent(topics = ["InterestRateMultiplierChanged"])]
+pub struct EventInterestMultiplierChanged {
+    pub multiplier: i128,
+}
+
+#[contractevent(topics = ["PositionsUpdated"])]
+pub struct EventPositionsUpdated {
+    pub addr: Address,
+    pub positions: Positions,
+}
+
 /* Ledger Thresholds */
 
 pub(crate) const DAY_IN_LEDGERS: u32 = 17280; // if ledger takes 5 seconds
@@ -81,8 +138,7 @@ pub fn change_pool_status(e: &Env, pool_status: PoolStatus) {
     let key = PoolDataKey::PoolStatus;
     e.storage().persistent().set(&key, &pool_status);
     extend_persistent(e, &key);
-    e.events()
-        .publish((key, symbol_short!("updated")), pool_status);
+    EventPoolStatusUpdated { pool_status }.publish(e);
 }
 
 pub fn read_pool_status(e: &Env) -> Result<PoolStatus, LoanPoolError> {
@@ -96,8 +152,10 @@ pub fn write_loan_manager_addr(e: &Env, loan_manager_addr: Address) {
     let key = PoolDataKey::LoanManagerAddress;
     e.storage().persistent().set(&key, &loan_manager_addr);
     extend_persistent(e, &key);
-    e.events()
-        .publish((key, symbol_short!("added")), loan_manager_addr);
+    EventLoanManagerAddressAdded {
+        loan_manager_addr: loan_manager_addr.clone(),
+    }
+    .publish(e);
 }
 
 pub fn read_loan_manager_addr(e: &Env) -> Result<Address, LoanPoolError> {
@@ -111,7 +169,7 @@ pub fn write_currency(e: &Env, currency: Currency) {
     let key = PoolDataKey::Currency;
     e.storage().persistent().set(&key, &currency);
     extend_persistent(e, &key);
-    e.events().publish((key, symbol_short!("added")), currency);
+    EventCurrencyAdded { currency }.publish(e);
 }
 
 pub fn read_currency(e: &Env) -> Result<Currency, LoanPoolError> {
@@ -125,14 +183,14 @@ pub fn write_liquidation_threshold(e: &Env, threshold: i128) {
     let key = PoolDataKey::LiquidationThreshold;
     e.storage().persistent().set(&key, &threshold);
     extend_persistent(e, &key);
-    e.events().publish((key, symbol_short!("added")), threshold);
+    EventLiquidationThresholdChanged { threshold }.publish(e);
 }
 
 pub fn write_total_shares(e: &Env, amount: i128) {
     let key = PoolDataKey::TotalBalanceShares;
     e.storage().persistent().set(&key, &amount);
     extend_persistent(e, &key);
-    e.events().publish((key, symbol_short!("updated")), amount);
+    EventTotalSharesUpdated { amount }.publish(e);
 }
 
 pub fn read_total_shares(e: &Env) -> Result<i128, LoanPoolError> {
@@ -156,7 +214,7 @@ pub fn write_total_balance(e: &Env, amount: i128) {
     let key: PoolDataKey = PoolDataKey::TotalBalanceTokens;
     e.storage().persistent().set(&key, &amount);
     extend_persistent(e, &key);
-    e.events().publish((key, symbol_short!("added")), amount);
+    EventTotalBalanceChanged { amount }.publish(e);
 }
 
 pub fn read_total_balance(e: &Env) -> Result<i128, LoanPoolError> {
@@ -180,7 +238,7 @@ pub fn write_available_balance(e: &Env, amount: i128) {
     let key: PoolDataKey = PoolDataKey::AvailableBalanceTokens;
     e.storage().persistent().set(&key, &amount);
     extend_persistent(e, &key);
-    e.events().publish((key, "added"), amount);
+    EventAvailableBalanceChanged { amount }.publish(e);
 }
 
 pub fn read_available_balance(e: &Env) -> Result<i128, LoanPoolError> {
@@ -204,7 +262,7 @@ pub fn write_accrual(e: &Env, accrual: i128) {
     let key = PoolDataKey::Accrual;
     e.storage().persistent().set(&key, &accrual);
     extend_persistent(e, &key);
-    e.events().publish((key, "updated"), accrual);
+    EventAccrualChanged { accrual }.publish(e);
 }
 
 pub fn read_accrual(e: &Env) -> Result<i128, LoanPoolError> {
@@ -219,7 +277,10 @@ pub fn write_accrual_last_updated(e: &Env, sequence: u64) -> u64 {
 
     e.storage().persistent().set(&key, &sequence);
     extend_persistent(e, &key);
-    e.events().publish((key, "updated"), e.ledger().timestamp());
+    EventAccrualLastUpdated {
+        timestamp: e.ledger().timestamp(),
+    }
+    .publish(e);
 
     sequence
 }
@@ -234,8 +295,7 @@ pub fn read_accrual_last_updated(e: &Env) -> Result<u64, LoanPoolError> {
 pub fn change_interest_rate_multiplier(e: &Env, multiplier: i128) {
     let key = PoolDataKey::InterestRateMultiplier;
     e.storage().persistent().set(&key, &multiplier);
-    e.events()
-        .publish((key, symbol_short!("updated")), multiplier)
+    EventInterestMultiplierChanged { multiplier }.publish(e)
 }
 
 pub fn read_interest_rate_multiplier(e: &Env) -> Result<i128, LoanPoolError> {
@@ -283,6 +343,5 @@ pub fn write_positions(
     e.storage().persistent().set(&key, &positions);
     extend_persistent(e, &key);
 
-    e.events()
-        .publish((symbol_short!("positions"), symbol_short!("updated")), addr)
+    EventPositionsUpdated { addr, positions }.publish(e)
 }
