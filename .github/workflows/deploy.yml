@@ -16,6 +16,11 @@ jobs:
       - name: Checkout your repository using git
         uses: actions/checkout@v4
 
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: rust-1.89
+
       - name: Setup Rust and Stellar
         uses: ./.github/actions/setup-rust-stellar
 
