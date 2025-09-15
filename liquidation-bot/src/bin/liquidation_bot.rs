@@ -2,11 +2,9 @@ use core::time::Duration;
 use dotenvy::dotenv;
 use log::{error, info, warn};
 use once_cell::sync::OnceCell;
-use soroban_client::soroban_rpc::{EventResponse, EventType, GetEventsResponse};
-use soroban_client::{EventFilter, Pagination};
 use std::collections::HashSet;
 use std::{cell::RefCell, env, rc::Rc, str::FromStr, thread};
-use stellar_xdr::curr::{ScSymbol, ScVal, StringM};
+use stellar_xdr::curr::StringM;
 
 use self::models::{Loan, Price};
 use self::schema::loans::dsl::loans;
@@ -15,8 +13,7 @@ use self::schema::prices::dsl::prices;
 use anyhow::{Error, Result};
 use diesel::prelude::*;
 use liquidation_bot::utils::{
-    asset_to_scval, decode_loan_from_simulate_response, decode_topic, decode_value,
-    extract_i128_from_result, Asset,
+    asset_to_scval, decode_loan_from_simulate_response, extract_i128_from_result, Asset,
 };
 use liquidation_bot::*;
 use soroban_client::{
@@ -25,11 +22,14 @@ use soroban_client::{
     keypair::{Keypair, KeypairBehavior},
     network::{NetworkPassphrase, Networks},
     operation::Operation,
-    soroban_rpc::{SendTransactionResponse, SendTransactionStatus, TransactionStatus},
-    transaction::{TransactionBehavior, TransactionBuilder, TransactionBuilderBehavior},
-    Options, Server,
+    soroban_rpc::{
+        EventResponse, EventType, GetEventsResponse, SendTransactionResponse,
+        SendTransactionStatus, TransactionStatus,
+    },
+    transaction::{ScVal, TransactionBehavior, TransactionBuilder, TransactionBuilderBehavior},
+    xdr::ScSymbol,
+    EventFilter, Options, Pagination, Server, Topic,
 };
-use stellar_rpc_client::{self, Event};
 
 const SLEEP_TIME_SECONDS: u64 = 10;
 
@@ -79,7 +79,7 @@ async fn main() -> Result<(), Error> {
     #[cfg(feature = "local")]
     let history_depth = 0;
     #[cfg(not(feature = "local"))]
-    let history_depth = 120_000;
+    let history_depth = 10_000;
 
     let mut ledger = rpc_client.get_latest_ledger().await?.sequence - history_depth;
 
@@ -105,13 +105,31 @@ async fn main() -> Result<(), Error> {
 async fn fetch_events(ledger: u32, server: &Server) -> Result<GetEventsResponse, Error> {
     info!("Fetching new loans from Loan Manager.");
 
-    let event_filter = EventFilter::new(EventType::Contract);
+    let symbol_loan_created: StringM<32> = "LoanCreated".try_into().unwrap();
+    let topic_loan_created = Topic::Val(ScVal::Symbol(ScSymbol(symbol_loan_created)));
+
+    let symbol_loan_updated: StringM<32> = "LoanUpdated".try_into().unwrap();
+    let topic_loan_updated = Topic::Val(ScVal::Symbol(ScSymbol(symbol_loan_updated)));
+
+    let symbol_loan_deleted: StringM<32> = "LoanDeleted".try_into().unwrap();
+    let topic_loan_deleted = Topic::Val(ScVal::Symbol(ScSymbol(symbol_loan_deleted)));
+
+    let BotConfig {
+        loan_manager_id, ..
+    } = get_config();
+    let event_filter = EventFilter::new(EventType::Contract)
+        .topic(vec![topic_loan_created])
+        .topic(vec![topic_loan_deleted])
+        .topic(vec![topic_loan_updated])
+        .contract(&loan_manager_id);
     let limit = Some(100);
-    //TODO: This could be changed to use the soroban_client for simplicity.
+
     let events_response = server
         .get_events(Pagination::From(ledger), vec![event_filter], limit)
         .await?;
     info!("{:#?}", events_response);
+    info!("{}", loan_manager_id);
+    info!("{}", ledger);
     Ok(events_response)
 }
 
