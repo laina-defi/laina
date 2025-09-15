@@ -2,10 +2,9 @@ use core::time::Duration;
 use dotenvy::dotenv;
 use log::{error, info, warn};
 use once_cell::sync::OnceCell;
-use soroban_sdk::xdr::{ScSymbol, StringM};
 use std::collections::HashSet;
 use std::{cell::RefCell, env, rc::Rc, str::FromStr, thread};
-use stellar_xdr::curr::ScVal;
+use stellar_xdr::curr::StringM;
 
 use self::models::{Loan, Price};
 use self::schema::loans::dsl::loans;
@@ -14,8 +13,7 @@ use self::schema::prices::dsl::prices;
 use anyhow::{Error, Result};
 use diesel::prelude::*;
 use liquidation_bot::utils::{
-    asset_to_scval, decode_loan_from_simulate_response, decode_topic, decode_value,
-    extract_i128_from_result, Asset,
+    asset_to_scval, decode_loan_from_simulate_response, extract_i128_from_result, Asset,
 };
 use liquidation_bot::*;
 use soroban_client::{
@@ -24,11 +22,14 @@ use soroban_client::{
     keypair::{Keypair, KeypairBehavior},
     network::{NetworkPassphrase, Networks},
     operation::Operation,
-    soroban_rpc::{SendTransactionResponse, SendTransactionStatus, TransactionStatus},
-    transaction::{TransactionBehavior, TransactionBuilder, TransactionBuilderBehavior},
-    Options, Server,
+    soroban_rpc::{
+        EventResponse, EventType, GetEventsResponse, SendTransactionResponse,
+        SendTransactionStatus, TransactionStatus,
+    },
+    transaction::{ScVal, TransactionBehavior, TransactionBuilder, TransactionBuilderBehavior},
+    xdr::ScSymbol,
+    EventFilter, Options, Pagination, Server, Topic,
 };
-use stellar_rpc_client::{self, Event, EventStart, EventType, GetEventsResponse};
 
 const SLEEP_TIME_SECONDS: u64 = 10;
 
@@ -78,7 +79,7 @@ async fn main() -> Result<(), Error> {
     #[cfg(feature = "local")]
     let history_depth = 0;
     #[cfg(not(feature = "local"))]
-    let history_depth = 120_000;
+    let history_depth = 10_000;
 
     let mut ledger = rpc_client.get_latest_ledger().await?.sequence - history_depth;
 
@@ -86,8 +87,9 @@ async fn main() -> Result<(), Error> {
         let GetEventsResponse {
             events,
             latest_ledger: new_ledger,
-        } = fetch_events(ledger, &rpc_client).await?;
-        ledger = new_ledger;
+            ..
+        } = fetch_events(ledger, &server).await?;
+        ledger = new_ledger as u32;
 
         find_loans_from_events(events, db_connection, &server, &source_account).await?;
 
@@ -100,69 +102,46 @@ async fn main() -> Result<(), Error> {
     }
 }
 
-async fn fetch_events(
-    ledger: u32,
-    rpc_client: &stellar_rpc_client::Client,
-) -> Result<GetEventsResponse, Error> {
+async fn fetch_events(ledger: u32, server: &Server) -> Result<GetEventsResponse, Error> {
     info!("Fetching new loans from Loan Manager.");
 
-    let config = get_config();
-    let start = EventStart::Ledger(ledger);
-    let event_type = Some(EventType::Contract);
-    let contract_ids = vec![config.loan_manager_id.clone()];
-    let topics_slice = &[];
+    let symbol_loan_created: StringM<32> = "LoanCreated".try_into().unwrap();
+    let topic_loan_created = Topic::Val(ScVal::Symbol(ScSymbol(symbol_loan_created)));
+
+    let symbol_loan_updated: StringM<32> = "LoanUpdated".try_into().unwrap();
+    let topic_loan_updated = Topic::Val(ScVal::Symbol(ScSymbol(symbol_loan_updated)));
+
+    let symbol_loan_deleted: StringM<32> = "LoanDeleted".try_into().unwrap();
+    let topic_loan_deleted = Topic::Val(ScVal::Symbol(ScSymbol(symbol_loan_deleted)));
+
+    let BotConfig {
+        loan_manager_id, ..
+    } = get_config();
+    let event_filter = EventFilter::new(EventType::Contract)
+        .topic(vec![topic_loan_created])
+        .topic(vec![topic_loan_deleted])
+        .topic(vec![topic_loan_updated])
+        .contract(&loan_manager_id);
     let limit = Some(100);
-    //TODO: This could be changed to use the soroban_client for simplicity.
-    let events_response = rpc_client
-        .get_events(start, event_type, &contract_ids, topics_slice, limit)
+
+    let events_response = server
+        .get_events(Pagination::From(ledger), vec![event_filter], limit)
         .await?;
+    info!("{:#?}", events_response);
+    info!("{}", loan_manager_id);
+    info!("{}", ledger);
     Ok(events_response)
 }
 
 async fn find_loans_from_events(
-    events: Vec<Event>,
+    events: Vec<EventResponse>,
     db_connection: &mut PgConnection,
     server: &Server,
     source_account: &Rc<RefCell<Account>>,
 ) -> Result<(), Error> {
     for event in events {
-        match decode_topic(event.topic.clone()) {
-            Ok(topics) => {
-                let topics_lower: Vec<String> = topics.iter().map(|t| t.to_lowercase()).collect();
-
-                match topics_lower
-                    .iter()
-                    .map(String::as_str)
-                    .collect::<Vec<_>>()
-                    .as_slice()
-                {
-                    ["loan", "created"] | ["loan", "updated"] => {
-                        match decode_value(event.value.clone()) {
-                            Ok(value) => {
-                                info!("Loan modified");
-                                fetch_loan_to_db(value, db_connection, server, source_account)
-                                    .await?;
-                            }
-                            Err(e) => error!("Failed to decode value: {e}"),
-                        }
-                    }
-                    ["loan", "deleted"] => match decode_value(event.value.clone()) {
-                        Ok(value) => {
-                            info!("Loan removed");
-                            delete_loan_from_db(value, db_connection).await?;
-                        }
-                        Err(e) => error!("Failed to decode value: {e}"),
-                    },
-                    _ => {
-                        warn!("Not a loan event, skipping.");
-                    }
-                }
-            }
-            Err(e) => {
-                eprintln!("Failed to decode topic: {e}");
-                continue;
-            }
-        }
+        info!("topic: {:#?}", event.topic());
+        info!("value: {:#?}", event.value());
     }
     Ok(())
 }
@@ -202,7 +181,7 @@ async fn fetch_loan_to_db(
     tx.sign(std::slice::from_ref(&config.source_keypair));
 
     // Simulate transaction and handle response
-    let response = server.simulate_transaction(tx, None).await?;
+    let response = server.simulate_transaction(&tx, None).await?;
 
     // TODO: Add test
     match response.to_result() {
@@ -342,7 +321,7 @@ async fn fetch_prices(
         tx.sign(std::slice::from_ref(&config.source_keypair));
 
         // Simulate transaction and handle response
-        let response = server.simulate_transaction(tx, None).await?;
+        let response = server.simulate_transaction(&tx, None).await?;
 
         let results = response.to_result();
 
@@ -511,7 +490,7 @@ async fn attempt_liquidating(
     let mut tx = builder.build();
 
     // Prepare transaction (includes simulation)
-    tx = match server.prepare_transaction(tx).await {
+    tx = match server.prepare_transaction(&tx).await {
         Ok(prepared_tx) => prepared_tx,
         Err(e) => {
             warn!(
