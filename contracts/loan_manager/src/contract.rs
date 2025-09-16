@@ -122,6 +122,8 @@ impl LoanManager {
         let collateral_pool_client = loan_pool::Client::new(&e, &collateral_from);
         let borrow_pool_client = loan_pool::Client::new(&e, &borrowed_from);
 
+        let collateral_shares_amount = collateral_pool_client.get_shares_from_tokens(&collateral);
+
         let token_currency = borrow_pool_client.get_currency();
         let collateral_currency = collateral_pool_client.get_currency();
         let health_factor: i128 = Self::calculate_health_factor(
@@ -153,7 +155,7 @@ impl LoanManager {
             borrower_address: user.clone(),
             borrowed_amount,
             borrowed_from,
-            collateral_amount,
+            collateral_amount: collateral_shares_amount,
             collateral_from,
             health_factor,
             unpaid_interest,
@@ -199,12 +201,14 @@ impl LoanManager {
             .checked_div(DECIMAL)
             .ok_or(LoanManagerError::OverOrUnderFlow)?;
 
+        let collateral_amount_tokens =
+            collateral_pool_client.get_tokens_from_shares(&collateral_amount);
         let new_health_factor = Self::calculate_health_factor(
             e,
             token_ticker,
             new_borrowed_amount,
             token_collateral_ticker,
-            collateral_amount,
+            collateral_amount_tokens,
             collateral_from.clone(),
         )?;
 
@@ -345,12 +349,14 @@ impl LoanManager {
             .checked_sub(amount)
             .ok_or(LoanManagerError::OverOrUnderFlow)?;
 
+        let collateral_amount_tokens =
+            collateral_pool_client.get_tokens_from_shares(&collateral_amount);
         let new_health_factor = Self::calculate_health_factor(
             e,
             borrow_pool_client.get_currency().ticker,
             new_borrowed_amount,
             collateral_pool_client.get_currency().ticker,
-            collateral_amount,
+            collateral_amount_tokens,
             collateral_from.clone(),
         )?;
 
@@ -430,12 +436,14 @@ impl LoanManager {
         let collateral_ticker = collateral_pool_client.get_currency().ticker;
 
         // Check that loan is for sure liquidatable at this moment.
+        let collateral_amount_tokens =
+            collateral_pool_client.get_tokens_from_shares(&collateral_amount);
         let health_factor_before_liquidation = Self::calculate_health_factor(
             &e,
             borrowed_ticker.clone(),
             borrowed_amount,
             collateral_ticker.clone(),
-            collateral_amount,
+            collateral_amount_tokens,
             collateral_from.clone(),
         )?;
         assert!(health_factor_before_liquidation < 10000000);
@@ -479,12 +487,15 @@ impl LoanManager {
             .ok_or(LoanManagerError::OverOrUnderFlow)?
             .checked_div(10_000_000)
             .ok_or(LoanManagerError::OverOrUnderFlow)?;
+        let collateral_amount_bonus_shares =
+            collateral_pool_client.get_shares_from_tokens(&collateral_amount_bonus);
 
         borrow_pool_client.liquidate(&user, &amount, &unpaid_interest, &loan_id.borrower_address);
 
         collateral_pool_client.liquidate_transfer_collateral(
             &user,
             &collateral_amount_bonus,
+            &collateral_amount_bonus_shares,
             &loan_id.borrower_address,
         );
 
@@ -492,15 +503,17 @@ impl LoanManager {
             .checked_sub(amount)
             .ok_or(LoanManagerError::OverOrUnderFlow)?;
         let new_collateral_amount = collateral_amount
-            .checked_sub(collateral_amount_bonus)
+            .checked_sub(collateral_amount_bonus_shares)
             .ok_or(LoanManagerError::OverOrUnderFlow)?;
 
+        let new_collateral_amount_tokens =
+            collateral_pool_client.get_tokens_from_shares(&new_collateral_amount);
         let new_health_factor = Self::calculate_health_factor(
             &e,
             borrowed_ticker,
             new_borrowed_amount,
             collateral_ticker,
-            new_collateral_amount,
+            new_collateral_amount_tokens,
             collateral_from.clone(),
         )?;
 

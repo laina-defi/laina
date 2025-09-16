@@ -53,7 +53,7 @@ impl LoanPoolContract {
         Ok(())
     }
 
-    /// Deposits token. Also, mints pool shares for the "user" Identifier.
+    /// Deposits token.
     pub fn deposit(e: Env, user: Address, amount: i128) -> Result<i128, LoanPoolError> {
         user.require_auth();
 
@@ -124,13 +124,7 @@ impl LoanPoolContract {
         if amount > available_balance_tokens {
             return Err(LoanPoolError::WithdrawOverBalance);
         }
-        let total_balance_shares = Self::get_total_balance_shares(e.clone())?;
-        let total_balance_tokens = Self::get_contract_balance(e.clone())?;
-        let shares_to_decrease = amount
-            .checked_mul(total_balance_shares)
-            .ok_or(LoanPoolError::OverOrUnderFlow)?
-            .checked_div(total_balance_tokens)
-            .ok_or(LoanPoolError::OverOrUnderFlow)?;
+        let shares_to_decrease = storage::get_shares_from_tokens(&e, amount)?;
 
         // Check that user is not trying to move more than receivables (TODO: also include collateral?)
         if shares_to_decrease > receivable_shares {
@@ -259,13 +253,19 @@ impl LoanPoolContract {
             }
         }
 
+        let shares_issued = storage::get_shares_from_tokens(&e, amount)?;
+
+        storage::adjust_available_balance(&e, amount)?;
+        storage::adjust_total_shares(&e, shares_issued)?;
+        storage::adjust_total_balance(&e, amount)?;
+
         let token_address = &storage::read_currency(&e)?.token_address;
         let client = token::Client::new(&e, token_address);
         client.transfer(&user, e.current_contract_address(), &amount);
 
         let liabilities: i128 = 0;
         let receivables: i128 = 0;
-        positions::increase_positions(&e, user.clone(), receivables, liabilities, amount)?;
+        positions::increase_positions(&e, user.clone(), receivables, liabilities, shares_issued)?;
 
         Ok(amount)
     }
@@ -357,6 +357,14 @@ impl LoanPoolContract {
 
     pub fn get_interest(e: Env) -> Result<i128, LoanPoolError> {
         interest::get_interest(e)
+    }
+
+    pub fn get_shares_from_tokens(e: Env, amount_tokens: i128) -> Result<i128, LoanPoolError> {
+        storage::get_shares_from_tokens(&e, amount_tokens)
+    }
+
+    pub fn get_tokens_from_shares(e: Env, amount_shares: i128) -> Result<i128, LoanPoolError> {
+        storage::get_tokens_from_shares(&e, amount_shares)
     }
 
     pub fn get_pool_state(e: Env) -> Result<PoolState, LoanPoolError> {
@@ -518,6 +526,7 @@ impl LoanPoolContract {
         e: Env,
         user: Address,
         amount_collateral: i128,
+        amount_collateral_shares: i128,
         loan_owner: Address,
     ) -> Result<(), LoanPoolError> {
         let loan_manager_addr = storage::read_loan_manager_addr(&e)?;
@@ -526,7 +535,7 @@ impl LoanPoolContract {
         let client = token::Client::new(&e, &storage::read_currency(&e)?.token_address);
         client.transfer(&e.current_contract_address(), &user, &amount_collateral);
 
-        positions::decrease_positions(&e, loan_owner, 0, 0, amount_collateral)?;
+        positions::decrease_positions(&e, loan_owner, 0, 0, amount_collateral_shares)?;
         Ok(())
     }
 }
