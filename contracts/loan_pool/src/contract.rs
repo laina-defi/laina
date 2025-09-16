@@ -270,7 +270,12 @@ impl LoanPoolContract {
         Ok(amount)
     }
 
-    pub fn withdraw_collateral(e: Env, user: Address, amount: i128) -> Result<i128, LoanPoolError> {
+    pub fn withdraw_collateral(
+        e: Env,
+        user: Address,
+        amount: i128,
+        amount_in_shares: i128,
+    ) -> Result<i128, LoanPoolError> {
         user.require_auth();
         Self::add_interest_to_accrual(e.clone())?;
 
@@ -284,7 +289,28 @@ impl LoanPoolContract {
 
         let liabilities: i128 = 0;
         let receivables: i128 = 0;
-        positions::decrease_positions(&e, user.clone(), receivables, liabilities, amount)?;
+        positions::decrease_positions(
+            &e,
+            user.clone(),
+            receivables,
+            liabilities,
+            amount_in_shares,
+        )?;
+
+        storage::adjust_available_balance(
+            &e,
+            amount.checked_neg().ok_or(LoanPoolError::OverOrUnderFlow)?,
+        )?;
+        storage::adjust_total_shares(
+            &e,
+            amount_in_shares
+                .checked_neg()
+                .ok_or(LoanPoolError::OverOrUnderFlow)?,
+        )?;
+        storage::adjust_total_balance(
+            &e,
+            amount.checked_neg().ok_or(LoanPoolError::OverOrUnderFlow)?,
+        )?;
 
         Ok(amount)
     }
