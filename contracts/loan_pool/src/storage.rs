@@ -347,8 +347,8 @@ pub fn write_positions(
 }
 
 pub fn get_shares_from_tokens(e: &Env, amount_tokens: i128) -> Result<i128, LoanPoolError> {
-    let total_pool_shares = read_total_shares(&e)?;
-    let total_pool_tokens = read_total_balance(&e)?;
+    let total_pool_shares = read_total_shares(e)?;
+    let total_pool_tokens = read_total_balance(e)?;
 
     let shares = if total_pool_tokens == 0 {
         amount_tokens
@@ -363,8 +363,8 @@ pub fn get_shares_from_tokens(e: &Env, amount_tokens: i128) -> Result<i128, Loan
 }
 
 pub fn get_tokens_from_shares(e: &Env, amount_shares: i128) -> Result<i128, LoanPoolError> {
-    let total_pool_shares = read_total_shares(&e)?;
-    let total_pool_tokens = read_total_balance(&e)?;
+    let total_pool_shares = read_total_shares(e)?;
+    let total_pool_tokens = read_total_balance(e)?;
 
     let tokens = if total_pool_tokens == 0 {
         amount_shares
