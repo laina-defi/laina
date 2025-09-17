@@ -10,9 +10,9 @@ import {
   exe,
   filenameNoExtension,
   installContracts,
-  loanManagerAddress,
   readTextFile,
   logDeploymentInfo,
+  loanManagerAddress,
 } from './util';
 
 const account = process.env.SOROBAN_ACCOUNT;
@@ -36,7 +36,7 @@ const deployLoanManager = () => {
   deploy(`./target/wasm32v1-none/release/loan_manager.wasm`);
 
   exe(`stellar contract invoke \
---id ${loanManagerAddress()} \
+--id ${loanManagerAddress(true)} \
 --source-account ${account} \
 --network testnet \
 -- initialize \
@@ -52,7 +52,7 @@ const deployLoanPools = () => {
     const salt = crypto.randomBytes(32).toString('hex');
     exe(
       `stellar contract invoke \
---id ${loanManagerAddress()} \
+--id ${loanManagerAddress(true)} \
 --source-account ${account} \
 --network testnet \
 -- deploy_pool \

@@ -67,8 +67,14 @@ export const filenameNoExtension = (filename: string) => {
 export const readTextFile = (path: string): string => readFileSync(path, { encoding: 'utf8' }).trim();
 
 // This is a function so its value can update during init.
-export const loanManagerAddress = (): string =>
-  process.env.CONTRACT_ID_LOAN_MANAGER || readTextFile('./.stellar/contract-ids/loan_manager.txt');
+export const loanManagerAddress = (init = false): string => {
+  if (init) {
+    // Ignore the env variable if we want to initialize a new manager.
+    return readTextFile('./.stellar/contract-ids/loan_manager.txt');
+  }
+
+  return process.env.CONTRACT_ID_LOAN_MANAGER || readTextFile('./.stellar/contract-ids/loan_manager.txt');
+};
 
 export const createContractBindings = () => {
   bind('loan_manager', process.env.CONTRACT_ID_LOAN_MANAGER);

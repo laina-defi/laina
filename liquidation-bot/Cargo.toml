@@ -20,8 +20,8 @@ stellar-strkey = "0.0.13"
 base64 = "0.22.1"
 anyhow = "1.0.98"
 soroban-client = "0.5.1"
-soroban-sdk = "23.0.0"
-soroban-token-sdk = "23.0.0"
+soroban-sdk = "23.0.2"
+soroban-token-sdk = "23.0.2"
 once_cell = "1.21"
 
 [dev-dependencies]

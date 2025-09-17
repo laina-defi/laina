@@ -1,8 +1,7 @@
 use core::time::Duration;
 use dotenvy::dotenv;
-use log::{info, warn};
+use log::{info, warn, debug};
 use once_cell::sync::OnceCell;
-use soroban_sdk::xdr::StringM;
 use std::collections::HashSet;
 use std::{cell::RefCell, env, rc::Rc, str::FromStr, thread};
 
@@ -13,7 +12,7 @@ use self::schema::prices::dsl::prices;
 use anyhow::{Error, Result};
 use diesel::prelude::*;
 use liquidation_bot::utils::{
-    asset_to_scval, decode_loan_from_simulate_response, extract_i128_from_result, Asset,
+    asset_to_scval, extract_i128_from_result, parse_loan_from_rpc_event, Asset,
 };
 use liquidation_bot::*;
 use soroban_client::{
@@ -23,11 +22,10 @@ use soroban_client::{
     network::{NetworkPassphrase, Networks},
     operation::Operation,
     soroban_rpc::{
-        EventResponse, EventType, GetEventsResponse, SendTransactionResponse,
-        SendTransactionStatus, TransactionStatus,
+        EventResponse, EventType, SendTransactionResponse, SendTransactionStatus, TransactionStatus,
     },
-    transaction::{ScVal, TransactionBehavior, TransactionBuilder, TransactionBuilderBehavior},
-    xdr::ScSymbol,
+    transaction::{TransactionBehavior, TransactionBuilder, TransactionBuilderBehavior},
+    xdr::{ScSymbol, ScVal, StringM},
     EventFilter, Options, Pagination, Server, Topic,
 };
 
@@ -84,14 +82,10 @@ async fn main() -> Result<(), Error> {
     let mut ledger = rpc_client.get_latest_ledger().await?.sequence - history_depth;
 
     loop {
-        let GetEventsResponse {
-            events,
-            latest_ledger: new_ledger,
-            ..
-        } = fetch_events(ledger, &server).await?;
-        ledger = new_ledger as u32;
+        let loan_events = fetch_events(ledger, &server).await?;
+        ledger = loan_events.latest_ledger as u32;
 
-        find_loans_from_events(events, db_connection, &server, &source_account).await?;
+        process_events(loan_events, db_connection).await?;
 
         fetch_prices(db_connection, &server, &source_account).await?;
 
@@ -102,98 +96,104 @@ async fn main() -> Result<(), Error> {
     }
 }
 
-async fn fetch_events(ledger: u32, server: &Server) -> Result<GetEventsResponse, Error> {
+struct LoanEvents {
+    loan_created_events: Vec<EventResponse>,
+    loan_updated_events: Vec<EventResponse>,
+    loan_deleted_events: Vec<EventResponse>,
+    latest_ledger: u64,
+}
+
+async fn fetch_events(ledger: u32, server: &Server) -> Result<LoanEvents, Error> {
     info!("Fetching new loans from Loan Manager.");
-
-    let symbol_loan_created: StringM<32> = "LoanCreated".try_into().unwrap();
-    let topic_loan_created = Topic::Val(ScVal::Symbol(ScSymbol(symbol_loan_created)));
-
-    let symbol_loan_updated: StringM<32> = "LoanUpdated".try_into().unwrap();
-    let topic_loan_updated = Topic::Val(ScVal::Symbol(ScSymbol(symbol_loan_updated)));
-
-    let symbol_loan_deleted: StringM<32> = "LoanDeleted".try_into().unwrap();
-    let topic_loan_deleted = Topic::Val(ScVal::Symbol(ScSymbol(symbol_loan_deleted)));
 
     let BotConfig {
         loan_manager_id, ..
     } = get_config();
-    let event_filter = EventFilter::new(EventType::Contract)
-        .topic(vec![topic_loan_created])
-        .topic(vec![topic_loan_deleted])
-        .topic(vec![topic_loan_updated])
-        .contract(&loan_manager_id);
-    let limit = Some(100);
 
-    let events_response = server
-        .get_events(Pagination::From(ledger), vec![event_filter], limit)
+    let loan_created = ScVal::Symbol(ScSymbol("loan_created".try_into().unwrap()));
+    let loan_created_events = server
+        .get_events(
+            Pagination::From(ledger),
+            vec![EventFilter::new(EventType::Contract)
+                .topic(vec![Topic::Val(loan_created), Topic::Any])
+                .contract(loan_manager_id)],
+            None,
+        )
         .await?;
-    info!("{:#?}", events_response);
-    info!("{}", loan_manager_id);
-    info!("{}", ledger);
-    Ok(events_response)
+
+    let loan_updated = ScVal::Symbol(ScSymbol("loan_updated".try_into().unwrap()));
+    let loan_updated_events = server
+        .get_events(
+            Pagination::From(ledger),
+            vec![EventFilter::new(EventType::Contract)
+                .topic(vec![Topic::Val(loan_updated), Topic::Any])
+                .contract(loan_manager_id)],
+            None,
+        )
+        .await?;
+
+    let loan_deleted = ScVal::Symbol(ScSymbol("loan_deleted".try_into().unwrap()));
+    let loan_deleted_events = server
+        .get_events(
+            Pagination::From(ledger),
+            vec![EventFilter::new(EventType::Contract)
+                .topic(vec![Topic::Val(loan_deleted), Topic::Any])
+                .contract(loan_manager_id)],
+            None,
+        )
+        .await?;
+
+    Ok(LoanEvents {
+        loan_created_events: loan_created_events.events,
+        loan_updated_events: loan_updated_events.events,
+        loan_deleted_events: loan_deleted_events.events,
+        latest_ledger: loan_created_events.latest_ledger,
+    })
 }
 
-async fn find_loans_from_events(
-    events: Vec<EventResponse>,
+async fn process_events(
+    loan_events: LoanEvents,
     db_connection: &mut PgConnection,
-    server: &Server,
-    source_account: &Rc<RefCell<Account>>,
 ) -> Result<(), Error> {
-    for event in events {
-        info!("topic: {:#?}", event.topic());
-        info!("value: {:#?}", event.value());
-    }
-    Ok(())
-}
+    info!(
+        "Updating database with new loan events. {} created, {} updated, {} deleted",
+        loan_events.loan_created_events.len(),
+        loan_events.loan_updated_events.len(),
+        loan_events.loan_deleted_events.len()
+    );
 
-async fn fetch_loan_to_db(
-    loan_id: LoanId,
-    db_connection: &mut PgConnection,
-    server: &Server,
-    source_account: &Rc<RefCell<Account>>,
-) -> Result<(), Error> {
-    let config = get_config();
-    let method = "get_loan";
-    info!("Fetching loan {} to database", loan_id);
-    let args = vec![Address::to_sc_val(
-        &Address::from_string(&loan_id.borrower_address)
-            .map_err(|e| anyhow::anyhow!("Account::from_string failed: {}", e))?,
-    )
-    .map_err(|e| anyhow::anyhow!("Address::to_sc_val failed: {}", e))?];
-
-    let read_loan_op = Operation::new()
-        .invoke_contract(&config.loan_manager_id, method, args, None)
-        .expect("Cannot create invoke_contract operation");
-
-    // Build the transaction
-    #[cfg(feature = "local")]
-    let network = Networks::standalone();
-
-    #[cfg(not(feature = "local"))]
-    let network = Networks::testnet();
-
-    let mut builder = TransactionBuilder::new(source_account.clone(), network, None);
-    builder.fee(1000u32);
-    builder.add_operation(read_loan_op);
-
-    let mut tx = builder.build();
-    tx.sign(std::slice::from_ref(&config.source_keypair));
-
-    // Simulate transaction and handle response
-    let response = server.simulate_transaction(&tx, None).await?;
-
-    // TODO: Add test
-    match response.to_result() {
-        Some(result) => {
-            let loan = decode_loan_from_simulate_response(result)?;
-            save_loan(db_connection, loan)?;
-        }
-        None => {
-            warn!("Simulation returned None. Loan may not exist (deleted). Skipping.");
-            return Ok(());
+    for event in loan_events.loan_created_events {
+        match parse_loan_from_rpc_event(&event.value()) {
+            Ok(loan) => {
+                debug!("Successfully parsed loan: {:#?}", loan);
+                save_loan(db_connection, loan)?;
+            }
+            Err(e) => {
+                warn!("Failed to parse loan from RPC event: {}", e);
+            }
         }
     }
 
+    for event in loan_events.loan_updated_events {
+        match parse_loan_from_rpc_event(&event.value()) {
+            Ok(loan) => {
+                debug!("Successfully parsed updated loan: {:#?}", loan);
+                save_loan(db_connection, loan)?;
+            }
+            Err(e) => {
+                warn!("Failed to parse updated loan from RPC event: {}", e);
+            }
+        }
+    }
+
+    for event in loan_events.loan_deleted_events {
+        info!("Loan deleted: {:#?}", event.topic());
+
+        // For deleted loans, we need to extract the loan_id to delete from database
+        // This would require a separate parser for loan_id extraction
+        // For now, we'll log the event but not process it
+        warn!("Loan deletion events not yet implemented");
+    }
     Ok(())
 }
 
