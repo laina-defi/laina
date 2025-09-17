@@ -1,6 +1,6 @@
 use core::time::Duration;
 use dotenvy::dotenv;
-use log::{info, warn, debug};
+use log::{debug, info, warn};
 use once_cell::sync::OnceCell;
 use std::collections::HashSet;
 use std::{cell::RefCell, env, rc::Rc, str::FromStr, thread};
@@ -12,7 +12,8 @@ use self::schema::prices::dsl::prices;
 use anyhow::{Error, Result};
 use diesel::prelude::*;
 use liquidation_bot::utils::{
-    asset_to_scval, extract_i128_from_result, parse_loan_from_rpc_event, Asset,
+    asset_to_scval, extract_i128_from_result, parse_loan_from_rpc_event, parse_loan_id_from_topic,
+    Asset,
 };
 use liquidation_bot::*;
 use soroban_client::{
@@ -156,7 +157,7 @@ async fn process_events(
     db_connection: &mut PgConnection,
 ) -> Result<(), Error> {
     info!(
-        "Updating database with new loan events. {} created, {} updated, {} deleted",
+        "Updating database with new loan events. {} create events, {} updated events, {} deleted events",
         loan_events.loan_created_events.len(),
         loan_events.loan_updated_events.len(),
         loan_events.loan_deleted_events.len()
@@ -165,7 +166,7 @@ async fn process_events(
     for event in loan_events.loan_created_events {
         match parse_loan_from_rpc_event(&event.value()) {
             Ok(loan) => {
-                debug!("Successfully parsed loan: {:#?}", loan);
+                debug!("Successfully parsed created loan: {:#?}", loan);
                 save_loan(db_connection, loan)?;
             }
             Err(e) => {
@@ -187,12 +188,15 @@ async fn process_events(
     }
 
     for event in loan_events.loan_deleted_events {
-        info!("Loan deleted: {:#?}", event.topic());
-
-        // For deleted loans, we need to extract the loan_id to delete from database
-        // This would require a separate parser for loan_id extraction
-        // For now, we'll log the event but not process it
-        warn!("Loan deletion events not yet implemented");
+        match parse_loan_id_from_topic(&event.topic()) {
+            Ok(loan_id) => {
+                debug!("Successfully parsed deleted loan ID: {:#?}", loan_id);
+                delete_loan_from_db(&loan_id, db_connection)?;
+            }
+            Err(e) => {
+                warn!("Failed to parse deleted loan ID from topic: {}", e);
+            }
+        }
     }
     Ok(())
 }
@@ -241,10 +245,7 @@ pub fn save_loan(db_connection: &mut PgConnection, loan: Loan) -> Result<(), Err
     Ok(())
 }
 
-async fn delete_loan_from_db(
-    loan_id: &LoanId,
-    db_connection: &mut PgConnection,
-) -> Result<(), Error> {
+fn delete_loan_from_db(loan_id: &LoanId, db_connection: &mut PgConnection) -> Result<(), Error> {
     use crate::schema::loans::dsl::*;
 
     let deleted_rows = diesel::delete(
@@ -781,7 +782,7 @@ mod tests {
             borrower_address: test_borrower.to_string(),
             nonce: 0,
         };
-        delete_loan_from_db(&loan_id, &mut conn).await.unwrap();
+        delete_loan_from_db(&loan_id, &mut conn).unwrap();
 
         // Verify loan is deleted
         let count_after = loans
@@ -1025,7 +1026,7 @@ mod tests {
             borrower_address: test_borrower.to_string(),
             nonce: 1,
         };
-        let result = delete_loan_from_db(&loan_id, &mut conn).await;
+        let result = delete_loan_from_db(&loan_id, &mut conn);
 
         // Should succeed (no error) even if loan doesn't exist
         assert!(result.is_ok());

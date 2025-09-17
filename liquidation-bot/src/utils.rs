@@ -45,6 +45,50 @@ pub fn asset_to_scval(value: &Asset) -> Result<ScVal, Error> {
     }
 }
 
+/// Parses loan ID from deleted loan event topic
+/// The topic structure is: ["loan_deleted", LoanId] where LoanId is a Map with borrower_address and nonce
+pub fn parse_loan_id_from_topic(topic: &[ScVal]) -> Result<crate::models::LoanId, Error> {
+    if topic.len() != 2 {
+        return Err(Error::msg("Expected topic to have exactly 2 elements"));
+    }
+
+    // First element should be "loan_deleted"
+    let event_type = &topic[0];
+    match event_type {
+        ScVal::Symbol(symbol) => {
+            if symbol.to_string() != "loan_deleted" {
+                return Err(Error::msg(
+                    "Expected first topic element to be 'loan_deleted'",
+                ));
+            }
+        }
+        _ => return Err(Error::msg("Expected first topic element to be a symbol")),
+    }
+
+    // Second element should be the LoanId map
+    let loan_id_map = extract_map(&topic[1])?;
+
+    let borrower_address = scval_to_address_string(
+        loan_id_map
+            .get("borrower_address")
+            .ok_or(Error::msg("borrower_address not found in loan_id"))?,
+    )?;
+
+    let nonce_val = loan_id_map
+        .get("nonce")
+        .ok_or(Error::msg("nonce not found in loan_id"))?;
+
+    let nonce = match nonce_val {
+        ScVal::U64(n) => *n as i64,
+        _ => return Err(Error::msg("nonce is not a U64")),
+    };
+
+    Ok(crate::models::LoanId {
+        borrower_address,
+        nonce,
+    })
+}
+
 /// Parses loan data from RPC event response format
 /// The data structure is: Map(Some(ScMap(VecM([ScMapEntry { key: Symbol("loan"), val: Map(...) }])))
 pub fn parse_loan_from_rpc_event(event_value: &ScVal) -> Result<Loan, Error> {
