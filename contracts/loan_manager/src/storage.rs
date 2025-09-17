@@ -47,35 +47,38 @@ pub struct Loan {
 }
 
 /* Contract events */
-#[contractevent(topics = ["AdminAdded"])]
+#[contractevent(topics = ["admin_added"])]
 pub struct EventAdminAdded {
     pub admin: Address,
 }
 
-#[contractevent(topics = ["OracleAdded"])]
+#[contractevent(topics = ["oracle_added"])]
 pub struct EventOracleAdded {
     pub oracle: Address,
 }
 
-#[contractevent(topics = ["PoolAddressAdded"])]
+#[contractevent(topics = ["pool_address_added"])]
 pub struct EventPoolAddressAdded {
     pub pool_address: Address,
 }
 
-#[contractevent(topics = ["LoanCreated"])]
+#[contractevent(topics = ["loan_created"])]
 pub struct EventLoanCreated {
+    #[topic]
     pub loan_id: LoanId,
     pub loan: Loan,
 }
 
-#[contractevent(topics = ["LoanUpdated"])]
+#[contractevent(topics = ["loan_updated"])]
 pub struct EventLoanUpdated {
+    #[topic]
     pub loan_id: LoanId,
     pub loan: Loan,
 }
 
-#[contractevent(topics = ["LoanDeleted"])]
+#[contractevent(topics = ["loan_deleted"])]
 pub struct EventLoanDeleted {
+    #[topic]
     pub loan_id: LoanId,
 }
 

@@ -64,57 +64,57 @@ enum PoolDataKey {
 }
 
 /* Contract events */
-#[contractevent(topics = ["PoolStatusUpdated"])]
+#[contractevent(topics = ["pool_status_updated"])]
 pub struct EventPoolStatusUpdated {
     pub pool_status: PoolStatus,
 }
 
-#[contractevent(topics = ["LoanManagerAddressAdded"])]
+#[contractevent(topics = ["loan_manager_address_added"])]
 pub struct EventLoanManagerAddressAdded {
     pub loan_manager_addr: Address,
 }
 
-#[contractevent(topics = ["CurrencyAdded"])]
+#[contractevent(topics = ["currency_added"])]
 pub struct EventCurrencyAdded {
     pub currency: Currency,
 }
 
-#[contractevent(topics = ["LiquidationThresholdChanged"])]
+#[contractevent(topics = ["liquidation_threshold_changed"])]
 pub struct EventLiquidationThresholdChanged {
     pub threshold: i128,
 }
 
-#[contractevent(topics = ["TotalSharesUpdated"])]
+#[contractevent(topics = ["total_shares_updated"])]
 pub struct EventTotalSharesUpdated {
     pub amount: i128,
 }
 
-#[contractevent(topics = ["TotalBalanceChanged"])]
+#[contractevent(topics = ["total_balance_changed"])]
 pub struct EventTotalBalanceChanged {
     pub amount: i128,
 }
 
-#[contractevent(topics = ["AvailableBalanceChanged"])]
+#[contractevent(topics = ["available_balance_changed"])]
 pub struct EventAvailableBalanceChanged {
     pub amount: i128,
 }
 
-#[contractevent(topics = ["AccrualChanged"])]
+#[contractevent(topics = ["accrual_changed"])]
 pub struct EventAccrualChanged {
     pub accrual: i128,
 }
 
-#[contractevent(topics = ["AccrualLastUpdated"])]
+#[contractevent(topics = ["accrual_last_updated"])]
 pub struct EventAccrualLastUpdated {
     pub timestamp: u64,
 }
 
-#[contractevent(topics = ["InterestRateMultiplierChanged"])]
+#[contractevent(topics = ["interest_rate_multiplier_changed"])]
 pub struct EventInterestMultiplierChanged {
     pub multiplier: i128,
 }
 
-#[contractevent(topics = ["PositionsUpdated"])]
+#[contractevent(topics = ["positions_updated"])]
 pub struct EventPositionsUpdated {
     pub addr: Address,
     pub positions: Positions,
