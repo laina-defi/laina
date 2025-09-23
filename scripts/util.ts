@@ -42,12 +42,16 @@ export const buildContracts = () => {
 };
 
 /** Install all contracts and save their wasm hashes to .stellar */
-export const installContracts = () => {
+export const installContracts = (mockOracle: boolean = false) => {
   const contractsDir = `./.stellar/contract-wasm-hash`;
   mkdirSync(contractsDir, { recursive: true });
 
   install('loan_manager');
   install('loan_pool');
+  // Optionally install mock oracle so it can be deployed with the init flag
+  if (mockOracle) {
+    install('reflector_oracle_mock');
+  }
 };
 
 /* Install a contract */

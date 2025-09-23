@@ -26,7 +26,7 @@ use soroban_client::{
         EventResponse, EventType, SendTransactionResponse, SendTransactionStatus, TransactionStatus,
     },
     transaction::{TransactionBehavior, TransactionBuilder, TransactionBuilderBehavior},
-    xdr::{ScSymbol, ScVal, StringM},
+    xdr::{ScMap, ScMapEntry, ScSymbol, ScVal, StringM, VecM},
     EventFilter, Options, Pagination, Server, Topic,
 };
 
@@ -466,10 +466,6 @@ async fn attempt_liquidating(
     info!("Attempting to liquidate loan: {:#?}", loan);
 
     // Build operation
-    let loan_id = LoanId {
-        borrower_address: loan.borrower_address.clone(),
-        nonce: loan.nonce,
-    };
 
     //TODO: This has to be optimized somehow. Sometimes half of the loan can be too much. Then
     //again sometimes very small liquidations don't help.
@@ -478,15 +474,33 @@ async fn attempt_liquidating(
         .checked_div(3)
         .ok_or(Error::msg("OverOrUnderFlow"))? as i128;
 
-    let args = vec![
-        Address::to_sc_val(
-            &Address::from_string(&config.source_keypair.public_key())
-                .map_err(|e| anyhow::anyhow!("Account::from_string failed: {}", e))?,
-        )
-        .map_err(|e| anyhow::anyhow!("Address::to_sc_val failed: {}", e))?,
-        ScVal::String(StringM::from_str(&loan_id.to_string()).unwrap().into()),
-        amount.into(),
+    // Encode LoanId as ScVal::Map({ borrower_address: Address, nonce: u64 }) to match contracttype
+    let borrower_addr_scval = Address::to_sc_val(
+        &Address::from_string(&config.source_keypair.public_key())
+            .map_err(|e| anyhow::anyhow!("Account::from_string failed: {}", e))?,
+    )
+    .map_err(|e| anyhow::anyhow!("Address::to_sc_val failed: {}", e))?;
+
+    let loan_id_entries = vec![
+        ScMapEntry {
+            key: ScVal::Symbol(ScSymbol(StringM::from_str("borrower_address")?)),
+            val: Address::to_sc_val(
+                &Address::from_string(&loan.borrower_address)
+                    .map_err(|e| anyhow::anyhow!("Account::from_string failed: {}", e))?,
+            )
+            .map_err(|e| anyhow::anyhow!("Address::to_sc_val failed: {}", e))?,
+        },
+        ScMapEntry {
+            key: ScVal::Symbol(ScSymbol(StringM::from_str("nonce")?)),
+            val: ScVal::U64(loan.nonce as u64),
+        },
     ];
+    let loan_id_scval = ScVal::Map(Some(ScMap(
+        VecM::try_from(loan_id_entries)
+            .map_err(|_| anyhow::anyhow!("Failed to convert Vec to VecM for LoanId map"))?,
+    )));
+
+    let args = vec![borrower_addr_scval, loan_id_scval, amount.into()];
 
     let read_loan_op = Operation::new()
         .invoke_contract(&config.loan_manager_id, "liquidate", args.clone(), None)
