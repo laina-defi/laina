@@ -204,44 +204,18 @@ async fn process_events(
 pub fn save_loan(db_connection: &mut PgConnection, loan: Loan) -> Result<(), Error> {
     use crate::schema::loans::dsl::*;
 
-    let existing = loans
-        .filter(
-            borrower_address
-                .eq(&loan.borrower_address)
-                .and(nonce.eq(loan.nonce)),
-        )
-        .first::<Loan>(db_connection)
-        .optional()?;
-
-    if let Some(_existing_loan) = existing {
-        diesel::update(
-            loans.filter(
-                borrower_address
-                    .eq(&loan.borrower_address)
-                    .and(nonce.eq(loan.nonce)),
-            ),
-        )
+    diesel::insert_into(loans)
+        .values(&loan)
+        .on_conflict((borrower_address, nonce))
+        .do_update()
         .set((
             borrowed_amount.eq(loan.borrowed_amount),
-            borrowed_from.eq(loan.borrowed_from),
+            borrowed_from.eq(loan.borrowed_from.clone()),
             collateral_amount.eq(loan.collateral_amount),
-            collateral_from.eq(loan.collateral_from),
+            collateral_from.eq(loan.collateral_from.clone()),
             unpaid_interest.eq(loan.unpaid_interest),
         ))
         .execute(db_connection)?;
-    } else {
-        diesel::insert_into(loans)
-            .values((
-                crate::schema::loans::borrower_address.eq(&loan.borrower_address),
-                crate::schema::loans::nonce.eq(loan.nonce),
-                crate::schema::loans::borrowed_amount.eq(loan.borrowed_amount),
-                crate::schema::loans::borrowed_from.eq(&loan.borrowed_from),
-                crate::schema::loans::collateral_amount.eq(loan.collateral_amount),
-                crate::schema::loans::collateral_from.eq(&loan.collateral_from),
-                crate::schema::loans::unpaid_interest.eq(loan.unpaid_interest),
-            ))
-            .execute(db_connection)?;
-    }
     Ok(())
 }
 
