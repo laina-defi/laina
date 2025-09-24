@@ -36,7 +36,7 @@
   "scripts": {
     "astro": "astro",
     "build": "astro check && astro build",
-    "dev": "DOTENV_CONFIG_PATH=.env astro dev",
+    "dev": "astro dev",
     "dev:local": "STELLAR_NETWORK=local astro dev",
     "init": "node --import tsx scripts/initialize.ts",
     "init:mock-oracle": "node --import tsx scripts/initialize.ts --mock-oracle",

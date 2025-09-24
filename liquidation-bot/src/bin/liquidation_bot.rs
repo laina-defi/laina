@@ -90,7 +90,7 @@ async fn main() -> Result<(), Error> {
 
         fetch_prices(db_connection, &server, &source_account).await?;
 
-        find_liquidateable(db_connection, &server, &source_account).await?;
+        find_liquidateable(db_connection, &server).await?;
 
         info!("Sleeping for {SLEEP_TIME_SECONDS} seconds.");
         thread::sleep(Duration::from_secs(SLEEP_TIME_SECONDS))
@@ -351,11 +351,7 @@ async fn fetch_prices(
     Ok(())
 }
 
-async fn find_liquidateable(
-    connection: &mut PgConnection,
-    server: &Server,
-    source_account: &Rc<RefCell<Account>>,
-) -> Result<(), Error> {
+async fn find_liquidateable(connection: &mut PgConnection, server: &Server) -> Result<(), Error> {
     let all_loans = loans
         .select(Loan::as_select())
         .load(connection)
@@ -417,7 +413,7 @@ async fn find_liquidateable(
         let health_factor_threshold = 10_100_000;
         if health_factor < health_factor_threshold {
             info!("Found loan close to liquidation threshold: {:#?}", loan);
-            if let Err(e) = attempt_liquidating(loan.clone(), server, source_account).await {
+            if let Err(e) = attempt_liquidating(loan.clone(), server).await {
                 warn!(
                     "Failed to liquidate loan for borrower {}: {}",
                     loan.borrower_address, e
@@ -430,12 +426,12 @@ async fn find_liquidateable(
     Ok(())
 }
 
-async fn attempt_liquidating(
-    loan: Loan,
-    server: &Server,
-    source_account: &Rc<RefCell<Account>>,
-) -> Result<(), Error> {
-    let config = get_config();
+async fn attempt_liquidating(loan: Loan, server: &Server) -> Result<(), Error> {
+    let BotConfig {
+        loan_manager_id,
+        source_keypair,
+        ..
+    } = get_config();
 
     info!("Attempting to liquidate loan: {:#?}", loan);
 
@@ -450,7 +446,7 @@ async fn attempt_liquidating(
 
     // Encode LoanId as ScVal::Map({ borrower_address: Address, nonce: u64 }) to match contracttype
     let borrower_addr_scval = Address::to_sc_val(
-        &Address::from_string(&config.source_keypair.public_key())
+        &Address::from_string(&source_keypair.public_key())
             .map_err(|e| anyhow::anyhow!("Account::from_string failed: {}", e))?,
     )
     .map_err(|e| anyhow::anyhow!("Address::to_sc_val failed: {}", e))?;
@@ -477,7 +473,7 @@ async fn attempt_liquidating(
     let args = vec![borrower_addr_scval, loan_id_scval, amount.into()];
 
     let read_loan_op = Operation::new()
-        .invoke_contract(&config.loan_manager_id, "liquidate", args.clone(), None)
+        .invoke_contract(&loan_manager_id, "liquidate", args.clone(), None)
         .expect("Cannot create invoke_contract operation");
 
     //TODO: response now has data like minimal resource fee and if the liquidation would likely be
@@ -489,6 +485,15 @@ async fn attempt_liquidating(
 
     #[cfg(not(feature = "local"))]
     let network = Networks::testnet();
+
+    let account_data = server.get_account(&source_keypair.public_key()).await?;
+    let source_account = Rc::new(RefCell::new(
+        Account::new(
+            &source_keypair.public_key(),
+            &account_data.sequence_number(),
+        )
+        .map_err(|e| anyhow::anyhow!("Account::new failed: {}", e))?,
+    ));
 
     let mut builder = TransactionBuilder::new(source_account.clone(), network, None);
     builder.fee(10000_u32);
@@ -508,7 +513,7 @@ async fn attempt_liquidating(
         }
     };
 
-    tx.sign(std::slice::from_ref(&config.source_keypair));
+    tx.sign(std::slice::from_ref(&source_keypair));
 
     // Send transaction
     let response = match server.send_transaction(tx).await {
