@@ -473,7 +473,7 @@ async fn attempt_liquidating(loan: Loan, server: &Server) -> Result<(), Error> {
     let args = vec![borrower_addr_scval, loan_id_scval, amount.into()];
 
     let read_loan_op = Operation::new()
-        .invoke_contract(&loan_manager_id, "liquidate", args.clone(), None)
+        .invoke_contract(loan_manager_id, "liquidate", args.clone(), None)
         .expect("Cannot create invoke_contract operation");
 
     //TODO: response now has data like minimal resource fee and if the liquidation would likely be
@@ -513,7 +513,7 @@ async fn attempt_liquidating(loan: Loan, server: &Server) -> Result<(), Error> {
         }
     };
 
-    tx.sign(std::slice::from_ref(&source_keypair));
+    tx.sign(std::slice::from_ref(source_keypair));
 
     // Send transaction
     let response = match server.send_transaction(tx).await {
