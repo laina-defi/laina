@@ -42,12 +42,16 @@ export const buildContracts = () => {
 };
 
 /** Install all contracts and save their wasm hashes to .stellar */
-export const installContracts = () => {
+export const installContracts = (mockOracle: boolean = false) => {
   const contractsDir = `./.stellar/contract-wasm-hash`;
   mkdirSync(contractsDir, { recursive: true });
 
   install('loan_manager');
   install('loan_pool');
+  // Optionally install mock oracle so it can be deployed with the init flag
+  if (mockOracle) {
+    install('reflector_oracle_mock');
+  }
 };
 
 /* Install a contract */
@@ -67,8 +71,14 @@ export const filenameNoExtension = (filename: string) => {
 export const readTextFile = (path: string): string => readFileSync(path, { encoding: 'utf8' }).trim();
 
 // This is a function so its value can update during init.
-export const loanManagerAddress = (): string =>
-  process.env.CONTRACT_ID_LOAN_MANAGER || readTextFile('./.stellar/contract-ids/loan_manager.txt');
+export const loanManagerAddress = (init = false): string => {
+  if (init) {
+    // Ignore the env variable if we want to initialize a new manager.
+    return readTextFile('./.stellar/contract-ids/loan_manager.txt');
+  }
+
+  return process.env.CONTRACT_ID_LOAN_MANAGER || readTextFile('./.stellar/contract-ids/loan_manager.txt');
+};
 
 export const createContractBindings = () => {
   bind('loan_manager', process.env.CONTRACT_ID_LOAN_MANAGER);

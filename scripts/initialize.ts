@@ -10,15 +10,18 @@ import {
   exe,
   filenameNoExtension,
   installContracts,
-  loanManagerAddress,
   readTextFile,
   logDeploymentInfo,
+  loanManagerAddress,
 } from './util';
+import { setPrice } from './set-oracle-price';
 
 const account = process.env.SOROBAN_ACCOUNT;
-const oracle = process.env.ORACLE_ADDRESS;
+const shouldDeployMockOracle = process.argv.includes('--mock-oracle');
 
-console.log('######################Initializing contracts ########################');
+let oracleAddressEnv = process.env.ORACLE_ADDRESS;
+
+console.log('###################### Initializing contracts ########################');
 
 const deploy = (wasm: string) => {
   exe(
@@ -26,22 +29,38 @@ const deploy = (wasm: string) => {
   );
 };
 
+const deployMockOracle = (): string => {
+  console.log('Deploying mock oracle (reflector_oracle_mock) ...');
+
+  mkdirSync('./.stellar/contract-ids', { recursive: true });
+
+  deploy(`./target/wasm32v1-none/release/reflector_oracle_mock.wasm`);
+  const address = readTextFile('./.stellar/contract-ids/reflector_oracle_mock.txt');
+  console.log(`Mock oracle deployed at: ${address}`);
+
+  setPrice('XLM', '17694578912345', 'testnet', '1');
+  setPrice('USDC', '17694578912345', 'testnet', '1');
+  setPrice('EURC', '17694578912345', 'testnet', '1');
+
+  return address;
+};
+
 /** Deploy loan_manager contract as there will only be one for all the pools.
  * Loan_manager is used as a factory for the loan_pools.
  */
-const deployLoanManager = () => {
+const deployLoanManager = (oracleAddress: string) => {
   const contractsDir = `.stellar/contract-ids`;
   mkdirSync(contractsDir, { recursive: true });
 
   deploy(`./target/wasm32v1-none/release/loan_manager.wasm`);
 
   exe(`stellar contract invoke \
---id ${loanManagerAddress()} \
+--id ${loanManagerAddress(true)} \
 --source-account ${account} \
 --network testnet \
 -- initialize \
 --admin ${account} \
---oracle_address ${oracle}`);
+--oracle_address ${oracleAddress}`);
 };
 
 /** Deploy liquidity pools using the loan-manager as a factory contract */
@@ -52,7 +71,7 @@ const deployLoanPools = () => {
     const salt = crypto.randomBytes(32).toString('hex');
     exe(
       `stellar contract invoke \
---id ${loanManagerAddress()} \
+--id ${loanManagerAddress(true)} \
 --source-account ${account} \
 --network testnet \
 -- deploy_pool \
@@ -69,8 +88,12 @@ const deployLoanPools = () => {
 // Calling the functions (equivalent to the last part of your bash script)
 loadAccount();
 buildContracts();
-installContracts();
-deployLoanManager();
+installContracts(shouldDeployMockOracle);
+
+// determine oracle address (deploy mock if requested)
+const oracleForInit = shouldDeployMockOracle ? deployMockOracle() : (oracleAddressEnv as string);
+
+deployLoanManager(oracleForInit);
 deployLoanPools();
 createContractBindings();
 createContractImports();

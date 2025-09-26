@@ -27,6 +27,14 @@ To deploy new smart contracts to testnet, run the `scripts/initialize.ts` script
 npm run init
 ```
 
+Or if you want to use a mock oracle to allow changing the price of a token run:
+
+```
+npm run init:mock-oracle
+```
+
+You'll have to grab that oracle's address and place it in .env for liquidation bot to know to use it.
+
 To update the code of already initialized contracts in-place, use the `scripts/upgrade.ts` script.
 
 ```

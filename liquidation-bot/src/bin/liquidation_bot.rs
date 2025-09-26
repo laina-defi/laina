@@ -1,19 +1,19 @@
 use core::time::Duration;
 use dotenvy::dotenv;
-use log::{error, info, warn};
+use log::{debug, info, warn};
 use once_cell::sync::OnceCell;
 use std::collections::HashSet;
 use std::{cell::RefCell, env, rc::Rc, str::FromStr, thread};
-use stellar_xdr::curr::StringM;
 
-use self::models::{Loan, Price};
+use self::models::{Loan, LoanId, Price};
 use self::schema::loans::dsl::loans;
 use self::schema::prices::dsl::prices;
 
 use anyhow::{Error, Result};
 use diesel::prelude::*;
 use liquidation_bot::utils::{
-    asset_to_scval, decode_loan_from_simulate_response, extract_i128_from_result, Asset,
+    asset_to_scval, extract_i128_from_result, parse_loan_from_rpc_event, parse_loan_id_from_topic,
+    Asset,
 };
 use liquidation_bot::*;
 use soroban_client::{
@@ -23,11 +23,10 @@ use soroban_client::{
     network::{NetworkPassphrase, Networks},
     operation::Operation,
     soroban_rpc::{
-        EventResponse, EventType, GetEventsResponse, SendTransactionResponse,
-        SendTransactionStatus, TransactionStatus,
+        EventResponse, EventType, SendTransactionResponse, SendTransactionStatus, TransactionStatus,
     },
-    transaction::{ScVal, TransactionBehavior, TransactionBuilder, TransactionBuilderBehavior},
-    xdr::ScSymbol,
+    transaction::{TransactionBehavior, TransactionBuilder, TransactionBuilderBehavior},
+    xdr::{ScMap, ScMapEntry, ScSymbol, ScVal, StringM, VecM},
     EventFilter, Options, Pagination, Server, Topic,
 };
 
@@ -84,168 +83,164 @@ async fn main() -> Result<(), Error> {
     let mut ledger = rpc_client.get_latest_ledger().await?.sequence - history_depth;
 
     loop {
-        let GetEventsResponse {
-            events,
-            latest_ledger: new_ledger,
-            ..
-        } = fetch_events(ledger, &server).await?;
-        ledger = new_ledger as u32;
+        let loan_events = fetch_events(ledger, &server).await?;
+        ledger = loan_events.latest_ledger as u32;
 
-        find_loans_from_events(events, db_connection, &server, &source_account).await?;
+        process_events(loan_events, db_connection).await?;
 
         fetch_prices(db_connection, &server, &source_account).await?;
 
-        find_liquidateable(db_connection, &server, &source_account).await?;
+        find_liquidateable(db_connection, &server).await?;
 
         info!("Sleeping for {SLEEP_TIME_SECONDS} seconds.");
         thread::sleep(Duration::from_secs(SLEEP_TIME_SECONDS))
     }
 }
 
-async fn fetch_events(ledger: u32, server: &Server) -> Result<GetEventsResponse, Error> {
+struct LoanEvents {
+    loan_created_events: Vec<EventResponse>,
+    loan_updated_events: Vec<EventResponse>,
+    loan_deleted_events: Vec<EventResponse>,
+    latest_ledger: u64,
+}
+
+async fn fetch_events(ledger: u32, server: &Server) -> Result<LoanEvents, Error> {
     info!("Fetching new loans from Loan Manager.");
-
-    let symbol_loan_created: StringM<32> = "LoanCreated".try_into().unwrap();
-    let topic_loan_created = Topic::Val(ScVal::Symbol(ScSymbol(symbol_loan_created)));
-
-    let symbol_loan_updated: StringM<32> = "LoanUpdated".try_into().unwrap();
-    let topic_loan_updated = Topic::Val(ScVal::Symbol(ScSymbol(symbol_loan_updated)));
-
-    let symbol_loan_deleted: StringM<32> = "LoanDeleted".try_into().unwrap();
-    let topic_loan_deleted = Topic::Val(ScVal::Symbol(ScSymbol(symbol_loan_deleted)));
 
     let BotConfig {
         loan_manager_id, ..
     } = get_config();
-    let event_filter = EventFilter::new(EventType::Contract)
-        .topic(vec![topic_loan_created])
-        .topic(vec![topic_loan_deleted])
-        .topic(vec![topic_loan_updated])
-        .contract(&loan_manager_id);
-    let limit = Some(100);
 
-    let events_response = server
-        .get_events(Pagination::From(ledger), vec![event_filter], limit)
+    let loan_created = ScVal::Symbol(ScSymbol("loan_created".try_into().unwrap()));
+    let loan_created_events = server
+        .get_events(
+            Pagination::From(ledger),
+            vec![EventFilter::new(EventType::Contract)
+                .topic(vec![Topic::Val(loan_created), Topic::Any])
+                .contract(loan_manager_id)],
+            None,
+        )
         .await?;
-    info!("{:#?}", events_response);
-    info!("{}", loan_manager_id);
-    info!("{}", ledger);
-    Ok(events_response)
+
+    let loan_updated = ScVal::Symbol(ScSymbol("loan_updated".try_into().unwrap()));
+    let loan_updated_events = server
+        .get_events(
+            Pagination::From(ledger),
+            vec![EventFilter::new(EventType::Contract)
+                .topic(vec![Topic::Val(loan_updated), Topic::Any])
+                .contract(loan_manager_id)],
+            None,
+        )
+        .await?;
+
+    let loan_deleted = ScVal::Symbol(ScSymbol("loan_deleted".try_into().unwrap()));
+    let loan_deleted_events = server
+        .get_events(
+            Pagination::From(ledger),
+            vec![EventFilter::new(EventType::Contract)
+                .topic(vec![Topic::Val(loan_deleted), Topic::Any])
+                .contract(loan_manager_id)],
+            None,
+        )
+        .await?;
+
+    Ok(LoanEvents {
+        loan_created_events: loan_created_events.events,
+        loan_updated_events: loan_updated_events.events,
+        loan_deleted_events: loan_deleted_events.events,
+        latest_ledger: loan_created_events.latest_ledger,
+    })
 }
 
-async fn find_loans_from_events(
-    events: Vec<EventResponse>,
+async fn process_events(
+    loan_events: LoanEvents,
     db_connection: &mut PgConnection,
-    server: &Server,
-    source_account: &Rc<RefCell<Account>>,
 ) -> Result<(), Error> {
-    for event in events {
-        info!("topic: {:#?}", event.topic());
-        info!("value: {:#?}", event.value());
-    }
-    Ok(())
-}
+    info!(
+        "Updating database with new loan events. {} create events, {} updated events, {} deleted events",
+        loan_events.loan_created_events.len(),
+        loan_events.loan_updated_events.len(),
+        loan_events.loan_deleted_events.len()
+    );
 
-async fn fetch_loan_to_db(
-    loan: Vec<String>,
-    db_connection: &mut PgConnection,
-    server: &Server,
-    source_account: &Rc<RefCell<Account>>,
-) -> Result<(), Error> {
-    let config = get_config();
-    let method = "get_loan";
-    let loan_owner = &loan[1];
-    info!("Fetching loan {} to database", loan_owner);
-    let args = vec![Address::to_sc_val(
-        &Address::from_string(loan_owner)
-            .map_err(|e| anyhow::anyhow!("Account::from_string failed: {}", e))?,
-    )
-    .map_err(|e| anyhow::anyhow!("Address::to_sc_val failed: {}", e))?];
-
-    let read_loan_op = Operation::new()
-        .invoke_contract(&config.loan_manager_id, method, args, None)
-        .expect("Cannot create invoke_contract operation");
-
-    // Build the transaction
-    #[cfg(feature = "local")]
-    let network = Networks::standalone();
-
-    #[cfg(not(feature = "local"))]
-    let network = Networks::testnet();
-
-    let mut builder = TransactionBuilder::new(source_account.clone(), network, None);
-    builder.fee(1000u32);
-    builder.add_operation(read_loan_op);
-
-    let mut tx = builder.build();
-    tx.sign(std::slice::from_ref(&config.source_keypair));
-
-    // Simulate transaction and handle response
-    let response = server.simulate_transaction(&tx, None).await?;
-
-    // TODO: Add test
-    match response.to_result() {
-        Some(result) => {
-            let loan = decode_loan_from_simulate_response(result)?;
-            save_loan(db_connection, loan)?;
-        }
-        None => {
-            warn!("Simulation returned None. Loan may not exist (deleted). Skipping.");
-            return Ok(());
+    for event in loan_events.loan_created_events {
+        match parse_loan_from_rpc_event(&event.value()) {
+            Ok(loan) => {
+                debug!("Successfully parsed created loan: {:#?}", loan);
+                save_loan(db_connection, loan)?;
+            }
+            Err(e) => {
+                warn!("Failed to parse loan from RPC event: {}", e);
+            }
         }
     }
 
+    for event in loan_events.loan_updated_events {
+        match parse_loan_from_rpc_event(&event.value()) {
+            Ok(loan) => {
+                debug!("Successfully parsed updated loan: {:#?}", loan);
+                save_loan(db_connection, loan)?;
+            }
+            Err(e) => {
+                warn!("Failed to parse updated loan from RPC event: {}", e);
+            }
+        }
+    }
+
+    for event in loan_events.loan_deleted_events {
+        match parse_loan_id_from_topic(&event.topic()) {
+            Ok(loan_id) => {
+                debug!("Successfully parsed deleted loan ID: {:#?}", loan_id);
+                delete_loan_from_db(&loan_id, db_connection)?;
+            }
+            Err(e) => {
+                warn!("Failed to parse deleted loan ID from topic: {}", e);
+            }
+        }
+    }
     Ok(())
 }
 
 pub fn save_loan(db_connection: &mut PgConnection, loan: Loan) -> Result<(), Error> {
     use crate::schema::loans::dsl::*;
 
-    let existing = loans
-        .filter(borrower.eq(&loan.borrower))
-        .first::<Loan>(db_connection)
-        .optional()?;
-
-    if let Some(existing_loan) = existing {
-        diesel::update(loans.filter(id.eq(existing_loan.id)))
-            .set((
-                borrowed_amount.eq(loan.borrowed_amount),
-                borrowed_from.eq(loan.borrowed_from),
-                collateral_amount.eq(loan.collateral_amount),
-                collateral_from.eq(loan.collateral_from),
-                unpaid_interest.eq(loan.unpaid_interest),
-            ))
-            .execute(db_connection)?;
-    } else {
-        diesel::insert_into(loans)
-            .values((
-                crate::schema::loans::borrower.eq(&loan.borrower),
-                crate::schema::loans::borrowed_amount.eq(loan.borrowed_amount),
-                crate::schema::loans::borrowed_from.eq(&loan.borrowed_from),
-                crate::schema::loans::collateral_amount.eq(loan.collateral_amount),
-                crate::schema::loans::collateral_from.eq(&loan.collateral_from),
-                crate::schema::loans::unpaid_interest.eq(loan.unpaid_interest),
-            ))
-            .execute(db_connection)?;
-    }
+    diesel::insert_into(loans)
+        .values(&loan)
+        .on_conflict((borrower_address, nonce))
+        .do_update()
+        .set((
+            borrowed_amount.eq(loan.borrowed_amount),
+            borrowed_from.eq(loan.borrowed_from.clone()),
+            collateral_amount.eq(loan.collateral_amount),
+            collateral_from.eq(loan.collateral_from.clone()),
+            unpaid_interest.eq(loan.unpaid_interest),
+        ))
+        .execute(db_connection)?;
     Ok(())
 }
 
-async fn delete_loan_from_db(
-    value: Vec<String>,
-    db_connection: &mut PgConnection,
-) -> Result<(), Error> {
+fn delete_loan_from_db(loan_id: &LoanId, db_connection: &mut PgConnection) -> Result<(), Error> {
     use crate::schema::loans::dsl::*;
 
-    let loan_owner = &value[1];
-
-    let deleted_rows =
-        diesel::delete(loans.filter(borrower.eq(loan_owner))).execute(db_connection)?;
+    let deleted_rows = diesel::delete(
+        loans.filter(
+            borrower_address
+                .eq(&loan_id.borrower_address)
+                .and(nonce.eq(loan_id.nonce)),
+        ),
+    )
+    .execute(db_connection)?;
 
     if deleted_rows > 0 {
-        info!("Deleted loan for borrower: {}", loan_owner);
+        info!(
+            "Deleted loan for borrower: {} with nonce: {}",
+            loan_id.borrower_address, loan_id.nonce
+        );
     } else {
-        warn!("No loan found to delete for borrower: {}", loan_owner);
+        warn!(
+            "No loan found to delete for borrower: {} with nonce: {}",
+            loan_id.borrower_address, loan_id.nonce
+        );
     }
 
     Ok(())
@@ -356,11 +351,7 @@ async fn fetch_prices(
     Ok(())
 }
 
-async fn find_liquidateable(
-    connection: &mut PgConnection,
-    server: &Server,
-    source_account: &Rc<RefCell<Account>>,
-) -> Result<(), Error> {
+async fn find_liquidateable(connection: &mut PgConnection, server: &Server) -> Result<(), Error> {
     let all_loans = loans
         .select(Loan::as_select())
         .load(connection)
@@ -422,10 +413,10 @@ async fn find_liquidateable(
         let health_factor_threshold = 10_100_000;
         if health_factor < health_factor_threshold {
             info!("Found loan close to liquidation threshold: {:#?}", loan);
-            if let Err(e) = attempt_liquidating(loan.clone(), server, source_account).await {
+            if let Err(e) = attempt_liquidating(loan.clone(), server).await {
                 warn!(
                     "Failed to liquidate loan for borrower {}: {}",
-                    loan.borrower, e
+                    loan.borrower_address, e
                 );
                 // Continue processing other loans instead of crashing the bot
             }
@@ -435,18 +426,16 @@ async fn find_liquidateable(
     Ok(())
 }
 
-async fn attempt_liquidating(
-    loan: Loan,
-    server: &Server,
-    source_account: &Rc<RefCell<Account>>,
-) -> Result<(), Error> {
-    let config = get_config();
+async fn attempt_liquidating(loan: Loan, server: &Server) -> Result<(), Error> {
+    let BotConfig {
+        loan_manager_id,
+        source_keypair,
+        ..
+    } = get_config();
 
     info!("Attempting to liquidate loan: {:#?}", loan);
 
     // Build operation
-    let method = "liquidate";
-    let loan_owner = &loan.borrower;
 
     //TODO: This has to be optimized somehow. Sometimes half of the loan can be too much. Then
     //again sometimes very small liquidations don't help.
@@ -455,22 +444,36 @@ async fn attempt_liquidating(
         .checked_div(3)
         .ok_or(Error::msg("OverOrUnderFlow"))? as i128;
 
-    let args = vec![
-        Address::to_sc_val(
-            &Address::from_string(&config.source_keypair.public_key())
-                .map_err(|e| anyhow::anyhow!("Account::from_string failed: {}", e))?,
-        )
-        .map_err(|e| anyhow::anyhow!("Address::to_sc_val failed: {}", e))?,
-        Address::to_sc_val(
-            &Address::from_string(loan_owner)
-                .map_err(|e| anyhow::anyhow!("Account::from_string failed: {}", e))?,
-        )
-        .map_err(|e| anyhow::anyhow!("Address::to_sc_val failed: {}", e))?,
-        amount.into(),
+    // Encode LoanId as ScVal::Map({ borrower_address: Address, nonce: u64 }) to match contracttype
+    let borrower_addr_scval = Address::to_sc_val(
+        &Address::from_string(&source_keypair.public_key())
+            .map_err(|e| anyhow::anyhow!("Account::from_string failed: {}", e))?,
+    )
+    .map_err(|e| anyhow::anyhow!("Address::to_sc_val failed: {}", e))?;
+
+    let loan_id_entries = vec![
+        ScMapEntry {
+            key: ScVal::Symbol(ScSymbol(StringM::from_str("borrower_address")?)),
+            val: Address::to_sc_val(
+                &Address::from_string(&loan.borrower_address)
+                    .map_err(|e| anyhow::anyhow!("Account::from_string failed: {}", e))?,
+            )
+            .map_err(|e| anyhow::anyhow!("Address::to_sc_val failed: {}", e))?,
+        },
+        ScMapEntry {
+            key: ScVal::Symbol(ScSymbol(StringM::from_str("nonce")?)),
+            val: ScVal::U64(loan.nonce as u64),
+        },
     ];
+    let loan_id_scval = ScVal::Map(Some(ScMap(
+        VecM::try_from(loan_id_entries)
+            .map_err(|_| anyhow::anyhow!("Failed to convert Vec to VecM for LoanId map"))?,
+    )));
+
+    let args = vec![borrower_addr_scval, loan_id_scval, amount.into()];
 
     let read_loan_op = Operation::new()
-        .invoke_contract(&config.loan_manager_id, method, args.clone(), None)
+        .invoke_contract(loan_manager_id, "liquidate", args.clone(), None)
         .expect("Cannot create invoke_contract operation");
 
     //TODO: response now has data like minimal resource fee and if the liquidation would likely be
@@ -482,6 +485,15 @@ async fn attempt_liquidating(
 
     #[cfg(not(feature = "local"))]
     let network = Networks::testnet();
+
+    let account_data = server.get_account(&source_keypair.public_key()).await?;
+    let source_account = Rc::new(RefCell::new(
+        Account::new(
+            &source_keypair.public_key(),
+            &account_data.sequence_number(),
+        )
+        .map_err(|e| anyhow::anyhow!("Account::new failed: {}", e))?,
+    ));
 
     let mut builder = TransactionBuilder::new(source_account.clone(), network, None);
     builder.fee(10000_u32);
@@ -495,13 +507,13 @@ async fn attempt_liquidating(
         Err(e) => {
             warn!(
                 "Transaction simulation failed for loan {}: {}",
-                loan.borrower, e
+                loan.borrower_address, e
             );
             return Err(anyhow::anyhow!("Simulation failed: {}", e));
         }
     };
 
-    tx.sign(std::slice::from_ref(&config.source_keypair));
+    tx.sign(std::slice::from_ref(source_keypair));
 
     // Send transaction
     let response = match server.send_transaction(tx).await {
@@ -509,7 +521,7 @@ async fn attempt_liquidating(
         Err(e) => {
             warn!(
                 "Transaction sending failed for loan {}: {}",
-                loan.borrower, e
+                loan.borrower_address, e
             );
             return Err(anyhow::anyhow!("Transaction sending failed: {}", e));
         }
@@ -525,10 +537,14 @@ async fn attempt_liquidating(
     // let max_to_liquidate
     //
     let hash = response.hash.clone();
+    let loan_id = LoanId {
+        borrower_address: loan.borrower_address.clone(),
+        nonce: loan.nonce,
+    };
     if wait_success(server, hash, response).await {
-        info!("Loan {} liquidated!", loan.borrower);
+        info!("Loan {} liquidated!", loan_id);
     } else {
-        warn!("Failed to liquidate loan for {}", loan.borrower);
+        warn!("Failed to liquidate loan for {}", loan_id);
     }
     Ok(())
 }
@@ -607,7 +623,7 @@ async fn load_config() -> Result<BotConfig, Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema::loans::dsl::{borrower as borrower_col, loans};
+    use crate::schema::loans::dsl::{borrower_address as borrower_col, loans};
     use crate::schema::prices::dsl::prices;
     use crate::schema::prices::{
         pool_address as pool_address_col, time_weighted_average_price as price_col,
@@ -624,8 +640,8 @@ mod tests {
 
     fn create_test_loan(borrower: &str) -> Loan {
         Loan {
-            id: 0,
-            borrower: borrower.to_string(),
+            borrower_address: borrower.to_string(),
+            nonce: 0,
             borrowed_amount: 1000000000, // 1000 tokens with 7 decimals
             borrowed_from: "CCDF2NOJXOW73SXXB6BZRAPGVNJU7VMUURXCVLRHCHHAXHOY2TVRLFFP".to_string(),
             collateral_amount: 2000000000, // 2000 tokens with 7 decimals
@@ -670,8 +686,8 @@ mod tests {
         clean_test_data(&mut conn, "TEST_BORROWER");
 
         let test_loan = Loan {
-            id: 0,
-            borrower: "TEST_BORROWER".into(),
+            borrower_address: "TEST_BORROWER".into(),
+            nonce: 0,
             borrowed_amount: 100,
             borrowed_from: "SourceA".into(),
             collateral_amount: 50,
@@ -717,7 +733,7 @@ mod tests {
             .first::<Loan>(&mut conn)
             .unwrap();
 
-        assert_eq!(saved.borrower, test_borrower);
+        assert_eq!(saved.borrower_address, test_borrower);
         assert_eq!(saved.borrowed_amount, test_loan.borrowed_amount);
         assert_eq!(saved.collateral_amount, test_loan.collateral_amount);
 
@@ -755,8 +771,11 @@ mod tests {
         assert_eq!(count_before, 1);
 
         // Delete loan
-        let value = vec!["loan".to_string(), test_borrower.to_string()];
-        delete_loan_from_db(value, &mut conn).await.unwrap();
+        let loan_id = LoanId {
+            borrower_address: test_borrower.to_string(),
+            nonce: 0,
+        };
+        delete_loan_from_db(&loan_id, &mut conn).unwrap();
 
         // Verify loan is deleted
         let count_after = loans
@@ -996,8 +1015,11 @@ mod tests {
         clean_test_data(&mut conn, test_borrower);
 
         // Try to delete non-existent loan
-        let value = vec!["loan".to_string(), test_borrower.to_string()];
-        let result = delete_loan_from_db(value, &mut conn).await;
+        let loan_id = LoanId {
+            borrower_address: test_borrower.to_string(),
+            nonce: 1,
+        };
+        let result = delete_loan_from_db(&loan_id, &mut conn);
 
         // Should succeed (no error) even if loan doesn't exist
         assert!(result.is_ok());
@@ -1053,8 +1075,8 @@ mod tests {
 
         // Test with zero amounts
         let zero_loan = Loan {
-            id: 0,
-            borrower: test_borrower.to_string(),
+            borrower_address: test_borrower.to_string(),
+            nonce: 0,
             borrowed_amount: 0,
             borrowed_from: "POOL1".to_string(),
             collateral_amount: 0,
@@ -1067,8 +1089,8 @@ mod tests {
 
         // Test with large values (but not MAX to avoid potential DB constraints)
         let large_loan = Loan {
-            id: 0,
-            borrower: format!("{}_LARGE", test_borrower),
+            borrower_address: format!("{}_LARGE", test_borrower),
+            nonce: 0,
             borrowed_amount: 1_000_000_000_000_000, // 1 quadrillion
             borrowed_from: "POOL1".to_string(),
             collateral_amount: 2_000_000_000_000_000, // 2 quadrillion

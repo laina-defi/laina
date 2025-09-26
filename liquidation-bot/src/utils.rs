@@ -1,14 +1,15 @@
 use std::collections::HashMap;
 use std::str::FromStr;
 
-use crate::models::Loan;
+use crate::models::{Loan, LoanId};
 use anyhow::{anyhow, Error, Result};
 use base64::engine::general_purpose::STANDARD as base64_engine;
 use base64::Engine;
 use soroban_client::address::{Address, AddressTrait};
 use soroban_client::xdr::int128_helpers::i128_from_pieces;
-use soroban_client::xdr::{Int128Parts, ScSymbol, ScVal, StringM, VecM};
-use stellar_xdr::curr::{Limits, ReadXdr, SorobanAuthorizationEntry};
+use soroban_client::xdr::{
+    Int128Parts, Limits, ReadXdr, ScSymbol, ScVal, SorobanAuthorizationEntry, StringM, VecM,
+};
 
 pub enum Asset {
     Stellar(Address),
@@ -44,43 +45,116 @@ pub fn asset_to_scval(value: &Asset) -> Result<ScVal, Error> {
     }
 }
 
-pub fn decode_loan_from_simulate_response(
-    result: (ScVal, Vec<SorobanAuthorizationEntry>),
-) -> Result<Loan, Error> {
-    let map = extract_map(&result.0).unwrap();
+/// Parses loan ID from deleted loan event topic
+/// The topic structure is: ["loan_deleted", LoanId] where LoanId is a Map with borrower_address and nonce
+pub fn parse_loan_id_from_topic(topic: &[ScVal]) -> Result<crate::models::LoanId, Error> {
+    if topic.len() != 2 {
+        return Err(Error::msg("Expected topic to have exactly 2 elements"));
+    }
 
-    let borrower_value =
-        scval_to_address_string(map.get("borrower").ok_or(Error::msg("no key found"))?)?;
-    let borrowed_from_value =
-        scval_to_address_string(map.get("borrowed_from").ok_or(Error::msg("no key found"))?)?;
-    let borrowed_amount_value = scval_to_i128(
-        map.get("borrowed_amount")
-            .ok_or(Error::msg("no key found"))?,
-    )? as i64;
-    let collateral_amount_value = scval_to_i128(
-        map.get("collateral_amount")
-            .ok_or(Error::msg("no key found"))?,
-    )? as i64;
-    let collateral_from_value = scval_to_address_string(
-        map.get("collateral_from")
-            .ok_or(Error::msg("no key found"))?,
+    // First element should be "loan_deleted"
+    let event_type = &topic[0];
+    match event_type {
+        ScVal::Symbol(symbol) => {
+            if symbol.to_string() != "loan_deleted" {
+                return Err(Error::msg(
+                    "Expected first topic element to be 'loan_deleted'",
+                ));
+            }
+        }
+        _ => return Err(Error::msg("Expected first topic element to be a symbol")),
+    }
+
+    // Second element should be the LoanId map
+    let loan_id_map = extract_map(&topic[1])?;
+
+    let borrower_address = scval_to_address_string(
+        loan_id_map
+            .get("borrower_address")
+            .ok_or(Error::msg("borrower_address not found in loan_id"))?,
     )?;
-    let unpaid_interest_value = scval_to_i128(
-        map.get("unpaid_interest")
-            .ok_or(Error::msg("no key found"))?,
-    )? as i64;
 
-    let loan = Loan {
-        borrower: borrower_value,
-        borrowed_from: borrowed_from_value,
-        id: 1,
-        borrowed_amount: borrowed_amount_value as i64,
-        collateral_amount: collateral_amount_value,
-        collateral_from: collateral_from_value,
-        unpaid_interest: unpaid_interest_value,
+    let nonce_val = loan_id_map
+        .get("nonce")
+        .ok_or(Error::msg("nonce not found in loan_id"))?;
+
+    let nonce = match nonce_val {
+        ScVal::U64(n) => *n as i64,
+        _ => return Err(Error::msg("nonce is not a U64")),
     };
 
-    Ok(loan)
+    Ok(crate::models::LoanId {
+        borrower_address,
+        nonce,
+    })
+}
+
+/// Parses loan data from RPC event response format
+/// The data structure is: Map(Some(ScMap(VecM([ScMapEntry { key: Symbol("loan"), val: Map(...) }])))
+pub fn parse_loan_from_rpc_event(event_value: &ScVal) -> Result<Loan, Error> {
+    let outer_map = extract_map(event_value)?;
+
+    let loan_map_val = outer_map
+        .get("loan")
+        .ok_or(Error::msg("loan key not found in outer map"))?;
+
+    let loan_map = extract_map(loan_map_val)?;
+
+    let loan_id_val = loan_map
+        .get("loan_id")
+        .ok_or(Error::msg("loan_id not found in loan map"))?;
+    let loan_id_map = extract_map(loan_id_val)?;
+
+    let borrower_address = scval_to_address_string(
+        loan_id_map
+            .get("borrower_address")
+            .ok_or(Error::msg("borrower_address not found in loan_id"))?,
+    )?;
+
+    let nonce = match loan_id_map.get("nonce") {
+        Some(ScVal::U64(n)) => *n as i64,
+        _ => return Err(Error::msg("nonce not found or invalid type in loan_id")),
+    };
+
+    let borrowed_amount = scval_to_i128(
+        loan_map
+            .get("borrowed_amount")
+            .ok_or(Error::msg("borrowed_amount not found"))?,
+    )? as i64;
+
+    let borrowed_from = scval_to_address_string(
+        loan_map
+            .get("borrowed_from")
+            .ok_or(Error::msg("borrowed_from not found"))?,
+    )?;
+
+    let collateral_amount = scval_to_i128(
+        loan_map
+            .get("collateral_amount")
+            .ok_or(Error::msg("collateral_amount not found"))?,
+    )? as i64;
+
+    let collateral_from = scval_to_address_string(
+        loan_map
+            .get("collateral_from")
+            .ok_or(Error::msg("collateral_from not found"))?,
+    )?;
+
+    let unpaid_interest = scval_to_i128(
+        loan_map
+            .get("unpaid_interest")
+            .ok_or(Error::msg("unpaid_interest not found"))?,
+    )? as i64;
+
+    Ok(Loan {
+        borrower_address,
+        nonce,
+        borrowed_amount,
+        borrowed_from,
+        collateral_amount,
+        collateral_from,
+        unpaid_interest,
+    })
 }
 
 pub fn scval_to_i128(val: &ScVal) -> Result<i128> {
@@ -182,6 +256,34 @@ pub fn decode_value(value: String) -> Result<Vec<String>, Error> {
     }
 
     Ok(result_parts)
+}
+
+pub fn decode_loan_event(value: String) -> Result<LoanId, Error> {
+    let decoded = base64_engine.decode(value)?;
+    let scval = ScVal::from_xdr(
+        decoded,
+        Limits {
+            depth: 64,
+            len: 10000,
+        },
+    )?;
+
+    let map = extract_map(&scval)?;
+
+    let borrower_address = scval_to_address_string(
+        map.get("borrower_address")
+            .ok_or(Error::msg("borrower_address not found"))?,
+    )?;
+
+    let nonce = match map.get("nonce") {
+        Some(ScVal::U64(n)) => *n as i64,
+        _ => return Err(Error::msg("nonce not found or invalid type")),
+    };
+
+    Ok(LoanId {
+        borrower_address,
+        nonce,
+    })
 }
 
 #[cfg(test)]
@@ -383,91 +485,177 @@ mod tests {
     }
 
     #[test]
-    fn decode_loan_from_simulate_response_missing_keys() {
-        let mut entries = Vec::new();
-        entries.push(ScMapEntry {
-            key: ScVal::Symbol(ScSymbol(StringM::from_str("borrower").unwrap())),
+    fn parse_loan_from_rpc_event_success() {
+        // Create loan_id map
+        let mut loan_id_entries = Vec::new();
+        loan_id_entries.push(ScMapEntry {
+            key: ScVal::Symbol(ScSymbol(StringM::from_str("borrower_address").unwrap())),
             val: ScVal::Address(
                 ScAddress::from_str("CCDF2NOJXOW73SXXB6BZRAPGVNJU7VMUURXCVLRHCHHAXHOY2TVRLFFP")
                     .unwrap(),
             ),
         });
-        // Missing required keys
-
-        let scmap = ScMap(entries.try_into().unwrap());
-        let scval = ScVal::Map(Some(scmap));
-        let result = (scval, Vec::new());
-
-        let loan_result = decode_loan_from_simulate_response(result);
-        assert!(loan_result.is_err());
-    }
-
-    #[test]
-    fn decode_loan_from_simulate_response_success() {
-        let mut entries = Vec::new();
-        entries.push(ScMapEntry {
-            key: ScVal::Symbol(ScSymbol(StringM::from_str("borrower").unwrap())),
-            val: ScVal::Address(
-                ScAddress::from_str("CCDF2NOJXOW73SXXB6BZRAPGVNJU7VMUURXCVLRHCHHAXHOY2TVRLFFP")
-                    .unwrap(),
-            ),
+        loan_id_entries.push(ScMapEntry {
+            key: ScVal::Symbol(ScSymbol(StringM::from_str("nonce").unwrap())),
+            val: ScVal::U64(3),
         });
-        entries.push(ScMapEntry {
+        let loan_id_map = ScMap(loan_id_entries.try_into().unwrap());
+
+        // Create loan map
+        let mut loan_entries = Vec::new();
+        loan_entries.push(ScMapEntry {
+            key: ScVal::Symbol(ScSymbol(StringM::from_str("borrowed_amount").unwrap())),
+            val: ScVal::I128(Int128Parts {
+                hi: 0,
+                lo: 282333967,
+            }),
+        });
+        loan_entries.push(ScMapEntry {
             key: ScVal::Symbol(ScSymbol(StringM::from_str("borrowed_from").unwrap())),
             val: ScVal::Address(
                 ScAddress::from_str("CAXTXTUCA6ILFHCPIN34TWWVL4YL2QDDHYI65MVVQCEMDANFZLXVIEIK")
                     .unwrap(),
             ),
         });
-        entries.push(ScMapEntry {
-            key: ScVal::Symbol(ScSymbol(StringM::from_str("borrowed_amount").unwrap())),
-            val: ScVal::I128(Int128Parts {
-                hi: 0,
-                lo: 1000000000,
-            }),
-        });
-        entries.push(ScMapEntry {
+        loan_entries.push(ScMapEntry {
             key: ScVal::Symbol(ScSymbol(StringM::from_str("collateral_amount").unwrap())),
             val: ScVal::I128(Int128Parts {
                 hi: 0,
-                lo: 2000000000,
+                lo: 136658653,
             }),
         });
-        entries.push(ScMapEntry {
+        loan_entries.push(ScMapEntry {
             key: ScVal::Symbol(ScSymbol(StringM::from_str("collateral_from").unwrap())),
             val: ScVal::Address(
                 ScAddress::from_str("CDUFMIS6ZH3JM5MPNTWMDLBXPNQYV5FBPBGCFT2WWG4EXKGEPOCBNGCZ")
                     .unwrap(),
             ),
         });
-        entries.push(ScMapEntry {
-            key: ScVal::Symbol(ScSymbol(StringM::from_str("unpaid_interest").unwrap())),
+        loan_entries.push(ScMapEntry {
+            key: ScVal::Symbol(ScSymbol(StringM::from_str("health_factor").unwrap())),
             val: ScVal::I128(Int128Parts {
                 hi: 0,
-                lo: 50000000,
+                lo: 11922149,
             }),
         });
+        loan_entries.push(ScMapEntry {
+            key: ScVal::Symbol(ScSymbol(StringM::from_str("last_accrual").unwrap())),
+            val: ScVal::I128(Int128Parts {
+                hi: 0,
+                lo: 10003568,
+            }),
+        });
+        loan_entries.push(ScMapEntry {
+            key: ScVal::Symbol(ScSymbol(StringM::from_str("loan_id").unwrap())),
+            val: ScVal::Map(Some(loan_id_map)),
+        });
+        loan_entries.push(ScMapEntry {
+            key: ScVal::Symbol(ScSymbol(StringM::from_str("unpaid_interest").unwrap())),
+            val: ScVal::I128(Int128Parts { hi: 0, lo: 0 }),
+        });
+        let loan_map = ScMap(loan_entries.try_into().unwrap());
 
-        let scmap = ScMap(entries.try_into().unwrap());
-        let scval = ScVal::Map(Some(scmap));
-        let result = (scval, Vec::new());
+        // Create outer map
+        let mut outer_entries = Vec::new();
+        outer_entries.push(ScMapEntry {
+            key: ScVal::Symbol(ScSymbol(StringM::from_str("loan").unwrap())),
+            val: ScVal::Map(Some(loan_map)),
+        });
+        let outer_map = ScMap(outer_entries.try_into().unwrap());
+        let event_value = ScVal::Map(Some(outer_map));
 
-        let loan = decode_loan_from_simulate_response(result).unwrap();
+        let loan = parse_loan_from_rpc_event(&event_value).unwrap();
+
         assert_eq!(
-            loan.borrower,
+            loan.borrower_address,
             "CCDF2NOJXOW73SXXB6BZRAPGVNJU7VMUURXCVLRHCHHAXHOY2TVRLFFP"
         );
+        assert_eq!(loan.nonce, 3);
+        assert_eq!(loan.borrowed_amount, 282333967);
         assert_eq!(
             loan.borrowed_from,
             "CAXTXTUCA6ILFHCPIN34TWWVL4YL2QDDHYI65MVVQCEMDANFZLXVIEIK"
         );
-        assert_eq!(loan.borrowed_amount, 1000000000);
-        assert_eq!(loan.collateral_amount, 2000000000);
+        assert_eq!(loan.collateral_amount, 136658653);
         assert_eq!(
             loan.collateral_from,
             "CDUFMIS6ZH3JM5MPNTWMDLBXPNQYV5FBPBGCFT2WWG4EXKGEPOCBNGCZ"
         );
-        assert_eq!(loan.unpaid_interest, 50000000);
-        assert_eq!(loan.id, 1);
+        assert_eq!(loan.unpaid_interest, 0);
+    }
+
+    #[test]
+    fn parse_loan_from_rpc_event_missing_loan_key() {
+        let mut outer_entries = Vec::new();
+        outer_entries.push(ScMapEntry {
+            key: ScVal::Symbol(ScSymbol(StringM::from_str("other_key").unwrap())),
+            val: ScVal::U32(100),
+        });
+        let outer_map = ScMap(outer_entries.try_into().unwrap());
+        let event_value = ScVal::Map(Some(outer_map));
+
+        let result = parse_loan_from_rpc_event(&event_value);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("loan key not found"));
+    }
+
+    #[test]
+    fn parse_loan_from_rpc_event_missing_loan_id() {
+        let mut loan_entries = Vec::new();
+        loan_entries.push(ScMapEntry {
+            key: ScVal::Symbol(ScSymbol(StringM::from_str("borrowed_amount").unwrap())),
+            val: ScVal::I128(Int128Parts { hi: 0, lo: 1000 }),
+        });
+        let loan_map = ScMap(loan_entries.try_into().unwrap());
+
+        let mut outer_entries = Vec::new();
+        outer_entries.push(ScMapEntry {
+            key: ScVal::Symbol(ScSymbol(StringM::from_str("loan").unwrap())),
+            val: ScVal::Map(Some(loan_map)),
+        });
+        let outer_map = ScMap(outer_entries.try_into().unwrap());
+        let event_value = ScVal::Map(Some(outer_map));
+
+        let result = parse_loan_from_rpc_event(&event_value);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("loan_id not found"));
+    }
+
+    #[test]
+    fn parse_loan_from_rpc_event_missing_borrower_address() {
+        let mut loan_id_entries = Vec::new();
+        loan_id_entries.push(ScMapEntry {
+            key: ScVal::Symbol(ScSymbol(StringM::from_str("nonce").unwrap())),
+            val: ScVal::U64(3),
+        });
+        let loan_id_map = ScMap(loan_id_entries.try_into().unwrap());
+
+        let mut loan_entries = Vec::new();
+        loan_entries.push(ScMapEntry {
+            key: ScVal::Symbol(ScSymbol(StringM::from_str("loan_id").unwrap())),
+            val: ScVal::Map(Some(loan_id_map)),
+        });
+        let loan_map = ScMap(loan_entries.try_into().unwrap());
+
+        let mut outer_entries = Vec::new();
+        outer_entries.push(ScMapEntry {
+            key: ScVal::Symbol(ScSymbol(StringM::from_str("loan").unwrap())),
+            val: ScVal::Map(Some(loan_map)),
+        });
+        let outer_map = ScMap(outer_entries.try_into().unwrap());
+        let event_value = ScVal::Map(Some(outer_map));
+
+        let result = parse_loan_from_rpc_event(&event_value);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("borrower_address not found"));
     }
 }
