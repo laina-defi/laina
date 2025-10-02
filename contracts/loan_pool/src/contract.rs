@@ -510,8 +510,7 @@ impl LoanPoolContract {
         client.transfer(&user, &loan_manager_addr, &amount_to_admin);
 
         positions::decrease_positions(&e, loan_owner, 0, amount, 0)?;
-        storage::adjust_available_balance(&e, amount)?;
-        storage::adjust_total_balance(&e, amount)?;
+        storage::adjust_available_balance(&e, amount_to_storage)?;
         Ok(())
     }
 
