@@ -5,7 +5,7 @@ import { Loading } from '@components/Loading';
 import { usePools } from '@contexts/pool-context';
 import { useWallet } from '@contexts/wallet-context';
 import { stroopsToDecimalString } from '@lib/converters';
-import { SCALAR_7, toCents } from '@lib/formatting';
+import { toCents } from '@lib/formatting';
 import type { SupportedCurrency } from 'currencies';
 import { useState } from 'react';
 import { CURRENCY_BINDINGS } from 'src/currency-bindings';
@@ -27,7 +27,7 @@ const WithdrawView = ({ ticker, onBack }: WithdrawViewProps) => {
   const pool = pools?.[ticker];
   const price = prices?.[ticker];
 
-  const valueCents = price ? toCents(price, BigInt(amount) * SCALAR_7) : undefined;
+  const valueCents = price ? toCents(price, amount) : undefined;
 
   if (!pool) {
     console.warn('PoolState is not loaded');
