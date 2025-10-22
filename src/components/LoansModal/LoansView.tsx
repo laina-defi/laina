@@ -26,7 +26,7 @@ const LoansView = ({ onClose, onRepay }: LoansViewProps) => {
               <th>Borrowed</th>
               <th>Collateral</th>
               <th>Health</th>
-              <th>APR</th>
+              <th>Net APR</th>
               <th />
             </tr>
           </thead>
@@ -60,12 +60,34 @@ const TableRow = ({ loan, onRepay }: TableRowProps) => {
   const loanPrice = prices?.[borrowedTicker];
   const collateralPrice = prices?.[collateralTicker];
 
-  const pool = pools?.[borrowedTicker];
+  const borrowed_pool = pools?.[borrowedTicker];
+  const collateral_pool = pools?.[collateralTicker];
+
+  const collateralLendedTokens = collateral_pool
+    ? collateral_pool.totalBalanceTokens - collateral_pool.availableBalanceTokens
+    : 0n;
+  const collateralUtilization = collateral_pool?.totalBalanceTokens
+    ? Number(collateralLendedTokens) / Number(collateral_pool.totalBalanceTokens)
+    : 0;
+  const collateralSupplyYield = collateral_pool
+    ? BigInt(Math.round(Number(collateral_pool.annualInterestRate) * collateralUtilization))
+    : 0n;
 
   const handleRepayClicked = () => onRepay(loan);
 
   const loanAmountCents = loanPrice ? toCents(loanPrice, borrowedAmount) : undefined;
   const collateralAmountCents = collateralPrice ? toCents(collateralPrice, collateralAmount) : undefined;
+
+  const net_apr =
+    borrowed_pool && collateral_pool && loanAmountCents && collateralAmountCents
+      ? BigInt(
+          Math.round(
+            (Number(borrowed_pool.annualInterestRate) * Number(loanAmountCents) -
+              Number(collateralSupplyYield) * Number(collateralAmountCents)) /
+              Number(loanAmountCents),
+          ),
+        )
+      : null;
 
   const healthFactor =
     loanAmountCents && loanAmountCents > 0n ? Number(collateralAmountCents) / Number(loanAmountCents) : 0;
@@ -90,7 +112,18 @@ const TableRow = ({ loan, onRepay }: TableRowProps) => {
       <td>
         <CompactHealthFactor value={healthFactor} />
       </td>
-      <td>{pool ? formatAPR(pool.annualInterestRate) : null}</td>
+      <td>
+        {net_apr ? (
+          <div className="relative group">
+            <span>{formatAPR(net_apr)}</span>
+            <span className="ml-1 text-xs text-gray-500">ⓘ</span>
+            <div className="absolute bottom-full left-0 mb-2 px-2 py-1 bg-black text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none whitespace-nowrap z-10">
+              <div>Borrowed APR: {borrowed_pool ? formatAPR(borrowed_pool.annualInterestRate) : null}</div>
+              <div>Collateral APY: {collateral_pool ? formatAPR(collateralSupplyYield) : null}</div>
+            </div>
+          </div>
+        ) : null}
+      </td>
       <td>
         <Button onClick={handleRepayClicked}>Repay</Button>
       </td>
