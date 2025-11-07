@@ -1577,7 +1577,6 @@ mod tests {
         let admin3 = Address::generate(e);
         let user = Address::generate(e);
         let user2 = Address::generate(e);
-        let user3 = Address::generate(e);
         let oracle = Address::generate(e);
 
         // loan manager

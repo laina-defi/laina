@@ -61,15 +61,11 @@ const TableRow = ({ receivableShares, ticker, onWithdraw }: TableRowProps) => {
   const price = prices?.[ticker];
   const pool = pools?.[ticker];
 
-  const collateralLendedTokens = pool
-    ? pool.totalBalanceTokens - pool.availableBalanceTokens
-    : 0n;
+  const collateralLendedTokens = pool ? pool.totalBalanceTokens - pool.availableBalanceTokens : 0n;
   const collateralUtilization = pool?.totalBalanceTokens
     ? Number(collateralLendedTokens) / Number(pool.totalBalanceTokens)
     : 0;
-  const collateralSupplyYield = pool
-    ? BigInt(Math.round(Number(pool.annualInterestRate) * collateralUtilization))
-    : 0n;
+  const collateralSupplyYield = pool ? BigInt(Math.round(Number(pool.annualInterestRate) * collateralUtilization)) : 0n;
 
   if (!pool) {
     console.warn('PoolState is not loaded');
