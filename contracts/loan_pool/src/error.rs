@@ -19,4 +19,5 @@ pub enum LoanPoolError {
     InterestRateMultiplier = 13,
     PoolStatus = 14,
     WrongStatus = 15,
+    TooSmallFirstDeposit = 16,
 }

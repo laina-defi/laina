@@ -605,9 +605,9 @@ mod tests {
 
         // Invoke contract to check that it is initialized.
         let usdc_balance = pool_usdc_client.get_contract_balance();
-        assert_eq!(usdc_balance, 1000);
+        assert_eq!(usdc_balance, 100_000);
         let eurc_balance = pool_eurc_client.get_contract_balance();
-        assert_eq!(eurc_balance, 1000);
+        assert_eq!(eurc_balance, 100_000);
     }
 
     #[test]
@@ -723,8 +723,8 @@ mod tests {
             ..
         } = setup_test_env(&e);
 
-        xlm_asset_client.mint(&admin, &9_001);
-        pool_xlm_client.deposit(&admin, &9_001);
+        xlm_asset_client.mint(&admin, &900_001);
+        pool_xlm_client.deposit(&admin, &900_001);
         usdc_asset_client.mint(&user, &100_000);
 
         // Create a loan.
@@ -755,7 +755,7 @@ mod tests {
 
         let user_loan = manager_client.get_loan(&loan.loan_id);
 
-        assert_eq!(user_loan.borrowed_amount, 929);
+        assert_eq!(user_loan.borrowed_amount, 920);
         assert_eq!(user_loan.collateral_amount, 100_000);
         assert_eq!(xlm_token_client.balance(&manager_addr), 2);
 
@@ -795,7 +795,7 @@ mod tests {
         // Create a loan.
         let mut loan =
             manager_client.create_loan(&user, &100, &pool_usdc_addr, &500, &pool_xlm_addr);
-        assert_eq!(pool_usdc_client.get_available_balance(), 900);
+        assert_eq!(pool_usdc_client.get_available_balance(), 99_900);
 
         // Move in time
         e.ledger().with_mut(|li| {
@@ -820,20 +820,20 @@ mod tests {
         assert_eq!(loan.borrowed_amount, 52);
 
         assert_eq!((52, 2), manager_client.repay(&loan.loan_id, &50));
-        assert_eq!(1000, pool_usdc_client.get_available_balance());
-        assert_eq!(1002, pool_usdc_client.get_contract_balance());
-        assert_eq!(1000, pool_usdc_client.get_total_balance_shares());
+        assert_eq!(100_000, pool_usdc_client.get_available_balance());
+        assert_eq!(100_002, pool_usdc_client.get_contract_balance());
+        assert_eq!(100_000, pool_usdc_client.get_total_balance_shares());
 
         // Create a new user that should not be able to withdraw more than what they have deposited even if the pool already has interest
         let new_user = Address::generate(&e);
         usdc_asset_client.mint(&new_user, &1_000);
 
         pool_usdc_client.deposit(&new_user, &1000);
-        assert_eq!(2002, pool_usdc_client.get_contract_balance());
+        assert_eq!(101002, pool_usdc_client.get_contract_balance());
         let positions_new_user = Positions {
             collateral: 0,
             liabilities: 0,
-            receivable_shares: 998,
+            receivable_shares: 999,
         };
         assert_eq!(
             positions_new_user,
@@ -843,17 +843,17 @@ mod tests {
         let test_positions_admin = Positions {
             collateral: 0,
             liabilities: 0,
-            receivable_shares: 1000,
+            receivable_shares: 100_000,
         };
         assert_eq!(
             test_positions_admin,
             pool_usdc_client.get_user_positions(&admin)
         );
         let pool_state = PoolState {
-            annual_interest_rate: 200887,
-            available_balance_tokens: 2000,
-            total_balance_shares: 1998,
-            total_balance_tokens: 2002,
+            annual_interest_rate: 200_017,
+            available_balance_tokens: 101_000,
+            total_balance_shares: 100_999,
+            total_balance_tokens: 101_002,
         };
         assert_eq!(pool_state, pool_usdc_client.get_pool_state());
 
@@ -1015,16 +1015,16 @@ mod tests {
         assert_eq!(loan_usdc.collateral_amount, 500);
 
         assert_eq!((52, 2), manager_client.repay(&loan_usdc.loan_id, &50));
-        assert_eq!(1000, pool_usdc_client.get_available_balance());
-        assert_eq!(1002, pool_usdc_client.get_contract_balance());
-        assert_eq!(1000, pool_usdc_client.get_total_balance_shares());
+        assert_eq!(100_000, pool_usdc_client.get_available_balance());
+        assert_eq!(100_002, pool_usdc_client.get_contract_balance());
+        assert_eq!(100_000, pool_usdc_client.get_total_balance_shares());
 
         loan_eurc = manager_client.get_loan(&loan_eurc.loan_id);
         assert_eq!(loan_eurc.borrowed_amount, 100);
         assert_eq!(loan_eurc.collateral_amount, 500);
-        assert_eq!(900, pool_eurc_client.get_available_balance());
-        assert_eq!(1000, pool_eurc_client.get_contract_balance());
-        assert_eq!(1000, pool_eurc_client.get_total_balance_shares());
+        assert_eq!(99_900, pool_eurc_client.get_available_balance());
+        assert_eq!(100_000, pool_eurc_client.get_contract_balance());
+        assert_eq!(100_000, pool_eurc_client.get_total_balance_shares());
     }
 
     #[test]
@@ -1079,9 +1079,9 @@ mod tests {
 
         let loans = manager_client.get_loans(&user);
         assert_eq!(loans.len(), 0);
-        assert_eq!(1002, pool_usdc_client.get_available_balance());
-        assert_eq!(1002, pool_usdc_client.get_contract_balance());
-        assert_eq!(1000, pool_usdc_client.get_total_balance_shares());
+        assert_eq!(100002, pool_usdc_client.get_available_balance());
+        assert_eq!(100002, pool_usdc_client.get_contract_balance());
+        assert_eq!(100000, pool_usdc_client.get_total_balance_shares());
     }
 
     #[test]
@@ -1141,9 +1141,9 @@ mod tests {
                 .repay_and_close_manager(&(usdc_loan.borrowed_amount + 45), &usdc_loan.loan_id)
         );
 
-        assert_eq!(1002, pool_usdc_client.get_available_balance());
-        assert_eq!(1002, pool_usdc_client.get_contract_balance());
-        assert_eq!(1000, pool_usdc_client.get_total_balance_shares());
+        assert_eq!(100002, pool_usdc_client.get_available_balance());
+        assert_eq!(100002, pool_usdc_client.get_contract_balance());
+        assert_eq!(100000, pool_usdc_client.get_total_balance_shares());
         assert_eq!(43, usdc_token_client.balance(&user));
 
         assert_eq!(300, pool_xlm_client.get_available_balance());
@@ -1208,24 +1208,24 @@ mod tests {
         } = setup_test_env(&e);
 
         // print more money
-        usdc_asset_client.mint(&admin, &9_001);
-        eurc_asset_client.mint(&admin, &9_001);
-        xlm_asset_client.mint(&user, &30_000);
-        pool_usdc_client.deposit(&admin, &9_001);
-        pool_eurc_client.deposit(&admin, &9_001);
+        usdc_asset_client.mint(&admin, &900_001);
+        eurc_asset_client.mint(&admin, &900_001);
+        xlm_asset_client.mint(&user, &300_000);
+        pool_usdc_client.deposit(&admin, &900_001);
+        pool_eurc_client.deposit(&admin, &900_001);
 
         // ACT
         // Create two loans, one to liquidate.
         let mut usdc_loan =
-            manager_client.create_loan(&user, &10_000, &pool_usdc_addr, &12_505, &pool_xlm_addr);
+            manager_client.create_loan(&user, &100_000, &pool_usdc_addr, &125_050, &pool_xlm_addr);
         let mut eurc_loan =
-            manager_client.create_loan(&user, &10_000, &pool_eurc_addr, &12_505, &pool_xlm_addr);
+            manager_client.create_loan(&user, &100_000, &pool_eurc_addr, &125_050, &pool_xlm_addr);
 
         manager_client.add_interest(&usdc_loan.loan_id);
         manager_client.add_interest(&eurc_loan.loan_id);
 
         // Here borrowed amount should be the same as time has not moved. add_interest() is only called to store the LastUpdate sequence number.
-        assert_eq!(usdc_loan.borrowed_amount, 10_000);
+        assert_eq!(usdc_loan.borrowed_amount, 100_000);
         assert_eq!(usdc_loan.health_factor, 10_004_000);
 
         // Move time
@@ -1242,9 +1242,9 @@ mod tests {
 
         usdc_loan = manager_client.get_loan(&usdc_loan.loan_id);
 
-        assert_eq!(usdc_loan.borrowed_amount, 10_760);
-        assert_eq!(usdc_loan.health_factor, 9_297_397);
-        assert_eq!(usdc_loan.collateral_amount, 12_505);
+        assert_eq!(usdc_loan.borrowed_amount, 100_732);
+        assert_eq!(usdc_loan.health_factor, 9_931_302);
+        assert_eq!(usdc_loan.collateral_amount, 125_050);
 
         e.ledger().with_mut(|li| {
             li.sequence_number = 100_000 + 1_000;
@@ -1255,14 +1255,14 @@ mod tests {
         manager_client.liquidate(&admin, &usdc_loan.loan_id, &5_000);
 
         usdc_loan = manager_client.get_loan(&usdc_loan.loan_id);
-        assert_eq!(usdc_loan.borrowed_amount, 5_760);
-        assert_eq!(usdc_loan.health_factor, 9_729_166);
-        assert_eq!(usdc_loan.collateral_amount, 7_005);
+        assert_eq!(usdc_loan.borrowed_amount, 95_732);
+        assert_eq!(usdc_loan.health_factor, 9_990_389);
+        assert_eq!(usdc_loan.collateral_amount, 119_550);
 
         eurc_loan = manager_client.get_loan(&eurc_loan.loan_id);
-        assert_eq!(eurc_loan.borrowed_amount, 10_760);
-        assert_eq!(eurc_loan.health_factor, 9_297_397);
-        assert_eq!(eurc_loan.collateral_amount, 12_505);
+        assert_eq!(eurc_loan.borrowed_amount, 100_732);
+        assert_eq!(eurc_loan.health_factor, 9_931_302);
+        assert_eq!(eurc_loan.collateral_amount, 125_050);
     }
 
     #[test]
@@ -1341,11 +1341,11 @@ mod tests {
         // which should result in user getting shares as collateral
         // of which amount does not equal amount of tokens.
 
-        eurc_asset_client.mint(&user2, &1_000);
-        usdc_asset_client.mint(&user2, &1_000);
-        xlm_asset_client.mint(&admin, &1_000);
-        xlm_asset_client.mint(&user2, &1_000);
-        pool_xlm_client.deposit(&admin, &1_000);
+        eurc_asset_client.mint(&user2, &100_000);
+        usdc_asset_client.mint(&user2, &100_000);
+        xlm_asset_client.mint(&admin, &100_000);
+        xlm_asset_client.mint(&user2, &100_000);
+        pool_xlm_client.deposit(&admin, &100_000);
 
         // Create a loan.
         let mut loan =
@@ -1354,8 +1354,8 @@ mod tests {
         // Here borrowed amount should be the same as time has not moved. add_interest() is only called to store the LastUpdate sequence number.
         assert_eq!(loan.borrowed_amount, 100);
         assert_eq!(loan.health_factor, 80_000_000);
-        assert_eq!(xlm_token_client.balance(&user2), 1100);
-        assert_eq!(usdc_token_client.balance(&user2), 0);
+        assert_eq!(xlm_token_client.balance(&user2), 100_100);
+        assert_eq!(usdc_token_client.balance(&user2), 99_000);
 
         // Move time
         e.ledger().with_mut(|li| {
@@ -1437,9 +1437,9 @@ mod tests {
 
         eurc_asset_client.mint(&user2, &1_000);
         usdc_asset_client.mint(&user2, &1_000);
-        xlm_asset_client.mint(&admin, &1_000);
+        xlm_asset_client.mint(&admin, &100_000);
         xlm_asset_client.mint(&user2, &1_000);
-        pool_xlm_client.deposit(&admin, &1_000);
+        pool_xlm_client.deposit(&admin, &100_000);
 
         // Create a loan.
         let mut loan =
@@ -1473,25 +1473,26 @@ mod tests {
         usdc_asset_client.mint(&user, &900);
         xlm_asset_client.mint(&user, &2000);
 
-        assert_eq!(1002, pool_xlm_client.get_available_balance());
-        assert_eq!(1002, pool_xlm_client.get_contract_balance());
-        assert_eq!(1000, pool_xlm_client.get_total_balance_shares());
+        assert_eq!(100002, pool_xlm_client.get_available_balance());
+        assert_eq!(100002, pool_xlm_client.get_contract_balance());
+        assert_eq!(100000, pool_xlm_client.get_total_balance_shares());
         assert_eq!(3000, xlm_asset_client.balance(&user));
-        assert_eq!(1000, pool_usdc_client.get_available_balance());
+        assert_eq!(100000, pool_usdc_client.get_available_balance());
 
         let loan = manager_client.create_loan(&user, &900, &pool_usdc_addr, &3000, &pool_xlm_addr);
 
-        assert_eq!(2994, loan.collateral_amount);
+        assert_eq!(2999, loan.collateral_amount);
 
+        usdc_asset_client.mint(&user2, &100_000);
         // Create a loan.
         let mut loan2 =
-            manager_client.create_loan(&user2, &100, &pool_xlm_addr, &1000, &pool_usdc_addr);
+            manager_client.create_loan(&user2, &10_000, &pool_xlm_addr, &100_000, &pool_usdc_addr);
 
         // Here borrowed amount should be the same as time has not moved. add_interest() is only called to store the LastUpdate sequence number.
-        assert_eq!(loan2.borrowed_amount, 100);
+        assert_eq!(loan2.borrowed_amount, 10_000);
         assert_eq!(loan2.health_factor, 80_000_000);
-        assert_eq!(xlm_token_client.balance(&user2), 1098);
-        assert_eq!(usdc_token_client.balance(&user2), 0);
+        assert_eq!(xlm_token_client.balance(&user2), 10998);
+        assert_eq!(usdc_token_client.balance(&user2), 1000);
 
         // Move time
         e.ledger().with_mut(|li| {
@@ -1504,11 +1505,12 @@ mod tests {
 
         loan2 = manager_client.add_interest(&loan2.loan_id);
 
-        assert_eq!(loan2.borrowed_amount, 102);
-        assert_eq!(loan2.health_factor, 78_431_372);
-        assert_eq!(loan2.collateral_amount, 1000);
+        assert_eq!(loan2.borrowed_amount, 10286);
+        assert_eq!(loan2.health_factor, 77_775_617);
+        assert_eq!(loan2.collateral_amount, 100_000);
 
-        manager_client.repay_and_close_manager(&110, &loan2.loan_id);
+        xlm_asset_client.mint(&user2, &10_000);
+        manager_client.repay_and_close_manager(&11_000, &loan2.loan_id);
 
         // Move in time
         e.ledger().with_mut(|li| {
@@ -1536,13 +1538,13 @@ mod tests {
         });
         let loans = manager_client.get_loans(&user);
         assert_eq!(loans.len(), 0);
-        assert_eq!(1135, pool_usdc_client.get_available_balance());
-        assert_eq!(1135, pool_usdc_client.get_contract_balance());
-        assert_eq!(1000, pool_usdc_client.get_total_balance_shares());
-        assert_eq!(1003, pool_xlm_client.get_available_balance());
-        assert_eq!(1003, pool_xlm_client.get_contract_balance());
-        assert_eq!(1000, pool_xlm_client.get_total_balance_shares());
-        assert_eq!(3001, xlm_asset_client.balance(&user)); // xlm balance grew from 3000 -> 3001
+        assert_eq!(100034, pool_usdc_client.get_available_balance());
+        assert_eq!(100034, pool_usdc_client.get_contract_balance());
+        assert_eq!(100000, pool_usdc_client.get_total_balance_shares());
+        assert_eq!(100254, pool_xlm_client.get_available_balance());
+        assert_eq!(100254, pool_xlm_client.get_contract_balance());
+        assert_eq!(100000, pool_xlm_client.get_total_balance_shares());
+        assert_eq!(3006, xlm_asset_client.balance(&user)); // xlm balance grew from 3000 -> 3006
                                                            // while being collateral
     }
 
@@ -1630,8 +1632,8 @@ mod tests {
         e.register_at(&reflector_addr, oracle::WASM, ());
 
         // Deposit some of the admin's tokens for borrowing.
-        pool_usdc_client.deposit(&admin, &1_000);
-        pool_eurc_client.deposit(&admin, &1_000);
+        pool_usdc_client.deposit(&admin, &100_000);
+        pool_eurc_client.deposit(&admin, &100_000);
 
         TestEnv {
             admin,

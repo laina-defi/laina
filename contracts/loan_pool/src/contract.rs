@@ -1,7 +1,7 @@
 use crate::dto::PoolState;
 use crate::error::LoanPoolError;
 use crate::interest::{self, get_interest};
-use crate::storage::{Currency, PoolStatus, Positions};
+use crate::storage::{Currency, PoolStatus, Positions, MINIMUM_FIRST_DEPOSIT};
 use crate::{positions, storage};
 
 use soroban_sdk::{contract, contractimpl, contractmeta, token, Address, BytesN, Env};
@@ -76,6 +76,9 @@ impl LoanPoolContract {
             let current_contract_balance = Self::get_contract_balance(e.clone())?;
 
             let shares_issued = if current_contract_balance == 0 {
+                if amount < MINIMUM_FIRST_DEPOSIT {
+                    return Err(LoanPoolError::TooSmallFirstDeposit);
+                }
                 amount
             } else {
                 current_shares
@@ -617,11 +620,11 @@ mod test {
         };
 
         let user = Address::generate(&e);
-        stellar_asset.mint(&user, &1000);
+        stellar_asset.mint(&user, &100_000);
 
         let contract_id = e.register(LoanPoolContract, ());
         let contract_client = LoanPoolContractClient::new(&e, &contract_id);
-        let amount: i128 = 100;
+        let amount: i128 = 100_000;
 
         contract_client.initialize(
             &Address::generate(&e),
@@ -660,8 +663,8 @@ mod test {
 
         // Deposit funds for the borrower to loan.
         let depositer = Address::generate(&e);
-        asset.mint(&depositer, &100);
-        contract_client.deposit(&depositer, &100);
+        asset.mint(&depositer, &100_000);
+        contract_client.deposit(&depositer, &100_000);
 
         // Borrow some of those funds
         let borrower = Address::generate(&e);
@@ -686,11 +689,11 @@ mod test {
         };
 
         let user = Address::generate(&e);
-        stellar_asset.mint(&user, &1000);
+        stellar_asset.mint(&user, &100_000);
 
         let contract_id = e.register(LoanPoolContract, ());
         let contract_client = LoanPoolContractClient::new(&e, &contract_id);
-        let amount: i128 = 100;
+        let amount: i128 = 100_000;
 
         contract_client.initialize(
             &Address::generate(&e),
@@ -786,11 +789,11 @@ mod test {
         };
 
         let user = Address::generate(&e);
-        stellar_asset.mint(&user, &1000);
+        stellar_asset.mint(&user, &100_000);
 
         let contract_id = e.register(LoanPoolContract, ());
         let contract_client = LoanPoolContractClient::new(&e, &contract_id);
-        let amount: i128 = 100;
+        let amount: i128 = 100_000;
 
         contract_client.initialize(
             &Address::generate(&e),
@@ -866,14 +869,14 @@ mod test {
         };
 
         let user = Address::generate(&e);
-        stellar_asset.mint(&user, &1000);
+        stellar_asset.mint(&user, &100_000);
 
         let user2 = Address::generate(&e);
-        stellar_asset.mint(&user2, &1000);
+        stellar_asset.mint(&user2, &100_000);
 
         let contract_id = e.register(LoanPoolContract, ());
         let contract_client = LoanPoolContractClient::new(&e, &contract_id);
-        let amount: i128 = 1000;
+        let amount: i128 = 100_000;
 
         contract_client.initialize(
             &Address::generate(&e),
@@ -885,19 +888,19 @@ mod test {
 
         assert_eq!(result, amount);
 
-        contract_client.borrow(&user2, &999);
+        contract_client.borrow(&user2, &99_999);
 
         e.ledger().with_mut(|li| {
             li.timestamp = 1 + 31_556_926; // one year in seconds
         });
 
         contract_client.add_interest_to_accrual();
-        // value of 12980000 is expected as usage is 999/1000 and max interest rate is 30%
+        // value of 12999800 is expected as usage is 99_999/100_000 and max interest rate is 30%
         // Time in ledgers is shifted by ~one year.
-        assert_eq!(12_980_000, contract_client.get_accrual());
+        assert_eq!(12_999_800, contract_client.get_accrual());
 
         contract_client.add_interest_to_accrual();
-        assert_eq!(12_980_000, contract_client.get_accrual());
+        assert_eq!(12_999_800, contract_client.get_accrual());
     }
     #[test]
     fn add_accrual_half_usage() {
@@ -920,14 +923,14 @@ mod test {
         };
 
         let user = Address::generate(&e);
-        stellar_asset.mint(&user, &1000);
+        stellar_asset.mint(&user, &100_000);
 
         let user2 = Address::generate(&e);
-        stellar_asset.mint(&user2, &1000);
+        stellar_asset.mint(&user2, &100_000);
 
         let contract_id = e.register(LoanPoolContract, ());
         let contract_client = LoanPoolContractClient::new(&e, &contract_id);
-        let amount: i128 = 1000;
+        let amount: i128 = 100_000;
 
         contract_client.initialize(
             &Address::generate(&e),
@@ -939,7 +942,7 @@ mod test {
 
         assert_eq!(result, amount);
 
-        contract_client.borrow(&user2, &500);
+        contract_client.borrow(&user2, &50_000);
 
         e.ledger().with_mut(|li| {
             li.timestamp = 1 + 31_556_926; // one year in seconds
