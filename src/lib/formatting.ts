@@ -52,5 +52,5 @@ export const formatAPR = (apr: bigint): string => {
 };
 
 export const formatAPY = (apr: bigint): string => {
-  return `${((0.9 * Number(apr)) / 100_000).toFixed(2)} %`;
+  return `${(Number(apr) / 100_000).toFixed(2)} %`;
 };

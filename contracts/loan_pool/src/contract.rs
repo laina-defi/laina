@@ -1,7 +1,7 @@
 use crate::dto::PoolState;
 use crate::error::LoanPoolError;
 use crate::interest::{self, get_interest};
-use crate::storage::{Currency, PoolStatus, Positions};
+use crate::storage::{Currency, PoolStatus, Positions, MINIMUM_FIRST_DEPOSIT};
 use crate::{positions, storage};
 
 use soroban_sdk::{contract, contractimpl, contractmeta, token, Address, BytesN, Env};
@@ -53,7 +53,7 @@ impl LoanPoolContract {
         Ok(())
     }
 
-    /// Deposits token. Also, mints pool shares for the "user" Identifier.
+    /// Deposits token.
     pub fn deposit(e: Env, user: Address, amount: i128) -> Result<i128, LoanPoolError> {
         user.require_auth();
 
@@ -76,6 +76,9 @@ impl LoanPoolContract {
             let current_contract_balance = Self::get_contract_balance(e.clone())?;
 
             let shares_issued = if current_contract_balance == 0 {
+                if amount < MINIMUM_FIRST_DEPOSIT {
+                    return Err(LoanPoolError::TooSmallFirstDeposit);
+                }
                 amount
             } else {
                 current_shares
@@ -124,13 +127,7 @@ impl LoanPoolContract {
         if amount > available_balance_tokens {
             return Err(LoanPoolError::WithdrawOverBalance);
         }
-        let total_balance_shares = Self::get_total_balance_shares(e.clone())?;
-        let total_balance_tokens = Self::get_contract_balance(e.clone())?;
-        let shares_to_decrease = amount
-            .checked_mul(total_balance_shares)
-            .ok_or(LoanPoolError::OverOrUnderFlow)?
-            .checked_div(total_balance_tokens)
-            .ok_or(LoanPoolError::OverOrUnderFlow)?;
+        let shares_to_decrease = storage::get_shares_from_tokens(&e, amount)?;
 
         // Check that user is not trying to move more than receivables (TODO: also include collateral?)
         if shares_to_decrease > receivable_shares {
@@ -259,18 +256,29 @@ impl LoanPoolContract {
             }
         }
 
+        let shares_issued = storage::get_shares_from_tokens(&e, amount)?;
+
+        storage::adjust_available_balance(&e, amount)?;
+        storage::adjust_total_shares(&e, shares_issued)?;
+        storage::adjust_total_balance(&e, amount)?;
+
         let token_address = &storage::read_currency(&e)?.token_address;
         let client = token::Client::new(&e, token_address);
         client.transfer(&user, e.current_contract_address(), &amount);
 
         let liabilities: i128 = 0;
         let receivables: i128 = 0;
-        positions::increase_positions(&e, user.clone(), receivables, liabilities, amount)?;
+        positions::increase_positions(&e, user.clone(), receivables, liabilities, shares_issued)?;
 
         Ok(amount)
     }
 
-    pub fn withdraw_collateral(e: Env, user: Address, amount: i128) -> Result<i128, LoanPoolError> {
+    pub fn withdraw_collateral(
+        e: Env,
+        user: Address,
+        amount: i128,
+        amount_in_shares: i128,
+    ) -> Result<i128, LoanPoolError> {
         user.require_auth();
         Self::add_interest_to_accrual(e.clone())?;
 
@@ -284,7 +292,28 @@ impl LoanPoolContract {
 
         let liabilities: i128 = 0;
         let receivables: i128 = 0;
-        positions::decrease_positions(&e, user.clone(), receivables, liabilities, amount)?;
+        positions::decrease_positions(
+            &e,
+            user.clone(),
+            receivables,
+            liabilities,
+            amount_in_shares,
+        )?;
+
+        storage::adjust_available_balance(
+            &e,
+            amount.checked_neg().ok_or(LoanPoolError::OverOrUnderFlow)?,
+        )?;
+        storage::adjust_total_shares(
+            &e,
+            amount_in_shares
+                .checked_neg()
+                .ok_or(LoanPoolError::OverOrUnderFlow)?,
+        )?;
+        storage::adjust_total_balance(
+            &e,
+            amount.checked_neg().ok_or(LoanPoolError::OverOrUnderFlow)?,
+        )?;
 
         Ok(amount)
     }
@@ -357,6 +386,14 @@ impl LoanPoolContract {
 
     pub fn get_interest(e: Env) -> Result<i128, LoanPoolError> {
         interest::get_interest(e)
+    }
+
+    pub fn get_shares_from_tokens(e: Env, amount_tokens: i128) -> Result<i128, LoanPoolError> {
+        storage::get_shares_from_tokens(&e, amount_tokens)
+    }
+
+    pub fn get_tokens_from_shares(e: Env, amount_shares: i128) -> Result<i128, LoanPoolError> {
+        storage::get_tokens_from_shares(&e, amount_shares)
     }
 
     pub fn get_pool_state(e: Env) -> Result<PoolState, LoanPoolError> {
@@ -518,6 +555,7 @@ impl LoanPoolContract {
         e: Env,
         user: Address,
         amount_collateral: i128,
+        amount_collateral_shares: i128,
         loan_owner: Address,
     ) -> Result<(), LoanPoolError> {
         let loan_manager_addr = storage::read_loan_manager_addr(&e)?;
@@ -526,7 +564,7 @@ impl LoanPoolContract {
         let client = token::Client::new(&e, &storage::read_currency(&e)?.token_address);
         client.transfer(&e.current_contract_address(), &user, &amount_collateral);
 
-        positions::decrease_positions(&e, loan_owner, 0, 0, amount_collateral)?;
+        positions::decrease_positions(&e, loan_owner, 0, 0, amount_collateral_shares)?;
         Ok(())
     }
 }
@@ -582,11 +620,11 @@ mod test {
         };
 
         let user = Address::generate(&e);
-        stellar_asset.mint(&user, &1000);
+        stellar_asset.mint(&user, &100_000);
 
         let contract_id = e.register(LoanPoolContract, ());
         let contract_client = LoanPoolContractClient::new(&e, &contract_id);
-        let amount: i128 = 100;
+        let amount: i128 = 100_000;
 
         contract_client.initialize(
             &Address::generate(&e),
@@ -625,8 +663,8 @@ mod test {
 
         // Deposit funds for the borrower to loan.
         let depositer = Address::generate(&e);
-        asset.mint(&depositer, &100);
-        contract_client.deposit(&depositer, &100);
+        asset.mint(&depositer, &100_000);
+        contract_client.deposit(&depositer, &100_000);
 
         // Borrow some of those funds
         let borrower = Address::generate(&e);
@@ -651,11 +689,11 @@ mod test {
         };
 
         let user = Address::generate(&e);
-        stellar_asset.mint(&user, &1000);
+        stellar_asset.mint(&user, &100_000);
 
         let contract_id = e.register(LoanPoolContract, ());
         let contract_client = LoanPoolContractClient::new(&e, &contract_id);
-        let amount: i128 = 100;
+        let amount: i128 = 100_000;
 
         contract_client.initialize(
             &Address::generate(&e),
@@ -751,11 +789,11 @@ mod test {
         };
 
         let user = Address::generate(&e);
-        stellar_asset.mint(&user, &1000);
+        stellar_asset.mint(&user, &100_000);
 
         let contract_id = e.register(LoanPoolContract, ());
         let contract_client = LoanPoolContractClient::new(&e, &contract_id);
-        let amount: i128 = 100;
+        let amount: i128 = 100_000;
 
         contract_client.initialize(
             &Address::generate(&e),
@@ -831,14 +869,14 @@ mod test {
         };
 
         let user = Address::generate(&e);
-        stellar_asset.mint(&user, &1000);
+        stellar_asset.mint(&user, &100_000);
 
         let user2 = Address::generate(&e);
-        stellar_asset.mint(&user2, &1000);
+        stellar_asset.mint(&user2, &100_000);
 
         let contract_id = e.register(LoanPoolContract, ());
         let contract_client = LoanPoolContractClient::new(&e, &contract_id);
-        let amount: i128 = 1000;
+        let amount: i128 = 100_000;
 
         contract_client.initialize(
             &Address::generate(&e),
@@ -850,19 +888,19 @@ mod test {
 
         assert_eq!(result, amount);
 
-        contract_client.borrow(&user2, &999);
+        contract_client.borrow(&user2, &99_999);
 
         e.ledger().with_mut(|li| {
             li.timestamp = 1 + 31_556_926; // one year in seconds
         });
 
         contract_client.add_interest_to_accrual();
-        // value of 12980000 is expected as usage is 999/1000 and max interest rate is 30%
+        // value of 12999800 is expected as usage is 99_999/100_000 and max interest rate is 30%
         // Time in ledgers is shifted by ~one year.
-        assert_eq!(12_980_000, contract_client.get_accrual());
+        assert_eq!(12_999_800, contract_client.get_accrual());
 
         contract_client.add_interest_to_accrual();
-        assert_eq!(12_980_000, contract_client.get_accrual());
+        assert_eq!(12_999_800, contract_client.get_accrual());
     }
     #[test]
     fn add_accrual_half_usage() {
@@ -885,14 +923,14 @@ mod test {
         };
 
         let user = Address::generate(&e);
-        stellar_asset.mint(&user, &1000);
+        stellar_asset.mint(&user, &100_000);
 
         let user2 = Address::generate(&e);
-        stellar_asset.mint(&user2, &1000);
+        stellar_asset.mint(&user2, &100_000);
 
         let contract_id = e.register(LoanPoolContract, ());
         let contract_client = LoanPoolContractClient::new(&e, &contract_id);
-        let amount: i128 = 1000;
+        let amount: i128 = 100_000;
 
         contract_client.initialize(
             &Address::generate(&e),
@@ -904,7 +942,7 @@ mod test {
 
         assert_eq!(result, amount);
 
-        contract_client.borrow(&user2, &500);
+        contract_client.borrow(&user2, &50_000);
 
         e.ledger().with_mut(|li| {
             li.timestamp = 1 + 31_556_926; // one year in seconds

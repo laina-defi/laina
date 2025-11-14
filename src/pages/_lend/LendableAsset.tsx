@@ -26,6 +26,10 @@ export const LendableAsset = ({ currency, onDepositClicked }: LendableAssetProps
 
   const isPoor = !balance?.trustLine || isBalanceZero(balance.balanceLine.balance);
 
+  const lendedTokens = pool ? pool.totalBalanceTokens - pool.availableBalanceTokens : 0n;
+  const utilization = pool?.totalBalanceTokens ? Number(lendedTokens) / Number(pool.totalBalanceTokens) : 0;
+  const supplyYield = pool ? BigInt(Math.round(Number(pool.annualInterestRate) * utilization)) : 0n;
+
   return (
     <tr className="border-none text-base h-[6.5rem]">
       <td className="pl-2 pr-6 w-20">
@@ -50,9 +54,7 @@ export const LendableAsset = ({ currency, onDepositClicked }: LendableAssetProps
       </td>
 
       <td>
-        <p className="text-xl font-semibold leading-6">
-          {pool ? formatAPY(pool.annualInterestRate) : <Loading size="xs" />}
-        </p>
+        <p className="text-xl font-semibold leading-6">{pool ? formatAPY(supplyYield) : <Loading size="xs" />}</p>
       </td>
 
       <td className="pr-0">

@@ -122,6 +122,8 @@ pub struct EventPositionsUpdated {
 
 /* Ledger Thresholds */
 
+pub(crate) const MINIMUM_FIRST_DEPOSIT: i128 = 100_000;
+
 pub(crate) const DAY_IN_LEDGERS: u32 = 17280; // if ledger takes 5 seconds
 
 pub(crate) const POSITIONS_BUMP_AMOUNT: u32 = 30 * DAY_IN_LEDGERS;
@@ -344,4 +346,36 @@ pub fn write_positions(
     extend_persistent(e, &key);
 
     EventPositionsUpdated { addr, positions }.publish(e)
+}
+
+pub fn get_shares_from_tokens(e: &Env, amount_tokens: i128) -> Result<i128, LoanPoolError> {
+    let total_pool_shares = read_total_shares(e)?;
+    let total_pool_tokens = read_total_balance(e)?;
+
+    let shares = if total_pool_tokens == 0 {
+        amount_tokens
+    } else {
+        total_pool_shares
+            .checked_mul(amount_tokens)
+            .ok_or(LoanPoolError::OverOrUnderFlow)?
+            .checked_div(total_pool_tokens)
+            .ok_or(LoanPoolError::OverOrUnderFlow)?
+    };
+    Ok(shares)
+}
+
+pub fn get_tokens_from_shares(e: &Env, amount_shares: i128) -> Result<i128, LoanPoolError> {
+    let total_pool_shares = read_total_shares(e)?;
+    let total_pool_tokens = read_total_balance(e)?;
+
+    let tokens = if total_pool_tokens == 0 {
+        amount_shares
+    } else {
+        total_pool_tokens
+            .checked_mul(amount_shares)
+            .ok_or(LoanPoolError::OverOrUnderFlow)?
+            .checked_div(total_pool_shares)
+            .ok_or(LoanPoolError::OverOrUnderFlow)?
+    };
+    Ok(tokens)
 }
