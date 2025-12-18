@@ -8,6 +8,7 @@ import { usePools } from '@contexts/pool-context';
 import { contractId } from '@contracts/loan_manager';
 import { CURRENCY_BINDINGS_ARR, type CurrencyBinding } from 'src/currency-bindings';
 import { DepositModal } from './DepositModal';
+import { LendMobileCard } from './LendMobileCard';
 import { LendableAsset } from './LendableAsset';
 
 const links = [
@@ -41,15 +42,26 @@ const LendPage = () => {
         <Card links={links}>
           <div className="px-12 pb-12 pt-4">
             <h1 className="text-2xl font-semibold mb-4 tracking-tight">Lend Assets</h1>
-            <Table headers={['Asset', null, 'Ticker', 'Balance', 'Supply APY', null]}>
+            <div className="block md:hidden">
               {CURRENCY_BINDINGS_ARR.map((currency) => (
-                <LendableAsset
+                <LendMobileCard
                   key={currency.ticker}
                   currency={currency}
                   onDepositClicked={() => openDepositModal(currency)}
                 />
               ))}
-            </Table>
+            </div>
+            <div className="hidden md:block">
+              <Table headers={['Asset', null, 'Ticker', 'Balance', 'Supply APY', null]}>
+                {CURRENCY_BINDINGS_ARR.map((currency) => (
+                  <LendableAsset
+                    key={currency.ticker}
+                    currency={currency}
+                    onDepositClicked={() => openDepositModal(currency)}
+                  />
+                ))}
+              </Table>
+            </div>
             <StellarExpertLink className="mt-3" contractId={contractId} text="View Loan Manager contract" />
           </div>
         </Card>

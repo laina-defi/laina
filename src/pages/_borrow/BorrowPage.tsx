@@ -8,6 +8,7 @@ import { usePools } from '@contexts/pool-context';
 import { useWallet } from '@contexts/wallet-context';
 import { contractId } from '@contracts/loan_manager';
 import { CURRENCY_BINDINGS_ARR, type CurrencyBinding } from 'src/currency-bindings';
+import { BorrowMobileCard } from './BorrowMobileCard';
 import { BorrowModal } from './BorrowModal/BorrowModal';
 import { BorrowableAsset } from './BorrowableAsset';
 
@@ -44,15 +45,26 @@ const BorrowPage = () => {
         <Card links={links}>
           <div className="px-12 pb-12 pt-4">
             <h1 className="text-2xl font-semibold mb-4 tracking-tight">Borrow Assets</h1>
-            <Table headers={['Asset', null, 'Ticker', 'Balance', 'Borrow APY', null]}>
+            <div className="block md:hidden">
               {CURRENCY_BINDINGS_ARR.map((currency) => (
-                <BorrowableAsset
+                <BorrowMobileCard
                   key={currency.ticker}
                   currency={currency}
                   onBorrowClicked={() => openBorrowModal(currency)}
                 />
               ))}
-            </Table>
+            </div>
+            <div className="hidden md:block">
+              <Table headers={['Asset', null, 'Ticker', 'Balance', 'Borrow APY', null]}>
+                {CURRENCY_BINDINGS_ARR.map((currency) => (
+                  <BorrowableAsset
+                    key={currency.ticker}
+                    currency={currency}
+                    onBorrowClicked={() => openBorrowModal(currency)}
+                  />
+                ))}
+              </Table>
+            </div>
             <StellarExpertLink className="mt-3" contractId={contractId} text="View Loan Manager contract" />
           </div>
         </Card>
