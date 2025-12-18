@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 
 import { Card } from '@components/Card';
 import { StellarExpertLink } from '@components/Link';
@@ -19,7 +19,6 @@ const links = [
 const LendPage = () => {
   const { refetchPools } = usePools();
   const [selectedCurrency, setSelectedCurrency] = useState<CurrencyBinding | null>(null);
-  const [isMobile, setIsMobile] = useState<boolean>(true);
 
   const modalId = 'deposit-modal';
 
@@ -36,15 +35,6 @@ const LendPage = () => {
     refetchPools();
   };
 
-  useEffect(() => {
-    const media = window.matchMedia('(max-width: 768px)');
-    setIsMobile(media.matches);
-
-    const handler = () => setIsMobile(media.matches);
-    media.addEventListener('change', handler);
-    return () => media.removeEventListener('change', handler);
-  }, []);
-
   return (
     <>
       <div className="my-14">
@@ -52,17 +42,16 @@ const LendPage = () => {
         <Card links={links}>
           <div className="px-12 pb-12 pt-4">
             <h1 className="text-2xl font-semibold mb-4 tracking-tight">Lend Assets</h1>
-            {isMobile ? (
-              <>
-                {CURRENCY_BINDINGS_ARR.map((currency) => (
-                  <LendMobileCard
-                    key={currency.ticker}
-                    currency={currency}
-                    onDepositClicked={() => openDepositModal(currency)}
-                  />
-                ))}
-              </>
-            ) : (
+            <div className="block md:hidden">
+              {CURRENCY_BINDINGS_ARR.map((currency) => (
+                <LendMobileCard
+                  key={currency.ticker}
+                  currency={currency}
+                  onDepositClicked={() => openDepositModal(currency)}
+                />
+              ))}
+            </div>
+            <div className="hidden md:block">
               <Table headers={['Asset', null, 'Ticker', 'Balance', 'Supply APY', null]}>
                 {CURRENCY_BINDINGS_ARR.map((currency) => (
                   <LendableAsset
@@ -72,7 +61,7 @@ const LendPage = () => {
                   />
                 ))}
               </Table>
-            )}
+            </div>
             <StellarExpertLink className="mt-3" contractId={contractId} text="View Loan Manager contract" />
           </div>
         </Card>

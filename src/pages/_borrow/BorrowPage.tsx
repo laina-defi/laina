@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 
 import { Card } from '@components/Card';
 import { StellarExpertLink } from '@components/Link';
@@ -21,7 +21,6 @@ const BorrowPage = () => {
   const { refetchBalances } = useWallet();
   const { refetchPools } = usePools();
   const [selectedCurrency, setSelectedCurrency] = useState<CurrencyBinding | null>(null);
-  const [isMobile, setIsMobile] = useState<boolean>(true);
 
   const modalId = 'borrow-modal';
 
@@ -39,15 +38,6 @@ const BorrowPage = () => {
     refetchPools();
   };
 
-  useEffect(() => {
-    const media = window.matchMedia('(max-width: 768px)');
-    setIsMobile(media.matches);
-
-    const handler = () => setIsMobile(media.matches);
-    media.addEventListener('change', handler);
-    return () => media.removeEventListener('change', handler);
-  }, []);
-
   return (
     <>
       <div className="my-14">
@@ -55,17 +45,16 @@ const BorrowPage = () => {
         <Card links={links}>
           <div className="px-12 pb-12 pt-4">
             <h1 className="text-2xl font-semibold mb-4 tracking-tight">Borrow Assets</h1>
-            {isMobile ? (
-              <>
-                {CURRENCY_BINDINGS_ARR.map((currency) => (
-                  <BorrowMobileCard
-                    key={currency.ticker}
-                    currency={currency}
-                    onBorrowClicked={() => openBorrowModal(currency)}
-                  />
-                ))}
-              </>
-            ) : (
+            <div className="block md:hidden">
+              {CURRENCY_BINDINGS_ARR.map((currency) => (
+                <BorrowMobileCard
+                  key={currency.ticker}
+                  currency={currency}
+                  onBorrowClicked={() => openBorrowModal(currency)}
+                />
+              ))}
+            </div>
+            <div className="hidden md:block">
               <Table headers={['Asset', null, 'Ticker', 'Balance', 'Borrow APY', null]}>
                 {CURRENCY_BINDINGS_ARR.map((currency) => (
                   <BorrowableAsset
@@ -75,7 +64,7 @@ const BorrowPage = () => {
                   />
                 ))}
               </Table>
-            )}
+            </div>
             <StellarExpertLink className="mt-3" contractId={contractId} text="View Loan Manager contract" />
           </div>
         </Card>
