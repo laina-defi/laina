@@ -4,4 +4,5 @@ build:
 	cargo build --release --target wasm32v1-none -p reflector-oracle-mock
 	cargo build --release --target wasm32v1-none -p loan_pool
 	cargo build --release --target wasm32v1-none -p loan_manager
+	cargo build --release --target wasm32v1-none -p faucet
 	cargo build --release -p liquidation-bot

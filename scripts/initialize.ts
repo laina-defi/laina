@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import { mkdirSync } from 'fs';
 import crypto from 'crypto';
-import { CURRENCIES, type Currency } from '../currencies';
+import { execSync } from 'child_process';
 import {
   loadAccount,
   buildContracts,
@@ -13,13 +13,15 @@ import {
   readTextFile,
   logDeploymentInfo,
   loanManagerAddress,
+  writeEnvVar,
 } from './util';
+import { Keypair } from '@stellar/stellar-sdk';
 import { setPrice } from './set-oracle-price';
+import { issueTokens, type IssuedTokens } from './issue_tokens';
+import { seedPools, fundFaucet } from './seed_pools';
 
 const account = process.env.SOROBAN_ACCOUNT;
 const shouldDeployMockOracle = process.argv.includes('--mock-oracle');
-
-let oracleAddressEnv = process.env.ORACLE_ADDRESS;
 
 console.log('###################### Initializing contracts ########################');
 
@@ -30,30 +32,18 @@ const deploy = (wasm: string) => {
 };
 
 const deployMockOracle = (): string => {
-  console.log('Deploying mock oracle (reflector_oracle_mock) ...');
-
   mkdirSync('./.stellar/contract-ids', { recursive: true });
-
   deploy(`./target/wasm32v1-none/release/reflector_oracle_mock.wasm`);
   const address = readTextFile('./.stellar/contract-ids/reflector_oracle_mock.txt');
-  console.log(`Mock oracle deployed at: ${address}`);
-
   setPrice('XLM', '17694578912345', 'testnet', '1');
   setPrice('USDC', '17694578912345', 'testnet', '1');
   setPrice('EURC', '17694578912345', 'testnet', '1');
-
   return address;
 };
 
-/** Deploy loan_manager contract as there will only be one for all the pools.
- * Loan_manager is used as a factory for the loan_pools.
- */
 const deployLoanManager = (oracleAddress: string) => {
-  const contractsDir = `.stellar/contract-ids`;
-  mkdirSync(contractsDir, { recursive: true });
-
+  mkdirSync(`.stellar/contract-ids`, { recursive: true });
   deploy(`./target/wasm32v1-none/release/loan_manager.wasm`);
-
   exe(`stellar contract invoke \
 --id ${loanManagerAddress(true)} \
 --source-account ${account} \
@@ -63,11 +53,35 @@ const deployLoanManager = (oracleAddress: string) => {
 --oracle_address ${oracleAddress}`);
 };
 
-/** Deploy liquidity pools using the loan-manager as a factory contract */
-const deployLoanPools = () => {
+const deployNativeXlmSac = (): string => {
+  let address: string;
+  try {
+    address = execSync(
+      `stellar contract asset deploy --asset native --network testnet --source-account ${account}`,
+      { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] },
+    ).trim();
+    console.log(`Native XLM SAC deployed: ${address}`);
+  } catch {
+    address = execSync(
+      `stellar contract id asset --asset native --network testnet`,
+      { encoding: 'utf-8' },
+    ).trim();
+    console.log(`Native XLM SAC already exists: ${address}`);
+  }
+  writeEnvVar('PUBLIC_CONTRACT_ADDRESS_XLM', address);
+  return address;
+};
+
+const deployLoanPools = (tokens: IssuedTokens, xlmAddress: string) => {
   const wasmHash = readTextFile('./.stellar/contract-wasm-hash/loan_pool.txt');
 
-  CURRENCIES.forEach(({ tokenContractAddress, ticker, loanPoolName }: Currency) => {
+  const pools = [
+    { tokenAddress: xlmAddress,          ticker: 'XLM',  poolName: 'pool_xlm' },
+    { tokenAddress: tokens.usdcAddress,  ticker: 'USDC', poolName: 'pool_usdc' },
+    { tokenAddress: tokens.eurcAddress,  ticker: 'EURC', poolName: 'pool_eurc' },
+  ];
+
+  for (const { tokenAddress, ticker, poolName } of pools) {
     const salt = crypto.randomBytes(32).toString('hex');
     exe(
       `stellar contract invoke \
@@ -77,24 +91,64 @@ const deployLoanPools = () => {
 -- deploy_pool \
 --wasm_hash ${wasmHash} \
 --salt ${salt} \
---token_address ${tokenContractAddress} \
+--token_address ${tokenAddress} \
 --ticker ${ticker} \
 --liquidation_threshold 8000000 \
-| tr -d '"' > ./.stellar/contract-ids/${loanPoolName}.txt`,
+| tr -d '"' > ./.stellar/contract-ids/${poolName}.txt`,
     );
-  });
+  }
 };
 
-// Calling the functions (equivalent to the last part of your bash script)
+const deployFaucet = (tokens: IssuedTokens): string => {
+  deploy(`./target/wasm32v1-none/release/faucet.wasm`);
+  const faucetAddress = readTextFile('./.stellar/contract-ids/faucet.txt');
+
+  exe(`stellar contract invoke \
+--id ${faucetAddress} \
+--source-account ${account} \
+--network testnet \
+-- initialize \
+--usdc ${tokens.usdcAddress} \
+--eurc ${tokens.eurcAddress} \
+--lai ${tokens.laiAddress}`);
+
+  writeEnvVar('PUBLIC_CONTRACT_ADDRESS_FAUCET', faucetAddress);
+  return faucetAddress;
+};
+
+// Fund the deployer account via friendbot before anything else.
+const deployerPublicKey = Keypair.fromSecret(process.env.SOROBAN_SECRET_KEY!).publicKey();
+const fundRes = await fetch(`https://friendbot.stellar.org?addr=${deployerPublicKey}`);
+if (!fundRes.ok && fundRes.status !== 400) {
+  throw new Error(`Friendbot failed: ${fundRes.statusText}`);
+}
+console.log(`Deployer account funded (${deployerPublicKey})`);
+
+// Issue tokens first so pool deployment uses the correct SAC addresses.
+const tokens = await issueTokens();
+
 loadAccount();
 buildContracts();
 installContracts(shouldDeployMockOracle);
 
-// determine oracle address (deploy mock if requested)
-const oracleForInit = shouldDeployMockOracle ? deployMockOracle() : (oracleAddressEnv as string);
+const oracleForInit = shouldDeployMockOracle ? deployMockOracle() : (process.env.ORACLE_ADDRESS as string);
 
 deployLoanManager(oracleForInit);
-deployLoanPools();
+const xlmAddress = deployNativeXlmSac();
+deployLoanPools(tokens, xlmAddress);
+
+const xlmPoolId = readTextFile('./.stellar/contract-ids/pool_xlm.txt');
+const usdcPoolId = readTextFile('./.stellar/contract-ids/pool_usdc.txt');
+const eurcPoolId = readTextFile('./.stellar/contract-ids/pool_eurc.txt');
+
+await seedPools(tokens, account!, xlmPoolId, usdcPoolId, eurcPoolId);
+
+const faucetAddress = deployFaucet(tokens);
+await fundFaucet(tokens, faucetAddress);
+
+// Set env var so contract bindings pick up the faucet address
+process.env.CONTRACT_ID_FAUCET = faucetAddress;
+
 createContractBindings();
 createContractImports();
 

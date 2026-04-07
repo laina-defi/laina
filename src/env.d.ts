@@ -8,6 +8,9 @@ interface ImportMetaEnv {
   readonly CONTRACT_ADDRESS_XLM: string;
   readonly CONTRACT_ADDRESS_USDC: string;
   readonly CONTRACT_ADDRESS_EURC: string;
+  readonly CONTRACT_ADDRESS_LAI: string;
+  readonly CONTRACT_ADDRESS_FAUCET: string;
   readonly ISSUER_ADDRESS_USDC: string;
   readonly ISSUER_ADDRESS_EURC: string;
+  readonly ISSUER_ADDRESS_LAI: string;
 }

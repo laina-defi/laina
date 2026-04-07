@@ -1,5 +1,6 @@
 import { useState } from 'react';
 
+import { Button } from '@components/Button';
 import { Card } from '@components/Card';
 import { StellarExpertLink } from '@components/Link';
 import { Table } from '@components/Table';
@@ -8,6 +9,7 @@ import { usePools } from '@contexts/pool-context';
 import { contractId } from '@contracts/loan_manager';
 import { CURRENCY_BINDINGS_ARR, type CurrencyBinding } from 'src/currency-bindings';
 import { DepositModal } from './DepositModal';
+import { FaucetModal } from './FaucetModal';
 import { LendMobileCard } from './LendMobileCard';
 import { LendableAsset } from './LendableAsset';
 
@@ -20,19 +22,26 @@ const LendPage = () => {
   const { refetchPools } = usePools();
   const [selectedCurrency, setSelectedCurrency] = useState<CurrencyBinding | null>(null);
 
-  const modalId = 'deposit-modal';
+  const depositModalId = 'deposit-modal';
+  const faucetModalId = 'faucet-modal';
 
   const openDepositModal = (currency: CurrencyBinding) => {
     setSelectedCurrency(currency);
-    const modalEl = document.getElementById(modalId) as HTMLDialogElement;
-    modalEl.showModal();
+    (document.getElementById(depositModalId) as HTMLDialogElement).showModal();
   };
 
   const closeDepositModal = () => {
-    const modalEl = document.getElementById(modalId) as HTMLDialogElement;
-    modalEl.close();
+    (document.getElementById(depositModalId) as HTMLDialogElement).close();
     setSelectedCurrency(null);
     refetchPools();
+  };
+
+  const openFaucetModal = () => {
+    (document.getElementById(faucetModalId) as HTMLDialogElement).showModal();
+  };
+
+  const closeFaucetModal = () => {
+    (document.getElementById(faucetModalId) as HTMLDialogElement).close();
   };
 
   return (
@@ -41,7 +50,10 @@ const LendPage = () => {
         <WalletCard />
         <Card links={links}>
           <div className="px-12 pb-12 pt-4">
-            <h1 className="text-2xl font-semibold mb-4 tracking-tight">Lend Assets</h1>
+            <div className="flex items-center justify-between mb-4">
+              <h1 className="text-2xl font-semibold tracking-tight">Lend Assets</h1>
+              <Button onClick={openFaucetModal}>Get test tokens</Button>
+            </div>
             <div className="block md:hidden">
               {CURRENCY_BINDINGS_ARR.map((currency) => (
                 <LendMobileCard
@@ -66,7 +78,8 @@ const LendPage = () => {
           </div>
         </Card>
       </div>
-      <DepositModal modalId={modalId} onClose={closeDepositModal} currency={selectedCurrency} />
+      <DepositModal modalId={depositModalId} onClose={closeDepositModal} currency={selectedCurrency} />
+      <FaucetModal modalId={faucetModalId} onClose={closeFaucetModal} />
     </>
   );
 };

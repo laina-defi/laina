@@ -254,11 +254,13 @@ impl LoanManager {
         let collateral_pool_client = loan_pool::Client::new(e, &token_collateral_address);
         let collateral_factor = collateral_pool_client.get_collateral_factor();
 
-        let amount_of_data_points = 12; // 12 * 5 min = 1h average
+        // twap endpoint has been removed so
+        // TODO: add own price averaging using the prices endpoint
         let collateral_asset_price = reflector_contract
-            .twap(&collateral_asset, &amount_of_data_points)
+            .lastprice(&collateral_asset)
             .ok_or(LoanManagerError::NoLastPrice)?;
         let collateral_value = collateral_asset_price
+            .price
             .checked_mul(token_collateral_amount)
             .ok_or(LoanManagerError::OverOrUnderFlow)?
             .checked_mul(collateral_factor)
@@ -269,9 +271,10 @@ impl LoanManager {
         // get the price and calculate the value of the borrowed asset
         let borrowed_asset = Asset::Other(token_ticker);
         let asset_price = reflector_contract
-            .twap(&borrowed_asset, &amount_of_data_points)
+            .lastprice(&borrowed_asset)
             .ok_or(LoanManagerError::NoLastPrice)?;
         let borrowed_value = asset_price
+            .price
             .checked_mul(token_amount)
             .ok_or(LoanManagerError::OverOrUnderFlow)?;
 
