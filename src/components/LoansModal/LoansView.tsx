@@ -9,9 +9,10 @@ import { isNil } from 'ramda';
 interface LoansViewProps {
   onClose: () => void;
   onRepay: (loan: Loan) => void;
+  onAdjustCollateral: (loan: Loan) => void;
 }
 
-const LoansView = ({ onClose, onRepay }: LoansViewProps) => {
+const LoansView = ({ onClose, onRepay, onAdjustCollateral }: LoansViewProps) => {
   const { loans } = useLoans();
   return (
     <>
@@ -32,7 +33,7 @@ const LoansView = ({ onClose, onRepay }: LoansViewProps) => {
           </thead>
           <tbody>
             {loans.map((loan) => (
-              <TableRow key={loan.loanId.nonce} loan={loan} onRepay={onRepay} />
+              <TableRow key={loan.loanId.nonce} loan={loan} onRepay={onRepay} onAdjustCollateral={onAdjustCollateral} />
             ))}
           </tbody>
         </table>
@@ -49,9 +50,10 @@ const LoansView = ({ onClose, onRepay }: LoansViewProps) => {
 interface TableRowProps {
   loan: Loan;
   onRepay: (loan: Loan) => void;
+  onAdjustCollateral: (loan: Loan) => void;
 }
 
-const TableRow = ({ loan, onRepay }: TableRowProps) => {
+const TableRow = ({ loan, onRepay, onAdjustCollateral }: TableRowProps) => {
   const { borrowedAmount, unpaidInterest, collateralAmount, borrowedTicker, collateralTicker } = loan;
   const { prices, pools } = usePools();
 
@@ -63,12 +65,15 @@ const TableRow = ({ loan, onRepay }: TableRowProps) => {
   const pool = pools?.[borrowedTicker];
 
   const handleRepayClicked = () => onRepay(loan);
+  const handleAdjustCollateralClicked = () => onAdjustCollateral(loan);
 
   const loanAmountCents = loanPrice ? toCents(loanPrice, borrowedAmount) : undefined;
   const collateralAmountCents = collateralPrice ? toCents(collateralPrice, collateralAmount) : undefined;
 
   const healthFactor =
-    loanAmountCents && loanAmountCents > 0n ? Number(collateralAmountCents) / Number(loanAmountCents) : 0;
+    loanAmountCents && loanAmountCents > 0n
+      ? Number(collateralAmountCents) * 0.8 / Number(loanAmountCents) // 0.8 magic number collateral factor TODO: Add fetching from pools.
+      : 0;
 
   return (
     <tr key={loan.loanId.nonce} className="text-base">
@@ -91,8 +96,9 @@ const TableRow = ({ loan, onRepay }: TableRowProps) => {
         <CompactHealthFactor value={healthFactor} />
       </td>
       <td>{pool ? formatAPR(pool.annualInterestRate) : null}</td>
-      <td>
+      <td className="flex flex-col gap-2">
         <Button onClick={handleRepayClicked}>Repay</Button>
+        <Button variant="ghost" onClick={handleAdjustCollateralClicked}>Collateral</Button>
       </td>
     </tr>
   );

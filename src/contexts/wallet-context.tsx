@@ -27,7 +27,7 @@ export type BalanceRecord = {
 export type Positions = {
   receivable_shares: bigint;
   liabilities: bigint;
-  collateral: bigint;
+  collateral_shares: bigint;
 };
 
 export type PositionsRecord = {
