@@ -12,7 +12,7 @@ pub fn increase_positions(
 
     let receivables_now: i128 = positions.receivable_shares;
     let liabilities_now: i128 = positions.liabilities;
-    let collateral_now = positions.collateral;
+    let collateral_now = positions.collateral_shares;
     storage::write_positions(
         e,
         addr,
@@ -41,7 +41,7 @@ pub fn decrease_positions(
     // TODO: Might need to use get rather than get_unchecked and convert from Option<V> to V
     let receivables_now = positions.receivable_shares;
     let liabilities_now = positions.liabilities;
-    let collateral_now = positions.collateral;
+    let collateral_now = positions.collateral_shares;
 
     if receivables_now < receivables {
         panic!("insufficient receivables");

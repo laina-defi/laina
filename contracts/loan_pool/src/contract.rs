@@ -212,81 +212,96 @@ impl LoanPoolContract {
         Ok(amount)
     }
 
-    /// Deposit tokens to the pool to be used as collateral
+    /// Deposit tokens to the pool to be used as collateral.
+    /// Tokens are added to pool liquidity and earn interest via the share mechanism.
+    /// Returns the number of collateral shares issued.
     pub fn deposit_collateral(e: Env, user: Address, amount: i128) -> Result<i128, LoanPoolError> {
         user.require_auth();
         assert!(amount > 0, "Amount must be positive!");
 
         Self::add_interest_to_accrual(e.clone())?;
 
-        let user_positions = Self::get_user_positions(e.clone(), user.clone());
-        let user_pool_shares = user_positions.receivable_shares;
-        let total_pool_shares = Self::get_total_balance_shares(e.clone())?;
-        let total_pool_tokens = Self::get_contract_balance(e.clone())?;
+        let total_shares = Self::get_total_balance_shares(e.clone())?;
+        let total_tokens = Self::get_contract_balance(e.clone())?;
 
-        let user_available_tokens = if total_pool_shares == 0 {
-            Ok(0)
+        let shares_issued = if total_tokens == 0 {
+            amount
         } else {
-            total_pool_tokens
-                .checked_mul(user_pool_shares)
+            total_shares
+                .checked_mul(amount)
                 .ok_or(LoanPoolError::OverOrUnderFlow)?
-                .checked_div(total_pool_shares)
+                .checked_div(total_tokens)
                 .ok_or(LoanPoolError::OverOrUnderFlow)?
-                .checked_sub(user_positions.liabilities)
-                .ok_or(LoanPoolError::OverOrUnderFlow)
         };
-
-        if user_available_tokens? > 0 {
-            // Get the pool's available balance to ensure we don't try to withdraw more than available
-            let pool_available_balance = Self::get_available_balance(e.clone())?;
-
-            // Calculate how much we can actually withdraw (minimum of user's available tokens, requested amount, and pool's available balance)
-            let withdrawable_amount = if amount < user_available_tokens? {
-                if amount < pool_available_balance {
-                    amount
-                } else {
-                    pool_available_balance
-                }
-            } else if user_available_tokens? < pool_available_balance {
-                user_available_tokens?
-            } else {
-                pool_available_balance
-            };
-
-            // Only attempt withdrawal if there's something to withdraw
-            if withdrawable_amount > 0 {
-                Self::withdraw_internal(e.clone(), user.clone(), withdrawable_amount)?;
-            }
-        }
 
         let token_address = &storage::read_currency(&e)?.token_address;
         let client = token::Client::new(&e, token_address);
         client.transfer(&user, e.current_contract_address(), &amount);
 
-        let liabilities: i128 = 0;
-        let receivables: i128 = 0;
-        positions::increase_positions(&e, user.clone(), receivables, liabilities, amount)?;
+        positions::increase_positions(&e, user.clone(), 0, 0, shares_issued)?;
+        storage::adjust_available_balance(&e, amount)?;
+        storage::adjust_total_balance(&e, amount)?;
+        storage::adjust_total_shares(&e, shares_issued)?;
 
-        Ok(amount)
+        Ok(shares_issued)
     }
 
-    pub fn withdraw_collateral(e: Env, user: Address, amount: i128) -> Result<i128, LoanPoolError> {
+    /// Withdraw collateral from the pool. Takes shares and returns the current token value
+    /// (including accrued interest). Only callable by the loan manager.
+    pub fn withdraw_collateral(e: Env, user: Address, shares: i128) -> Result<i128, LoanPoolError> {
         user.require_auth();
         Self::add_interest_to_accrual(e.clone())?;
 
         let loan_manager_addr = storage::read_loan_manager_addr(&e)?;
         loan_manager_addr.require_auth();
-        assert!(amount > 0, "Amount must be positive!");
+        assert!(shares > 0, "Shares must be positive!");
+
+        let total_shares = storage::read_total_shares(&e)?;
+        let total_tokens = storage::read_total_balance(&e)?;
+        let tokens = shares
+            .checked_mul(total_tokens)
+            .ok_or(LoanPoolError::OverOrUnderFlow)?
+            .checked_div(total_shares)
+            .ok_or(LoanPoolError::OverOrUnderFlow)?;
+
+        positions::decrease_positions(&e, user.clone(), 0, 0, shares)?;
+        storage::adjust_available_balance(&e, tokens.checked_neg().ok_or(LoanPoolError::OverOrUnderFlow)?)?;
+        storage::adjust_total_balance(&e, tokens.checked_neg().ok_or(LoanPoolError::OverOrUnderFlow)?)?;
+        storage::adjust_total_shares(&e, shares.checked_neg().ok_or(LoanPoolError::OverOrUnderFlow)?)?;
 
         let token_address = &storage::read_currency(&e)?.token_address;
         let client = token::Client::new(&e, token_address);
-        client.transfer(&e.current_contract_address(), &user, &amount);
+        client.transfer(&e.current_contract_address(), &user, &tokens);
 
-        let liabilities: i128 = 0;
-        let receivables: i128 = 0;
-        positions::decrease_positions(&e, user.clone(), receivables, liabilities, amount)?;
+        Ok(tokens)
+    }
 
-        Ok(amount)
+    /// Convert a share amount to its current token value.
+    pub fn shares_to_tokens(e: Env, shares: i128) -> Result<i128, LoanPoolError> {
+        let total_shares = storage::read_total_shares(&e)?;
+        let total_tokens = storage::read_total_balance(&e)?;
+        if total_shares == 0 {
+            return Ok(0);
+        }
+        shares
+            .checked_mul(total_tokens)
+            .ok_or(LoanPoolError::OverOrUnderFlow)?
+            .checked_div(total_shares)
+            .ok_or(LoanPoolError::OverOrUnderFlow)
+    }
+
+    /// Convert a token amount to the equivalent number of shares at the current rate.
+    pub fn tokens_to_shares(e: Env, tokens: i128) -> Result<i128, LoanPoolError> {
+        let total_shares = storage::read_total_shares(&e)?;
+        let total_tokens = storage::read_total_balance(&e)?;
+        if total_tokens == 0 {
+            return Ok(tokens);
+        }
+        tokens
+            .checked_mul(total_shares)
+            .ok_or(LoanPoolError::OverOrUnderFlow)?
+            .checked_div(total_tokens)
+            .ok_or(LoanPoolError::OverOrUnderFlow)
     }
 
     pub fn add_interest_to_accrual(e: Env) -> Result<(), LoanPoolError> {
@@ -514,20 +529,34 @@ impl LoanPoolContract {
         Ok(())
     }
 
+    /// Transfer collateral to a liquidator. Takes a token amount, converts to shares,
+    /// and transfers the actual tokens. Returns the number of shares removed.
     pub fn liquidate_transfer_collateral(
         e: Env,
         user: Address,
-        amount_collateral: i128,
+        amount_collateral_tokens: i128,
         loan_owner: Address,
-    ) -> Result<(), LoanPoolError> {
+    ) -> Result<i128, LoanPoolError> {
         let loan_manager_addr = storage::read_loan_manager_addr(&e)?;
         loan_manager_addr.require_auth();
 
-        let client = token::Client::new(&e, &storage::read_currency(&e)?.token_address);
-        client.transfer(&e.current_contract_address(), &user, &amount_collateral);
+        let total_shares = storage::read_total_shares(&e)?;
+        let total_tokens = storage::read_total_balance(&e)?;
+        let shares_to_remove = amount_collateral_tokens
+            .checked_mul(total_shares)
+            .ok_or(LoanPoolError::OverOrUnderFlow)?
+            .checked_div(total_tokens)
+            .ok_or(LoanPoolError::OverOrUnderFlow)?;
 
-        positions::decrease_positions(&e, loan_owner, 0, 0, amount_collateral)?;
-        Ok(())
+        positions::decrease_positions(&e, loan_owner, 0, 0, shares_to_remove)?;
+        storage::adjust_available_balance(&e, amount_collateral_tokens.checked_neg().ok_or(LoanPoolError::OverOrUnderFlow)?)?;
+        storage::adjust_total_balance(&e, amount_collateral_tokens.checked_neg().ok_or(LoanPoolError::OverOrUnderFlow)?)?;
+        storage::adjust_total_shares(&e, shares_to_remove.checked_neg().ok_or(LoanPoolError::OverOrUnderFlow)?)?;
+
+        let client = token::Client::new(&e, &storage::read_currency(&e)?.token_address);
+        client.transfer(&e.current_contract_address(), &user, &amount_collateral_tokens);
+
+        Ok(shares_to_remove)
     }
 }
 

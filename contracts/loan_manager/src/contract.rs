@@ -133,7 +133,6 @@ impl LoanManager {
             collateral_from.clone(),
         )?;
 
-        // Health factor has to be over 1.2 for the loan to be initialized.
         // Health factor is defined as so: 1.0 = 10000000_i128
         const HEALTH_FACTOR_THRESHOLD: i128 = 10000000;
         assert!(
@@ -141,8 +140,8 @@ impl LoanManager {
             "Health factor must be over {HEALTH_FACTOR_THRESHOLD} to create a new loan!"
         );
 
-        // Deposit collateral
-        let collateral_amount = collateral_pool_client.deposit_collateral(&user, &collateral);
+        // Deposit collateral — returns shares issued
+        let collateral_shares = collateral_pool_client.deposit_collateral(&user, &collateral);
 
         // Borrow the funds
         let borrowed_amount = borrow_pool_client.borrow(&user, &borrowed);
@@ -153,7 +152,7 @@ impl LoanManager {
             borrower_address: user.clone(),
             borrowed_amount,
             borrowed_from,
-            collateral_amount,
+            collateral_shares,
             collateral_from,
             health_factor,
             unpaid_interest,
@@ -169,7 +168,7 @@ impl LoanManager {
     pub fn add_interest(e: &Env, loan_id: LoanId) -> Result<Loan, LoanManagerError> {
         let Loan {
             borrowed_from,
-            collateral_amount,
+            collateral_shares,
             borrowed_amount,
             collateral_from,
             unpaid_interest,
@@ -199,12 +198,15 @@ impl LoanManager {
             .checked_div(DECIMAL)
             .ok_or(LoanManagerError::OverOrUnderFlow)?;
 
+        // Get current token value of collateral shares for health factor calculation
+        let collateral_tokens = collateral_pool_client.shares_to_tokens(&collateral_shares);
+
         let new_health_factor = Self::calculate_health_factor(
             e,
             token_ticker,
             new_borrowed_amount,
             token_collateral_ticker,
-            collateral_amount,
+            collateral_tokens,
             collateral_from.clone(),
         )?;
 
@@ -223,7 +225,7 @@ impl LoanManager {
         let updated_loan = Loan {
             loan_id: loan_id.clone(),
             borrowed_from,
-            collateral_amount,
+            collateral_shares,
             borrowed_amount: new_borrowed_amount,
             collateral_from,
             health_factor: new_health_factor,
@@ -320,7 +322,7 @@ impl LoanManager {
         let Loan {
             borrowed_amount,
             borrowed_from,
-            collateral_amount,
+            collateral_shares,
             collateral_from,
             unpaid_interest,
             last_accrual,
@@ -348,12 +350,13 @@ impl LoanManager {
             .checked_sub(amount)
             .ok_or(LoanManagerError::OverOrUnderFlow)?;
 
+        let collateral_tokens = collateral_pool_client.shares_to_tokens(&collateral_shares);
         let new_health_factor = Self::calculate_health_factor(
             e,
             borrow_pool_client.get_currency().ticker,
             new_borrowed_amount,
             collateral_pool_client.get_currency().ticker,
-            collateral_amount,
+            collateral_tokens,
             collateral_from.clone(),
         )?;
 
@@ -364,7 +367,7 @@ impl LoanManager {
                 loan_id: loan_id.clone(),
                 borrowed_amount: new_borrowed_amount,
                 borrowed_from,
-                collateral_amount,
+                collateral_shares,
                 collateral_from,
                 health_factor: new_health_factor,
                 unpaid_interest: new_unpaid_interest,
@@ -386,7 +389,7 @@ impl LoanManager {
         let Loan {
             borrowed_amount,
             borrowed_from,
-            collateral_amount,
+            collateral_shares,
             collateral_from,
             unpaid_interest,
             ..
@@ -400,8 +403,9 @@ impl LoanManager {
             &unpaid_interest,
         );
 
+        // Withdraw collateral shares — user receives full token value including earned interest
         let collateral_pool_client = loan_pool::Client::new(e, &collateral_from);
-        collateral_pool_client.withdraw_collateral(&user, &collateral_amount);
+        collateral_pool_client.withdraw_collateral(&user, &collateral_shares);
 
         storage::delete_loan(e, &loan_id);
         Ok(borrowed_amount)
@@ -420,7 +424,7 @@ impl LoanManager {
             borrowed_amount,
             borrowed_from,
             collateral_from,
-            collateral_amount,
+            collateral_shares,
             unpaid_interest,
             last_accrual,
             ..
@@ -432,13 +436,16 @@ impl LoanManager {
         let borrowed_ticker = borrow_pool_client.get_currency().ticker;
         let collateral_ticker = collateral_pool_client.get_currency().ticker;
 
+        // Get current token value of collateral shares
+        let collateral_tokens = collateral_pool_client.shares_to_tokens(&collateral_shares);
+
         // Check that loan is for sure liquidatable at this moment.
         let health_factor_before_liquidation = Self::calculate_health_factor(
             &e,
             borrowed_ticker.clone(),
             borrowed_amount,
             collateral_ticker.clone(),
-            collateral_amount,
+            collateral_tokens,
             collateral_from.clone(),
         )?;
         assert!(health_factor_before_liquidation < 10000000);
@@ -485,7 +492,8 @@ impl LoanManager {
 
         borrow_pool_client.liquidate(&user, &amount, &unpaid_interest, &loan_id.borrower_address);
 
-        collateral_pool_client.liquidate_transfer_collateral(
+        // liquidate_transfer_collateral takes tokens, converts to shares internally, returns shares removed
+        let bonus_shares = collateral_pool_client.liquidate_transfer_collateral(
             &user,
             &collateral_amount_bonus,
             &loan_id.borrower_address,
@@ -494,16 +502,17 @@ impl LoanManager {
         let new_borrowed_amount = borrowed_amount
             .checked_sub(amount)
             .ok_or(LoanManagerError::OverOrUnderFlow)?;
-        let new_collateral_amount = collateral_amount
-            .checked_sub(collateral_amount_bonus)
+        let new_collateral_shares = collateral_shares
+            .checked_sub(bonus_shares)
             .ok_or(LoanManagerError::OverOrUnderFlow)?;
 
+        let new_collateral_tokens = collateral_pool_client.shares_to_tokens(&new_collateral_shares);
         let new_health_factor = Self::calculate_health_factor(
             &e,
             borrowed_ticker,
             new_borrowed_amount,
             collateral_ticker,
-            new_collateral_amount,
+            new_collateral_tokens,
             collateral_from.clone(),
         )?;
 
@@ -516,7 +525,7 @@ impl LoanManager {
             borrowed_amount: new_borrowed_amount,
             borrowed_from,
             collateral_from,
-            collateral_amount: new_collateral_amount,
+            collateral_shares: new_collateral_shares,
             health_factor: new_health_factor,
             unpaid_interest, // Temp
             last_accrual,
@@ -525,6 +534,82 @@ impl LoanManager {
         storage::write_loan(&e, &loan_id, &new_loan);
 
         Ok(new_loan)
+    }
+
+    /// Add more collateral to an existing loan, improving its health factor.
+    /// `amount` is the token amount to deposit as additional collateral.
+    pub fn add_collateral(e: Env, loan_id: LoanId, amount: i128) -> Result<Loan, LoanManagerError> {
+        loan_id.borrower_address.require_auth();
+
+        let mut loan = Self::add_interest(&e, loan_id.clone())?;
+
+        let collateral_pool_client = loan_pool::Client::new(&e, &loan.collateral_from);
+        let borrow_pool_client = loan_pool::Client::new(&e, &loan.borrowed_from);
+
+        let new_shares =
+            collateral_pool_client.deposit_collateral(&loan_id.borrower_address, &amount);
+        loan.collateral_shares = loan
+            .collateral_shares
+            .checked_add(new_shares)
+            .ok_or(LoanManagerError::OverOrUnderFlow)?;
+
+        let collateral_tokens = collateral_pool_client.shares_to_tokens(&loan.collateral_shares);
+        loan.health_factor = Self::calculate_health_factor(
+            &e,
+            borrow_pool_client.get_currency().ticker,
+            loan.borrowed_amount,
+            collateral_pool_client.get_currency().ticker,
+            collateral_tokens,
+            loan.collateral_from.clone(),
+        )?;
+
+        storage::write_loan(&e, &loan_id, &loan);
+        Ok(loan)
+    }
+
+    /// Remove collateral from an existing loan, decreasing its health factor.
+    /// `amount` is the token amount to withdraw. Fails if health factor would drop below 1.0.
+    pub fn remove_collateral(
+        e: Env,
+        loan_id: LoanId,
+        amount: i128,
+    ) -> Result<Loan, LoanManagerError> {
+        loan_id.borrower_address.require_auth();
+
+        let mut loan = Self::add_interest(&e, loan_id.clone())?;
+
+        let collateral_pool_client = loan_pool::Client::new(&e, &loan.collateral_from);
+        let borrow_pool_client = loan_pool::Client::new(&e, &loan.borrowed_from);
+
+        let shares_to_remove = collateral_pool_client.tokens_to_shares(&amount);
+        let new_collateral_shares = loan
+            .collateral_shares
+            .checked_sub(shares_to_remove)
+            .ok_or(LoanManagerError::OverOrUnderFlow)?;
+
+        let new_collateral_tokens = collateral_pool_client.shares_to_tokens(&new_collateral_shares);
+        let new_health_factor = Self::calculate_health_factor(
+            &e,
+            borrow_pool_client.get_currency().ticker,
+            loan.borrowed_amount,
+            collateral_pool_client.get_currency().ticker,
+            new_collateral_tokens,
+            loan.collateral_from.clone(),
+        )?;
+
+        const HEALTH_FACTOR_THRESHOLD: i128 = 10_000_000;
+        assert!(
+            new_health_factor > HEALTH_FACTOR_THRESHOLD,
+            "Removing collateral would make the loan liquidatable!"
+        );
+
+        collateral_pool_client.withdraw_collateral(&loan_id.borrower_address, &shares_to_remove);
+
+        loan.collateral_shares = new_collateral_shares;
+        loan.health_factor = new_health_factor;
+
+        storage::write_loan(&e, &loan_id, &loan);
+        Ok(loan)
     }
 }
 
@@ -730,7 +815,7 @@ mod tests {
         let user_loan = manager_client.get_loan(&loan.loan_id);
 
         assert_eq!(user_loan.borrowed_amount, 1_000);
-        assert_eq!(user_loan.collateral_amount, 100_000);
+        assert_eq!(user_loan.collateral_shares, 100_000);
 
         manager_client.repay(&loan.loan_id, &100);
         e.ledger().with_mut(|li| {
@@ -740,7 +825,7 @@ mod tests {
         let user_loan = manager_client.get_loan(&loan.loan_id);
 
         assert_eq!(user_loan.borrowed_amount, 929);
-        assert_eq!(user_loan.collateral_amount, 100_000);
+        assert_eq!(user_loan.collateral_shares, 100_000);
         assert_eq!(xlm_token_client.balance(&manager_addr), 2);
 
         manager_client
@@ -797,7 +882,7 @@ mod tests {
         loan = manager_client.get_loan(&loan.loan_id);
 
         assert_eq!(loan.borrowed_amount, 100);
-        assert_eq!(loan.collateral_amount, 500);
+        assert_eq!(loan.collateral_shares, 500);
 
         manager_client.repay(&loan.loan_id, &50);
         loan = manager_client.get_loan(&loan.loan_id);
@@ -815,7 +900,7 @@ mod tests {
         pool_usdc_client.deposit(&new_user, &1000);
         assert_eq!(2002, pool_usdc_client.get_contract_balance());
         let positions_new_user = Positions {
-            collateral: 0,
+            collateral_shares: 0,
             liabilities: 0,
             receivable_shares: 998,
         };
@@ -825,7 +910,7 @@ mod tests {
         );
 
         let test_positions_admin = Positions {
-            collateral: 0,
+            collateral_shares: 0,
             liabilities: 0,
             receivable_shares: 1000,
         };
@@ -877,13 +962,13 @@ mod tests {
 
         let loan_usdc = loans.get(0).unwrap();
         assert_eq!(loan_usdc.borrowed_amount, 10);
-        assert_eq!(loan_usdc.collateral_amount, 100);
+        assert_eq!(loan_usdc.collateral_shares, 100);
         assert_eq!(loan_usdc.borrowed_from, pool_usdc_addr);
         assert_eq!(loan_usdc.collateral_from, pool_xlm_addr);
 
         let loan_eurc = loans.get(1).unwrap();
         assert_eq!(loan_eurc.borrowed_amount, 30);
-        assert_eq!(loan_eurc.collateral_amount, 300);
+        assert_eq!(loan_eurc.collateral_shares, 300);
         assert_eq!(loan_eurc.borrowed_from, pool_eurc_addr);
         assert_eq!(loan_eurc.collateral_from, pool_xlm_addr);
     }
@@ -937,7 +1022,7 @@ mod tests {
 
         assert_eq!(loan.borrowed_amount, 102);
         assert_eq!(loan.health_factor, 78_431_372);
-        assert_eq!(loan.collateral_amount, 1000);
+        assert_eq!(loan.collateral_shares, 1000);
     }
 
     #[test]
@@ -991,12 +1076,12 @@ mod tests {
 
         loan_usdc = manager_client.get_loan(&loan_usdc.loan_id);
         assert_eq!(loan_usdc.borrowed_amount, 100);
-        assert_eq!(loan_usdc.collateral_amount, 500);
+        assert_eq!(loan_usdc.collateral_shares, 500);
 
         manager_client.repay(&loan_usdc.loan_id, &50);
         loan_usdc = manager_client.get_loan(&loan_usdc.loan_id);
         assert_eq!(loan_usdc.borrowed_amount, 52);
-        assert_eq!(loan_usdc.collateral_amount, 500);
+        assert_eq!(loan_usdc.collateral_shares, 500);
 
         assert_eq!((52, 2), manager_client.repay(&loan_usdc.loan_id, &50));
         assert_eq!(1000, pool_usdc_client.get_available_balance());
@@ -1005,7 +1090,7 @@ mod tests {
 
         loan_eurc = manager_client.get_loan(&loan_eurc.loan_id);
         assert_eq!(loan_eurc.borrowed_amount, 100);
-        assert_eq!(loan_eurc.collateral_amount, 500);
+        assert_eq!(loan_eurc.collateral_shares, 500);
         assert_eq!(900, pool_eurc_client.get_available_balance());
         assert_eq!(1000, pool_eurc_client.get_contract_balance());
         assert_eq!(1000, pool_eurc_client.get_total_balance_shares());
@@ -1114,7 +1199,7 @@ mod tests {
         usdc_loan = manager_client.get_loan(&usdc_loan.loan_id);
 
         assert_eq!(usdc_loan.borrowed_amount, 100);
-        assert_eq!(usdc_loan.collateral_amount, 300);
+        assert_eq!(usdc_loan.collateral_shares, 300);
 
         // mint the user some money so they can repay.
         usdc_asset_client.mint(&user, &45);
@@ -1134,7 +1219,7 @@ mod tests {
         assert_eq!(loans.len(), 1);
         let eurc_loan = loans.get(0).unwrap();
         assert_eq!(eurc_loan.borrowed_amount, 100);
-        assert_eq!(eurc_loan.collateral_amount, 300);
+        assert_eq!(eurc_loan.collateral_shares, 300);
     }
 
     #[test]
@@ -1225,7 +1310,7 @@ mod tests {
 
         assert_eq!(usdc_loan.borrowed_amount, 10_760);
         assert_eq!(usdc_loan.health_factor, 9_297_397);
-        assert_eq!(usdc_loan.collateral_amount, 12_505);
+        assert_eq!(usdc_loan.collateral_shares, 12_505);
 
         e.ledger().with_mut(|li| {
             li.sequence_number = 100_000 + 1_000;
@@ -1238,12 +1323,12 @@ mod tests {
         usdc_loan = manager_client.get_loan(&usdc_loan.loan_id);
         assert_eq!(usdc_loan.borrowed_amount, 5_760);
         assert_eq!(usdc_loan.health_factor, 9_729_166);
-        assert_eq!(usdc_loan.collateral_amount, 7_005);
+        assert_eq!(usdc_loan.collateral_shares, 7_005);
 
         eurc_loan = manager_client.get_loan(&eurc_loan.loan_id);
         assert_eq!(eurc_loan.borrowed_amount, 10_760);
         assert_eq!(eurc_loan.health_factor, 9_297_397);
-        assert_eq!(eurc_loan.collateral_amount, 12_505);
+        assert_eq!(eurc_loan.collateral_shares, 12_505);
     }
 
     #[test]

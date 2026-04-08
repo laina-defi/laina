@@ -18,7 +18,7 @@ pub struct Positions {
     // struct names under 9 characters are marginally more efficient. Need to think if we value marginal efficiency over readibility
     pub receivable_shares: i128,
     pub liabilities: i128,
-    pub collateral: i128,
+    pub collateral_shares: i128,
 }
 
 #[contracttype]
@@ -321,7 +321,7 @@ pub fn read_positions(e: &Env, addr: &Address) -> Positions {
         Positions {
             receivable_shares: 0,
             liabilities: 0,
-            collateral: 0,
+            collateral_shares: 0,
         }
     }
 }
@@ -338,7 +338,7 @@ pub fn write_positions(
     let positions = Positions {
         receivable_shares: receivables,
         liabilities,
-        collateral,
+        collateral_shares: collateral,
     };
     e.storage().persistent().set(&key, &positions);
     extend_persistent(e, &key);
