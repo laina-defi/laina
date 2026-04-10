@@ -16,6 +16,12 @@ mod share_token {
     soroban_sdk::contractimport!(file = "../../target/wasm32v1-none/release/token.wasm");
 }
 
+mod insurance_pool {
+    soroban_sdk::contractimport!(
+        file = "../../target/wasm32v1-none/release/insurance_pool.wasm"
+    );
+}
+
 #[contract]
 struct LoanPoolContract;
 
@@ -90,15 +96,6 @@ impl LoanPoolContract {
                     .checked_div(current_contract_balance)
                     .ok_or(LoanPoolError::OverOrUnderFlow)?
             };
-            let liabilities: i128 = 0;
-            let collateral: i128 = 0;
-            positions::increase_positions(
-                &e,
-                user.clone(),
-                shares_issued,
-                liabilities,
-                collateral,
-            )?;
 
             let share_token_client =
                 share_token::Client::new(&e, &storage::read_token_contract_address(&e)?);
@@ -128,8 +125,10 @@ impl LoanPoolContract {
     fn withdraw_internal(e: Env, user: Address, amount: i128) -> Result<PoolState, LoanPoolError> {
         Self::add_interest_to_accrual(e.clone())?;
 
-        // Get users receivables
-        let receivable_shares = storage::read_positions(&e, &user).receivable_shares;
+        // Get user's receivable shares from the share token (single source of truth)
+        let share_token_client =
+            share_token::Client::new(&e, &storage::read_token_contract_address(&e)?);
+        let receivable_shares = share_token_client.balance(&user);
 
         let available_balance_tokens = Self::get_available_balance(e.clone())?;
         if amount > available_balance_tokens {
@@ -161,15 +160,6 @@ impl LoanPoolContract {
             shares_to_decrease
                 .checked_neg()
                 .ok_or(LoanPoolError::OverOrUnderFlow)?,
-        )?;
-        let liabilities: i128 = 0;
-        let collateral: i128 = 0;
-        positions::decrease_positions(
-            &e,
-            user.clone(),
-            shares_to_decrease,
-            liabilities,
-            collateral,
         )?;
 
         // Transfer tokens from the pool to the user
@@ -217,9 +207,7 @@ impl LoanPoolContract {
             amount.checked_neg().ok_or(LoanPoolError::OverOrUnderFlow)?,
         )?;
 
-        let collateral: i128 = 0;
-        let receivables: i128 = 0;
-        positions::increase_positions(&e, user.clone(), receivables, amount, collateral)?;
+        positions::increase_positions(&e, user.clone(), amount, 0)?;
 
         let token_address = &storage::read_currency(&e)?.token_address;
         let client = token::Client::new(&e, token_address);
@@ -254,7 +242,7 @@ impl LoanPoolContract {
         let client = token::Client::new(&e, token_address);
         client.transfer(&user, e.current_contract_address(), &amount);
 
-        positions::increase_positions(&e, user.clone(), 0, 0, shares_issued)?;
+        positions::increase_positions(&e, user.clone(), 0, shares_issued)?;
         storage::adjust_available_balance(&e, amount)?;
         storage::adjust_total_balance(&e, amount)?;
         storage::adjust_total_shares(&e, shares_issued)?;
@@ -280,7 +268,7 @@ impl LoanPoolContract {
             .checked_div(total_shares)
             .ok_or(LoanPoolError::OverOrUnderFlow)?;
 
-        positions::decrease_positions(&e, user.clone(), 0, 0, shares)?;
+        positions::decrease_positions(&e, user.clone(), 0, shares)?;
         storage::adjust_available_balance(
             &e,
             tokens.checked_neg().ok_or(LoanPoolError::OverOrUnderFlow)?,
@@ -373,9 +361,20 @@ impl LoanPoolContract {
         storage::read_collateral_factor(e)
     }
 
-    /// Get user's positions in the storage
+    /// Get user's positions. receivable_shares is sourced from the share token (single source of truth).
     pub fn get_user_positions(e: Env, user: Address) -> Positions {
-        storage::read_positions(&e, &user)
+        let stored = storage::read_stored_positions(&e, &user);
+        let share_token_client = share_token::Client::new(
+            &e,
+            &storage::read_token_contract_address(&e).unwrap_or_else(|_| {
+                panic!("token contract address not set")
+            }),
+        );
+        Positions {
+            receivable_shares: share_token_client.balance(&user),
+            liabilities: stored.liabilities,
+            collateral_shares: stored.collateral_shares,
+        }
     }
 
     /// Get contract data entries
@@ -412,7 +411,7 @@ impl LoanPoolContract {
         let loan_manager_addr = storage::read_loan_manager_addr(&e)?;
         loan_manager_addr.require_auth();
 
-        positions::increase_positions(&e, user.clone(), 0, amount, 0)?;
+        positions::increase_positions(&e, user.clone(), amount, 0)?;
         Ok(())
     }
 
@@ -455,8 +454,7 @@ impl LoanPoolContract {
         client.transfer(&user, &loan_manager_addr, &amount_to_admin);
 
         // Get current user liabilities to ensure we don't decrease by more than they have
-        let user_positions = storage::read_positions(&e, &user);
-        let current_liabilities = user_positions.liabilities;
+        let current_liabilities = storage::read_stored_positions(&e, &user).liabilities;
 
         // Only decrease liabilities by the minimum of principal_paid and current_liabilities
         let liabilities_to_decrease = if principal_paid > current_liabilities {
@@ -465,7 +463,7 @@ impl LoanPoolContract {
             principal_paid
         };
 
-        positions::decrease_positions(&e, user, 0, liabilities_to_decrease, 0)?;
+        positions::decrease_positions(&e, user, liabilities_to_decrease, 0)?;
 
         // All net paid funds (principal + interest - admin) increase available liquidity
         storage::adjust_available_balance(&e, amount - amount_to_admin)?;
@@ -511,8 +509,8 @@ impl LoanPoolContract {
         );
         client.transfer(&e.current_contract_address(), &user, &amount_to_user);
 
-        let user_liabilities = storage::read_positions(&e, &user).liabilities;
-        positions::decrease_positions(&e, user, 0, user_liabilities, 0)?;
+        let user_liabilities = storage::read_stored_positions(&e, &user).liabilities;
+        positions::decrease_positions(&e, user, user_liabilities, 0)?;
         storage::adjust_available_balance(&e, borrowed_amount - amount_to_admin)?;
         storage::adjust_total_balance(&e, unpaid_interest - amount_to_admin)?;
         Ok(())
@@ -549,7 +547,7 @@ impl LoanPoolContract {
         client.transfer(&user, e.current_contract_address(), &amount_to_storage);
         client.transfer(&user, &loan_manager_addr, &amount_to_admin);
 
-        positions::decrease_positions(&e, loan_owner, 0, amount, 0)?;
+        positions::decrease_positions(&e, loan_owner, amount, 0)?;
         storage::adjust_available_balance(&e, amount_to_storage)?;
         Ok(())
     }
@@ -573,7 +571,7 @@ impl LoanPoolContract {
             .checked_div(total_tokens)
             .ok_or(LoanPoolError::OverOrUnderFlow)?;
 
-        positions::decrease_positions(&e, loan_owner, 0, 0, shares_to_remove)?;
+        positions::decrease_positions(&e, loan_owner, 0, shares_to_remove)?;
         storage::adjust_available_balance(
             &e,
             amount_collateral_tokens
@@ -602,6 +600,59 @@ impl LoanPoolContract {
 
         Ok(shares_to_remove)
     }
+
+    /// Set the insurance pool address. Only callable by the loan manager.
+    pub fn set_insurance_pool(
+        e: Env,
+        insurance_pool_addr: Address,
+    ) -> Result<(), LoanPoolError> {
+        let loan_manager_addr = storage::read_loan_manager_addr(&e)?;
+        loan_manager_addr.require_auth();
+        storage::write_insurance_pool_address(&e, insurance_pool_addr);
+        Ok(())
+    }
+
+    /// Write off bad debt by burning equivalent lXLM from the insurance pool.
+    /// This preserves the token-to-share ratio for regular depositors.
+    /// Only callable by the loan manager.
+    pub fn write_off_bad_debt(e: Env, bad_debt_tokens: i128) -> Result<(), LoanPoolError> {
+        let loan_manager_addr = storage::read_loan_manager_addr(&e)?;
+        loan_manager_addr.require_auth();
+
+        if bad_debt_tokens <= 0 {
+            return Err(LoanPoolError::BadDebtWrite);
+        }
+
+        Self::add_interest_to_accrual(e.clone())?;
+
+        let total_shares = storage::read_total_shares(&e)?;
+        let total_tokens = storage::read_total_balance(&e)?;
+
+        let lxlm_to_burn = bad_debt_tokens
+            .checked_mul(total_shares)
+            .ok_or(LoanPoolError::OverOrUnderFlow)?
+            .checked_div(total_tokens)
+            .ok_or(LoanPoolError::OverOrUnderFlow)?;
+
+        let insurance_pool_addr = storage::read_insurance_pool_address(&e)?;
+        let insurance_client = insurance_pool::Client::new(&e, &insurance_pool_addr);
+        insurance_client.cover_bad_debt(&lxlm_to_burn);
+
+        storage::adjust_total_balance(
+            &e,
+            bad_debt_tokens
+                .checked_neg()
+                .ok_or(LoanPoolError::OverOrUnderFlow)?,
+        )?;
+        storage::adjust_total_shares(
+            &e,
+            lxlm_to_burn
+                .checked_neg()
+                .ok_or(LoanPoolError::OverOrUnderFlow)?,
+        )?;
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -610,10 +661,27 @@ mod test {
     use soroban_sdk::{
         testutils::{Address as _, Ledger},
         token::{Client as TokenClient, StellarAssetClient},
-        Env, Symbol,
+        Env, String, Symbol,
     };
 
+    mod share_token_wasm {
+        soroban_sdk::contractimport!(file = "../../target/wasm32v1-none/release/token.wasm");
+    }
+
     const TEST_LIQUIDATION_THRESHOLD: i128 = 8_000_000;
+
+    /// Register a share token contract with the given pool address as admin.
+    fn create_share_token(e: &Env, pool_addr: &Address) -> Address {
+        e.register(
+            share_token_wasm::WASM,
+            (
+                &pool_addr.clone(),
+                &7u32,
+                &String::from_str(e, "lToken"),
+                &String::from_str(e, "lT"),
+            ),
+        )
+    }
 
     #[test]
     fn initialize() {
@@ -633,12 +701,13 @@ mod test {
 
         let contract_id = e.register(LoanPoolContract, ());
         let contract_client = LoanPoolContractClient::new(&e, &contract_id);
+        let share_token_addr = create_share_token(&e, &contract_id);
 
         contract_client.initialize(
             &Address::generate(&e),
             &currency,
             &TEST_LIQUIDATION_THRESHOLD,
-            &Address::generate(&e),
+            &share_token_addr,
         );
     }
 
@@ -660,13 +729,14 @@ mod test {
 
         let contract_id = e.register(LoanPoolContract, ());
         let contract_client = LoanPoolContractClient::new(&e, &contract_id);
+        let share_token_addr = create_share_token(&e, &contract_id);
         let amount: i128 = 100;
 
         contract_client.initialize(
             &Address::generate(&e),
             &currency,
             &TEST_LIQUIDATION_THRESHOLD,
-            &Address::generate(&e),
+            &share_token_addr,
         );
 
         let result: i128 = contract_client.deposit(&user, &amount);
@@ -692,11 +762,12 @@ mod test {
 
         let contract_id = e.register(LoanPoolContract, ());
         let contract_client = LoanPoolContractClient::new(&e, &contract_id);
+        let share_token_addr = create_share_token(&e, &contract_id);
         contract_client.initialize(
             &Address::generate(&e),
             &currency,
             &TEST_LIQUIDATION_THRESHOLD,
-            &Address::generate(&e),
+            &share_token_addr,
         );
 
         // Deposit funds for the borrower to loan.
@@ -731,13 +802,14 @@ mod test {
 
         let contract_id = e.register(LoanPoolContract, ());
         let contract_client = LoanPoolContractClient::new(&e, &contract_id);
+        let share_token_addr = create_share_token(&e, &contract_id);
         let amount: i128 = 100;
 
         contract_client.initialize(
             &Address::generate(&e),
             &currency,
             &TEST_LIQUIDATION_THRESHOLD,
-            &Address::generate(&e),
+            &share_token_addr,
         );
 
         let result: i128 = contract_client.deposit(&user, &amount);
@@ -765,12 +837,13 @@ mod test {
 
         let contract_id = e.register(LoanPoolContract, ());
         let contract_client = LoanPoolContractClient::new(&e, &contract_id);
+        let share_token_addr = create_share_token(&e, &contract_id);
 
         contract_client.initialize(
             &Address::generate(&e),
             &currency,
             &TEST_LIQUIDATION_THRESHOLD,
-            &Address::generate(&e),
+            &share_token_addr,
         );
 
         let borrowed_amount = 1000_i128;
@@ -803,13 +876,14 @@ mod test {
 
         let contract_id = e.register(LoanPoolContract, ());
         let contract_client = LoanPoolContractClient::new(&e, &contract_id);
+        let share_token_addr = create_share_token(&e, &contract_id);
         let amount: i128 = 2000;
 
         contract_client.initialize(
             &Address::generate(&e),
             &currency,
             &TEST_LIQUIDATION_THRESHOLD,
-            &Address::generate(&e),
+            &share_token_addr,
         );
 
         contract_client.deposit(&user, &amount);
@@ -834,13 +908,14 @@ mod test {
 
         let contract_id = e.register(LoanPoolContract, ());
         let contract_client = LoanPoolContractClient::new(&e, &contract_id);
+        let share_token_addr = create_share_token(&e, &contract_id);
         let amount: i128 = 100;
 
         contract_client.initialize(
             &Address::generate(&e),
             &currency,
             &TEST_LIQUIDATION_THRESHOLD,
-            &Address::generate(&e),
+            &share_token_addr,
         );
 
         let result: i128 = contract_client.deposit(&user, &amount);
@@ -871,13 +946,14 @@ mod test {
 
         let contract_id = e.register(LoanPoolContract, ());
         let contract_client = LoanPoolContractClient::new(&e, &contract_id);
+        let share_token_addr = create_share_token(&e, &contract_id);
         let amount: i128 = 100;
 
         contract_client.initialize(
             &Address::generate(&e),
             &currency,
             &TEST_LIQUIDATION_THRESHOLD,
-            &Address::generate(&e),
+            &share_token_addr,
         );
 
         let result: i128 = contract_client.deposit(&user, &amount);
@@ -919,13 +995,14 @@ mod test {
 
         let contract_id = e.register(LoanPoolContract, ());
         let contract_client = LoanPoolContractClient::new(&e, &contract_id);
+        let share_token_addr = create_share_token(&e, &contract_id);
         let amount: i128 = 1000;
 
         contract_client.initialize(
             &Address::generate(&e),
             &currency,
             &TEST_LIQUIDATION_THRESHOLD,
-            &Address::generate(&e),
+            &share_token_addr,
         );
 
         let result: i128 = contract_client.deposit(&user, &amount);
@@ -974,13 +1051,14 @@ mod test {
 
         let contract_id = e.register(LoanPoolContract, ());
         let contract_client = LoanPoolContractClient::new(&e, &contract_id);
+        let share_token_addr = create_share_token(&e, &contract_id);
         let amount: i128 = 1000;
 
         contract_client.initialize(
             &Address::generate(&e),
             &currency,
             &TEST_LIQUIDATION_THRESHOLD,
-            &Address::generate(&e),
+            &share_token_addr,
         );
 
         let result: i128 = contract_client.deposit(&user, &amount);

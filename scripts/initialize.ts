@@ -89,16 +89,50 @@ const deployShareToken = (name: string, symbol: string, fileBase: string): strin
   return readTextFile(`./.stellar/contract-ids/${fileBase}.txt`);
 };
 
+const deployInsurancePool = (poolAddress: string, shareTokenAddress: string, insurancePoolFile: string): string => {
+  exe(
+    `stellar contract deploy \
+--wasm ./target/wasm32v1-none/release/insurance_pool.wasm \
+--source-account ${account} \
+--network testnet \
+--ignore-checks \
+| tr -d '"' > ./.stellar/contract-ids/${insurancePoolFile}.txt`,
+  );
+  const insurancePoolAddress = readTextFile(`./.stellar/contract-ids/${insurancePoolFile}.txt`);
+
+  exe(
+    `stellar contract invoke \
+--id ${insurancePoolAddress} \
+--source-account ${account} \
+--network testnet \
+-- initialize \
+--loan_pool_addr ${poolAddress} \
+--share_token_addr ${shareTokenAddress}`,
+  );
+
+  exe(
+    `stellar contract invoke \
+--id ${loanManagerAddress(true)} \
+--source-account ${account} \
+--network testnet \
+-- set_insurance_pool \
+--pool_addr ${poolAddress} \
+--insurance_pool_addr ${insurancePoolAddress}`,
+  );
+
+  return insurancePoolAddress;
+};
+
 const deployLoanPools = (tokens: IssuedTokens, xlmAddress: string) => {
   const wasmHash = readTextFile('./.stellar/contract-wasm-hash/loan_pool.txt');
 
   const pools = [
-    { tokenAddress: xlmAddress,         ticker: 'XLM',  poolName: 'pool_xlm',  shareTokenName: 'Laina XLM',  shareTokenSymbol: 'lXLM',  shareTokenFile: 'token_xlm'  },
-    { tokenAddress: tokens.usdcAddress, ticker: 'USDC', poolName: 'pool_usdc', shareTokenName: 'Laina USDC', shareTokenSymbol: 'lUSDC', shareTokenFile: 'token_usdc' },
-    { tokenAddress: tokens.eurcAddress, ticker: 'EURC', poolName: 'pool_eurc', shareTokenName: 'Laina EURC', shareTokenSymbol: 'lEURC', shareTokenFile: 'token_eurc' },
+    { tokenAddress: xlmAddress,         ticker: 'XLM',  poolName: 'pool_xlm',  shareTokenName: 'Laina XLM',  shareTokenSymbol: 'lXLM',  shareTokenFile: 'token_xlm',  insurancePoolFile: 'insurance_pool_xlm'  },
+    { tokenAddress: tokens.usdcAddress, ticker: 'USDC', poolName: 'pool_usdc', shareTokenName: 'Laina USDC', shareTokenSymbol: 'lUSDC', shareTokenFile: 'token_usdc', insurancePoolFile: 'insurance_pool_usdc' },
+    { tokenAddress: tokens.eurcAddress, ticker: 'EURC', poolName: 'pool_eurc', shareTokenName: 'Laina EURC', shareTokenSymbol: 'lEURC', shareTokenFile: 'token_eurc', insurancePoolFile: 'insurance_pool_eurc' },
   ];
 
-  for (const { tokenAddress, ticker, poolName, shareTokenName, shareTokenSymbol, shareTokenFile } of pools) {
+  for (const { tokenAddress, ticker, poolName, shareTokenName, shareTokenSymbol, shareTokenFile, insurancePoolFile } of pools) {
     const shareTokenAddress = deployShareToken(shareTokenName, shareTokenSymbol, shareTokenFile);
 
     const salt = crypto.randomBytes(32).toString('hex');
@@ -126,6 +160,8 @@ const deployLoanPools = (tokens: IssuedTokens, xlmAddress: string) => {
 -- set_admin \
 --new_admin ${poolAddress}`,
     );
+
+    deployInsurancePool(poolAddress, shareTokenAddress, insurancePoolFile);
   }
 };
 

@@ -51,6 +51,7 @@ export const installContracts = () => {
 
   install('loan_manager');
   install('loan_pool');
+  install('insurance_pool');
   install('token');
 };
 

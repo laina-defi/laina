@@ -21,6 +21,14 @@ pub struct Positions {
     pub collateral_shares: i128,
 }
 
+/// Internal storage struct — receivable_shares are stored in the share token, not here.
+#[derive(Clone)]
+#[contracttype]
+pub struct StoredPositions {
+    pub liabilities: i128,
+    pub collateral_shares: i128,
+}
+
 #[contracttype]
 pub struct Currency {
     pub token_address: Address,
@@ -63,6 +71,8 @@ enum PoolDataKey {
     PoolStatus,
     // Token contract address for share token,
     TokenContractAddress,
+    // Insurance pool contract address,
+    InsurancePoolAddress,
 }
 
 /* Contract events */
@@ -335,36 +345,46 @@ pub fn read_collateral_factor(e: &Env) -> Result<i128, LoanPoolError> {
         .ok_or(LoanPoolError::LiquidationThreshold)
 }
 
-pub fn read_positions(e: &Env, addr: &Address) -> Positions {
+pub fn read_stored_positions(e: &Env, addr: &Address) -> StoredPositions {
     let key = PoolDataKey::Positions(addr.clone());
     if let Some(positions) = e.storage().persistent().get(&key) {
         extend_persistent(e, &key);
         positions
     } else {
-        Positions {
-            receivable_shares: 0,
+        StoredPositions {
             liabilities: 0,
             collateral_shares: 0,
         }
     }
 }
 
-pub fn write_positions(
-    e: &Env,
-    addr: Address,
-    receivables: i128,
-    liabilities: i128,
-    collateral: i128,
-) {
+pub fn write_positions(e: &Env, addr: Address, liabilities: i128, collateral: i128) {
     let key = PoolDataKey::Positions(addr.clone());
 
-    let positions = Positions {
-        receivable_shares: receivables,
+    let stored = StoredPositions {
         liabilities,
         collateral_shares: collateral,
     };
-    e.storage().persistent().set(&key, &positions);
+    e.storage().persistent().set(&key, &stored);
     extend_persistent(e, &key);
 
+    let positions = Positions {
+        receivable_shares: 0, // receivable_shares sourced from share token at read time
+        liabilities,
+        collateral_shares: collateral,
+    };
     EventPositionsUpdated { addr, positions }.publish(e)
+}
+
+pub fn write_insurance_pool_address(e: &Env, address: Address) {
+    let key = PoolDataKey::InsurancePoolAddress;
+    e.storage().persistent().set(&key, &address);
+    extend_persistent(e, &key);
+}
+
+pub fn read_insurance_pool_address(e: &Env) -> Result<Address, LoanPoolError> {
+    e.storage()
+        .persistent()
+        .get(&PoolDataKey::InsurancePoolAddress)
+        .ok_or(LoanPoolError::InsurancePoolAddress)
 }

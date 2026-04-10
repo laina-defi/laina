@@ -20,4 +20,7 @@ pub enum LoanPoolError {
     PoolStatus = 14,
     WrongStatus = 15,
     TokenContractAddress = 16,
+    InsurancePoolAddress = 17,
+    BadDebtWrite = 18,
+    InsufficientInsuranceCoverage = 19,
 }

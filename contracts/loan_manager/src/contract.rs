@@ -613,6 +613,39 @@ impl LoanManager {
         storage::write_loan(&e, &loan_id, &loan);
         Ok(loan)
     }
+
+    /// Set the insurance pool address for a given loan pool.
+    /// Admin only. Delegates to the loan pool's `set_insurance_pool`.
+    pub fn set_insurance_pool(
+        e: Env,
+        pool_addr: Address,
+        insurance_pool_addr: Address,
+    ) -> Result<(), LoanManagerError> {
+        let admin = storage::read_admin(&e)?;
+        admin.require_auth();
+
+        let pool_client = loan_pool::Client::new(&e, &pool_addr);
+        pool_client.set_insurance_pool(&insurance_pool_addr);
+
+        Ok(())
+    }
+
+    /// Write off bad debt for a loan: calls the loan pool to burn insurance coverage,
+    /// adjusts pool accounting, and deletes the loan record.
+    /// Admin only.
+    pub fn handle_bad_debt(e: Env, loan_id: LoanId) -> Result<(), LoanManagerError> {
+        let admin = storage::read_admin(&e)?;
+        admin.require_auth();
+
+        let loan = storage::read_loan(&e, &loan_id).ok_or(LoanManagerError::LoanNotFound)?;
+
+        let borrow_pool_client = loan_pool::Client::new(&e, &loan.borrowed_from);
+        borrow_pool_client.write_off_bad_debt(&loan.borrowed_amount);
+
+        storage::delete_loan(&e, &loan_id);
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -629,6 +662,10 @@ mod tests {
     };
     mod loan_manager {
         soroban_sdk::contractimport!(file = "../../target/wasm32v1-none/release/loan_manager.wasm");
+    }
+
+    mod share_token_wasm {
+        soroban_sdk::contractimport!(file = "../../target/wasm32v1-none/release/token.wasm");
     }
 
     #[test]
@@ -716,6 +753,7 @@ mod tests {
             .address();
         let pool_addr = e.register(loan_pool::WASM, ());
         let pool_client = loan_pool::Client::new(&e, &pool_addr);
+        let dummy_share_token = Address::generate(&e);
         pool_client.initialize(
             &manager_addr,
             &Currency {
@@ -723,6 +761,7 @@ mod tests {
                 token_address,
             },
             &8_000_000,
+            &dummy_share_token,
         );
 
         // ACT
@@ -751,6 +790,7 @@ mod tests {
             .address();
         let pool_addr = e.register(loan_pool::WASM, ());
         let pool_client = loan_pool::Client::new(&e, &pool_addr);
+        let dummy_share_token = Address::generate(&e);
         pool_client.initialize(
             &manager_addr,
             &Currency {
@@ -758,6 +798,7 @@ mod tests {
                 token_address,
             },
             &8_000_000,
+            &dummy_share_token,
         );
 
         // ACT
@@ -1482,17 +1523,38 @@ mod tests {
         ticker: &Symbol,
         token_address: &Address,
     ) -> Address {
+        use soroban_sdk::String;
+
         const LIQUIDATION_THRESHOLD: i128 = 8_000_000; // 80%
         let wasm_hash = e.deployer().upload_contract_wasm(loan_pool::WASM);
         let xdr_bytes = token_address.clone().to_xdr(e);
         let salt = e.crypto().sha256(&xdr_bytes).to_bytes();
+
+        // Precompute pool address so we can set it as admin of the share token
+        let manager_addr = manager_client.address.clone();
+        let pool_addr = e
+            .deployer()
+            .with_address(manager_addr, salt.clone())
+            .deployed_address();
+
+        // Register share token with pool as admin (pool must be able to mint/burn)
+        let share_token_addr = e.register(
+            share_token_wasm::WASM,
+            (
+                &pool_addr,
+                &7u32,
+                &String::from_str(e, "lToken"),
+                &String::from_str(e, "lT"),
+            ),
+        );
+
         manager_client.deploy_pool(
             &wasm_hash,
             &salt,
             token_address,
             ticker,
             &LIQUIDATION_THRESHOLD,
-            &Address::generate(&e),
+            &share_token_addr,
         )
     }
 }
