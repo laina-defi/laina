@@ -59,6 +59,7 @@ export const installContracts = (mockOracle: boolean = false) => {
 
   install('loan_manager');
   install('loan_pool');
+  install('token');
   install('faucet');
   if (mockOracle) {
     install('reflector_oracle_mock');

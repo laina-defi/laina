@@ -72,16 +72,35 @@ const deployNativeXlmSac = (): string => {
   return address;
 };
 
+const deployShareToken = (name: string, symbol: string, fileBase: string): string => {
+  exe(
+    `stellar contract deploy \
+--wasm ./target/wasm32v1-none/release/token.wasm \
+--source-account ${account} \
+--network testnet \
+--ignore-checks \
+-- \
+--admin ${account} \
+--decimal 7 \
+--name "${name}" \
+--symbol ${symbol} \
+| tr -d '"' > ./.stellar/contract-ids/${fileBase}.txt`,
+  );
+  return readTextFile(`./.stellar/contract-ids/${fileBase}.txt`);
+};
+
 const deployLoanPools = (tokens: IssuedTokens, xlmAddress: string) => {
   const wasmHash = readTextFile('./.stellar/contract-wasm-hash/loan_pool.txt');
 
   const pools = [
-    { tokenAddress: xlmAddress,          ticker: 'XLM',  poolName: 'pool_xlm' },
-    { tokenAddress: tokens.usdcAddress,  ticker: 'USDC', poolName: 'pool_usdc' },
-    { tokenAddress: tokens.eurcAddress,  ticker: 'EURC', poolName: 'pool_eurc' },
+    { tokenAddress: xlmAddress,         ticker: 'XLM',  poolName: 'pool_xlm',  shareTokenName: 'Laina XLM',  shareTokenSymbol: 'lXLM',  shareTokenFile: 'token_xlm'  },
+    { tokenAddress: tokens.usdcAddress, ticker: 'USDC', poolName: 'pool_usdc', shareTokenName: 'Laina USDC', shareTokenSymbol: 'lUSDC', shareTokenFile: 'token_usdc' },
+    { tokenAddress: tokens.eurcAddress, ticker: 'EURC', poolName: 'pool_eurc', shareTokenName: 'Laina EURC', shareTokenSymbol: 'lEURC', shareTokenFile: 'token_eurc' },
   ];
 
-  for (const { tokenAddress, ticker, poolName } of pools) {
+  for (const { tokenAddress, ticker, poolName, shareTokenName, shareTokenSymbol, shareTokenFile } of pools) {
+    const shareTokenAddress = deployShareToken(shareTokenName, shareTokenSymbol, shareTokenFile);
+
     const salt = crypto.randomBytes(32).toString('hex');
     exe(
       `stellar contract invoke \
@@ -94,7 +113,18 @@ const deployLoanPools = (tokens: IssuedTokens, xlmAddress: string) => {
 --token_address ${tokenAddress} \
 --ticker ${ticker} \
 --liquidation_threshold 8000000 \
+--pool_token_address ${shareTokenAddress} \
 | tr -d '"' > ./.stellar/contract-ids/${poolName}.txt`,
+    );
+
+    const poolAddress = readTextFile(`./.stellar/contract-ids/${poolName}.txt`);
+    exe(
+      `stellar contract invoke \
+--id ${shareTokenAddress} \
+--source-account ${account} \
+--network testnet \
+-- set_admin \
+--new_admin ${poolAddress}`,
     );
   }
 };

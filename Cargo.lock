@@ -1803,7 +1803,7 @@ dependencies = [
  "serial_test",
  "soroban-client",
  "soroban-sdk 23.0.2",
- "soroban-token-sdk",
+ "soroban-token-sdk 23.0.2",
  "stellar-rpc-client",
  "stellar-strkey 0.0.13",
  "stellar-xdr 23.0.0",
@@ -3219,6 +3219,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "soroban-token-sdk"
+version = "25.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d8230fe7cf1bf138068cbe5cfa54a76657bed8a9bb6a89a4a229383116d3f067"
+dependencies = [
+ "soroban-sdk 25.3.1",
+]
+
+[[package]]
 name = "soroban-wasmi"
 version = "0.31.1-soroban.20.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3579,6 +3588,14 @@ checksum = "5d4f6d1145dcb577acf783d4e601bc1d76a13337bb54e6233add580b07344c8b"
 dependencies = [
  "displaydoc",
  "zerovec",
+]
+
+[[package]]
+name = "token"
+version = "0.1.0"
+dependencies = [
+ "soroban-sdk 25.3.1",
+ "soroban-token-sdk 25.3.1",
 ]
 
 [[package]]

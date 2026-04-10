@@ -14,6 +14,20 @@ const NETWORK = Networks.TESTNET;
 const server = new Horizon.Server(HORIZON_URL);
 const SCALAR_7 = 10_000_000n;
 
+const withRetry = async <T>(fn: () => Promise<T>, retries = 4, baseDelayMs = 3000): Promise<T> => {
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      return await fn();
+    } catch (err: unknown) {
+      if (attempt === retries) throw err;
+      const msg = err instanceof Error ? err.message : String(err);
+      console.log(`Horizon error (attempt ${attempt}/${retries}): ${msg} — retrying in ${baseDelayMs * attempt}ms`);
+      await new Promise(r => setTimeout(r, baseDelayMs * attempt));
+    }
+  }
+  throw new Error('unreachable');
+};
+
 // XLM comes from the deployer's own balance (capped by friendbot at 10k).
 // USDC/EURC are minted freely from the issuer, so a larger seed is fine.
 const randomXlmAmount = () => BigInt(500 + Math.floor(Math.random() * 501)) * SCALAR_7;  // 500–1000 XLM
@@ -25,8 +39,8 @@ const setupTrustlineAndFund = async (
   tickers: string[],
   amounts: string[],
 ) => {
-  const recipientAccount = await server.loadAccount(recipient.publicKey());
-  const issuerAccount = await server.loadAccount(issuer.publicKey());
+  const recipientAccount = await withRetry(() => server.loadAccount(recipient.publicKey()));
+  const issuerAccount = await withRetry(() => server.loadAccount(issuer.publicKey()));
 
   const trustTx = new TransactionBuilder(recipientAccount, { fee: BASE_FEE, networkPassphrase: NETWORK })
     .setTimeout(30);
@@ -35,7 +49,7 @@ const setupTrustlineAndFund = async (
   }
   const builtTrustTx = trustTx.build();
   builtTrustTx.sign(recipient);
-  await server.submitTransaction(builtTrustTx);
+  await withRetry(() => server.submitTransaction(builtTrustTx));
 
   const sendTx = new TransactionBuilder(issuerAccount, { fee: BASE_FEE, networkPassphrase: NETWORK })
     .setTimeout(30);
@@ -46,7 +60,7 @@ const setupTrustlineAndFund = async (
   }
   const builtSendTx = sendTx.build();
   builtSendTx.sign(issuer);
-  await server.submitTransaction(builtSendTx);
+  await withRetry(() => server.submitTransaction(builtSendTx));
 };
 
 export const seedPools = async (
