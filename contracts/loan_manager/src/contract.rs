@@ -38,6 +38,7 @@ impl LoanManager {
         token_address: Address,
         ticker: Symbol,
         liquidation_threshold: i128,
+        pool_token_address: Address,
     ) -> Result<Address, LoanManagerError> {
         // Deploy the contract using the uploaded Wasm with given hash.
         let deployed_address: Address = e
@@ -61,6 +62,7 @@ impl LoanManager {
             &e.current_contract_address(),
             &currency,
             &liquidation_threshold,
+            &pool_token_address,
         );
 
         Ok(deployed_address)
@@ -1490,6 +1492,7 @@ mod tests {
             token_address,
             ticker,
             &LIQUIDATION_THRESHOLD,
+            &Address::generate(&e),
         )
     }
 }

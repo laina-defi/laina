@@ -61,12 +61,19 @@ enum PoolDataKey {
     InterestRateMultiplier,
     // Pool health status,
     PoolStatus,
+    // Token contract address for share token,
+    TokenContractAddress,
 }
 
 /* Contract events */
 #[contractevent(topics = ["pool_status_updated"])]
 pub struct EventPoolStatusUpdated {
     pub pool_status: PoolStatus,
+}
+
+#[contractevent(topics = ["token_contract_address_added"])]
+pub struct EventTokenContractAddressAdded {
+    pub token_contract_address: Address,
 }
 
 #[contractevent(topics = ["loan_manager_address_added"])]
@@ -222,6 +229,22 @@ pub fn read_total_balance(e: &Env) -> Result<i128, LoanPoolError> {
         .persistent()
         .get(&PoolDataKey::TotalBalanceTokens)
         .ok_or(LoanPoolError::TotalBalance)
+}
+
+pub fn write_token_contract_address(e: &Env, address: Address) {
+    let key: PoolDataKey = PoolDataKey::TokenContractAddress;
+    e.storage().instance().set(&key, &address);
+    EventTokenContractAddressAdded {
+        token_contract_address: address,
+    }
+    .publish(e);
+}
+
+pub fn read_token_contract_address(e: &Env) -> Result<Address, LoanPoolError> {
+    e.storage()
+        .instance()
+        .get(&PoolDataKey::TokenContractAddress)
+        .ok_or(LoanPoolError::TokenContractAddress)
 }
 
 pub fn adjust_total_balance(e: &Env, amount: i128) -> Result<i128, LoanPoolError> {
