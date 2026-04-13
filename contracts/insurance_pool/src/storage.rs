@@ -10,6 +10,17 @@ pub struct InsurancePositions {
 
 #[derive(Clone)]
 #[contracttype]
+pub struct WithdrawQueueEntry {
+    /// Insurance shares earmarked for withdrawal; remain in pool for bad debt absorption.
+    pub queued_shares: i128,
+    /// Ledger sequence number when queue was created; used for 14-day enforcement.
+    pub queued_at_ledger: u32,
+    /// Unix timestamp (seconds) when queue was created; used for UI display.
+    pub queued_at_timestamp: u64,
+}
+
+#[derive(Clone)]
+#[contracttype]
 enum InsurancePoolDataKey {
     // The paired loan pool address (authorized to call cover_bad_debt)
     LoanPoolAddress,
@@ -21,9 +32,12 @@ enum InsurancePoolDataKey {
     TotalInsuranceShares,
     // Total share tokens (lXLM etc) held by this contract
     TotalInsuranceTokens,
+    // Pending withdrawal queue entry for a depositor
+    WithdrawQueue(Address),
 }
 
 const DAY_IN_LEDGERS: u32 = 17280;
+pub const FOURTEEN_DAYS_IN_LEDGERS: u32 = 14 * DAY_IN_LEDGERS;
 const POSITIONS_BUMP_AMOUNT: u32 = 30 * DAY_IN_LEDGERS;
 const POSITIONS_LIFETIME_THRESHOLD: u32 = POSITIONS_BUMP_AMOUNT - DAY_IN_LEDGERS;
 
@@ -102,4 +116,25 @@ pub fn write_total_insurance_tokens(e: &Env, amount: i128) {
     let key = InsurancePoolDataKey::TotalInsuranceTokens;
     e.storage().persistent().set(&key, &amount);
     extend_persistent(e, &key);
+}
+
+pub fn write_withdraw_queue(e: &Env, addr: &Address, entry: WithdrawQueueEntry) {
+    let key = InsurancePoolDataKey::WithdrawQueue(addr.clone());
+    e.storage().persistent().set(&key, &entry);
+    extend_persistent(e, &key);
+}
+
+pub fn read_withdraw_queue(e: &Env, addr: &Address) -> Option<WithdrawQueueEntry> {
+    let key = InsurancePoolDataKey::WithdrawQueue(addr.clone());
+    if let Some(entry) = e.storage().persistent().get(&key) {
+        extend_persistent(e, &key);
+        Some(entry)
+    } else {
+        None
+    }
+}
+
+pub fn delete_withdraw_queue(e: &Env, addr: &Address) {
+    let key = InsurancePoolDataKey::WithdrawQueue(addr.clone());
+    e.storage().persistent().remove(&key);
 }

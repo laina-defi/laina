@@ -11,4 +11,7 @@ pub enum InsurancePoolError {
     OverOrUnderFlow = 5,
     NegativeAmount = 6,
     ZeroTotalShares = 7,
+    QueuePeriodNotElapsed = 8,
+    NoWithdrawQueue = 9,
+    WithdrawQueueAlreadyExists = 10,
 }
