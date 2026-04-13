@@ -3,12 +3,14 @@ import { Outlet, RouterProvider, createBrowserRouter } from 'react-router-dom';
 
 import Footer from '@components/Footer';
 import Nav from '@components/Nav';
+import { InsurancePoolProvider } from '@contexts/insurance-pool-context';
 import { LoansProvider } from '@contexts/loan-context';
 import { PoolProvider } from '@contexts/pool-context';
 import { WalletProvider } from '@contexts/wallet-context';
 import BorrowPage from '@pages/_borrow/BorrowPage';
 import LandingPage from '@pages/_landing/LandingPage';
 import LendPage from '@pages/_lend/LendPage';
+import InsurePage from '@pages/_insure/InsurePage';
 
 const PageWrapper = () => {
   return (
@@ -29,6 +31,7 @@ const router = createBrowserRouter([
       { path: '', element: <LandingPage /> },
       { path: 'lend', element: <LendPage /> },
       { path: 'borrow', element: <BorrowPage /> },
+      { path: 'insure', element: <InsurePage /> },
     ],
   },
 ]);
@@ -38,9 +41,11 @@ const App = () => {
     <React.StrictMode>
       <WalletProvider>
         <PoolProvider>
-          <LoansProvider>
-            <RouterProvider router={router} />
-          </LoansProvider>
+          <InsurancePoolProvider>
+            <LoansProvider>
+              <RouterProvider router={router} />
+            </LoansProvider>
+          </InsurancePoolProvider>
         </PoolProvider>
       </WalletProvider>
     </React.StrictMode>

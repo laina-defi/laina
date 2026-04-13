@@ -99,6 +99,9 @@ export const createContractBindings = () => {
   bind('pool_usdc', process.env.CONTRACT_ID_POOL_USDC);
   bind('pool_eurc', process.env.CONTRACT_ID_POOL_EURC);
   bind('faucet', process.env.CONTRACT_ID_FAUCET);
+  bind('insurance_pool_xlm', process.env.CONTRACT_ID_INSURANCE_POOL_XLM);
+  bind('insurance_pool_eurc', process.env.CONTRACT_ID_INSURANCE_POOL_EURC);
+  bind('insurance_pool_usdc', process.env.CONTRACT_ID_INSURANCE_POOL_USDC);
 };
 
 const bind = (contractName: string, address: string | undefined) => {
@@ -110,7 +113,7 @@ const bind = (contractName: string, address: string | undefined) => {
 };
 
 export const createContractImports = () => {
-  const CONTRACTS = ['loan_manager', 'pool_xlm', 'pool_usdc', 'pool_eurc', 'faucet'];
+  const CONTRACTS = ['loan_manager', 'pool_xlm', 'pool_usdc', 'pool_eurc', 'faucet', 'insurance_pool_xlm', 'insurance_pool_usdc', 'insurance_pool_eurc'];
   CONTRACTS.forEach(importContract);
 };
 

@@ -6,7 +6,7 @@ import { Loading } from '@components/Loading';
 import LoansModal from '@components/LoansModal/LoansModal';
 import { type Loan, useLoans } from '@contexts/loan-context';
 import { usePools } from '@contexts/pool-context';
-import { type PositionsRecord, type PriceRecord, useWallet } from '@contexts/wallet-context';
+import { type InsurancePositionsRecord, type PositionsRecord, type PriceRecord, useWallet } from '@contexts/wallet-context';
 import { formatCentAmount, toCents } from '@lib/formatting';
 import type { SupportedCurrency } from 'currencies';
 import { isNil } from 'ramda';
@@ -15,7 +15,7 @@ const ASSET_MODAL_ID = 'assets-modal';
 const LOANS_MODAL_ID = 'loans-modal';
 
 const WalletCard = () => {
-  const { wallet, openConnectWalletModal, positions } = useWallet();
+  const { wallet, openConnectWalletModal, positions, insurancePositions } = useWallet();
   const { prices } = usePools();
   const { loans } = useLoans();
 
@@ -31,7 +31,7 @@ const WalletCard = () => {
     );
   }
 
-  const receivables = prices ? calculateTotalReceivables(prices, positions) : null;
+  const receivables = prices ? calculateTotalReceivables(prices, positions, insurancePositions) : null;
   const liabilities = prices && loans ? calculateTotalLiabilities(prices, loans) : null;
 
   if (isNil(receivables)) {
@@ -126,11 +126,19 @@ const WalletCard = () => {
   );
 };
 
-const calculateTotalReceivables = (prices: PriceRecord, positions: PositionsRecord): bigint => {
-  return Object.entries(positions).reduce((acc, [ticker, { receivable_shares }]) => {
-    const price = prices[ticker as SupportedCurrency];
-    return acc + toCents(price, receivable_shares);
+const calculateTotalReceivables = (
+  prices: PriceRecord,
+  positions: PositionsRecord,
+  insurancePositions: InsurancePositionsRecord,
+): bigint => {
+  const lending = Object.entries(positions).reduce((acc, [ticker, { receivable_shares }]) => {
+    return acc + toCents(prices[ticker as SupportedCurrency], receivable_shares);
   }, 0n);
+  const insurance = Object.entries(insurancePositions).reduce((acc, [ticker, amount]) => {
+    if (!amount) return acc;
+    return acc + toCents(prices[ticker as SupportedCurrency], amount);
+  }, 0n);
+  return lending + insurance;
 };
 
 const calculateTotalLiabilities = (prices: PriceRecord, loans: Loan[]): bigint => {

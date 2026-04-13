@@ -16,6 +16,7 @@ import { LendableAsset } from './LendableAsset';
 const links = [
   { to: '/lend', label: 'Lend' },
   { to: '/borrow', label: 'Borrow' },
+  { to: '/insure', label: 'Insure' },
 ];
 
 const LendPage = () => {

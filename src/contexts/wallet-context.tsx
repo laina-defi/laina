@@ -7,6 +7,7 @@ import { contractClient as faucetClient } from '@contracts/faucet';
 import { getBalances } from '@lib/horizon';
 import { CURRENCIES, type SupportedCurrency } from 'currencies';
 import { CURRENCY_BINDINGS_ARR } from '../currency-bindings';
+import { CURRENCY_BINDINGS_ARR as INSURANCE_BINDINGS_ARR } from '../insurance-bindings';
 
 const WALLET_TIMEOUT_DAYS = 3;
 
@@ -34,6 +35,20 @@ export type PositionsRecord = {
   [K in SupportedCurrency]?: Positions;
 };
 
+export type InsurancePositionsRecord = {
+  [K in SupportedCurrency]?: bigint;
+};
+
+export type InsuranceQueueEntry = {
+  queued_shares: bigint;
+  queued_at_ledger: number;
+  queued_at_timestamp: bigint;
+};
+
+export type InsuranceQueuesRecord = {
+  [K in SupportedCurrency]?: InsuranceQueueEntry | null;
+};
+
 export type PriceRecord = {
   [K in SupportedCurrency]: bigint;
 };
@@ -42,6 +57,8 @@ export type WalletContext = {
   wallet: Wallet | null;
   walletBalances: BalanceRecord | null;
   positions: PositionsRecord;
+  insurancePositions: InsurancePositionsRecord;
+  insuranceQueues: InsuranceQueuesRecord;
   openConnectWalletModal: () => void;
   disconnectWallet: () => void;
   refetchBalances: () => void;
@@ -66,6 +83,8 @@ const Context = createContext<WalletContext>({
   wallet: null,
   walletBalances: null,
   positions: {},
+  insurancePositions: {},
+  insuranceQueues: {},
   openConnectWalletModal: () => {},
   disconnectWallet: () => {},
   refetchBalances: () => {},
@@ -92,6 +111,27 @@ const fetchAllPositions = async (user: string): Promise<PositionsRecord> => {
     ]),
   );
   return Object.fromEntries(positionsArr);
+};
+
+const fetchAllInsurancePositions = async (user: string): Promise<InsurancePositionsRecord> => {
+  const results = await Promise.all(
+    INSURANCE_BINDINGS_ARR.map(async ({ contractClient, ticker }) => {
+      const { result } = await contractClient.get_balance({ user });
+      return [ticker, result.isOk() ? result.unwrap() : 0n] as const;
+    }),
+  );
+  return Object.fromEntries(results);
+};
+
+const fetchAllInsuranceQueues = async (user: string): Promise<InsuranceQueuesRecord> => {
+  const results = await Promise.all(
+    INSURANCE_BINDINGS_ARR.map(async ({ contractClient, ticker }) => {
+      const { result } = await contractClient.get_queue({ user });
+      // get_queue returns Option<WithdrawQueueEntry>, not Result — result is the value or undefined
+      return [ticker, result ?? null] as const;
+    }),
+  );
+  return Object.fromEntries(results);
 };
 
 const isSupportedCurrency = (assetCode: string, issuer: string): boolean => {
@@ -149,21 +189,34 @@ export const WalletProvider = ({ children }: PropsWithChildren) => {
   const [wallet, setWallet] = useState<Wallet | null>(null);
   const [walletBalances, setWalletBalances] = useState<BalanceRecord | null>(null);
   const [positions, setPositions] = useState<PositionsRecord>({});
+  const [insurancePositions, setInsurancePositions] = useState<InsurancePositionsRecord>({});
+  const [insuranceQueues, setInsuranceQueues] = useState<InsuranceQueuesRecord>({});
 
   const loadWallet = useCallback(async (name: string) => {
     try {
       const { address } = await kit.getAddress();
-      setWallet(createWalletObj(name, address));
-      const balances = await getBalances(address);
-      setWalletBalances(createBalanceRecord(balances));
-      setPositions(await fetchAllPositions(address));
 
-      // use the user's wallet for all of our contract clients.
+      // Update publicKey on all contract clients immediately so transactions
+      // are built with the correct source account even if later fetches fail.
       for (const { contractClient } of CURRENCY_BINDINGS_ARR) {
+        contractClient.options.publicKey = address;
+      }
+      for (const { contractClient } of INSURANCE_BINDINGS_ARR) {
         contractClient.options.publicKey = address;
       }
       loanManagerClient.options.publicKey = address;
       faucetClient.options.publicKey = address;
+
+      setWallet(createWalletObj(name, address));
+      const balances = await getBalances(address);
+      setWalletBalances(createBalanceRecord(balances));
+      setPositions(await fetchAllPositions(address));
+      const [insurPos, insurQueues] = await Promise.all([
+        fetchAllInsurancePositions(address),
+        fetchAllInsuranceQueues(address),
+      ]);
+      setInsurancePositions(insurPos);
+      setInsuranceQueues(insurQueues);
 
       const timeout = new Date();
       timeout.setDate(timeout.getDate() + WALLET_TIMEOUT_DAYS);
@@ -199,6 +252,8 @@ export const WalletProvider = ({ children }: PropsWithChildren) => {
     setWallet(null);
     setWalletBalances(null);
     setPositions({});
+    setInsurancePositions({});
+    setInsuranceQueues({});
     deleteWalletState();
   };
 
@@ -208,8 +263,14 @@ export const WalletProvider = ({ children }: PropsWithChildren) => {
     try {
       const balances = await getBalances(wallet.address);
       setWalletBalances(createBalanceRecord(balances));
-      const positions = await fetchAllPositions(wallet.address);
+      const [positions, insurancePositions, insuranceQueues] = await Promise.all([
+        fetchAllPositions(wallet.address),
+        fetchAllInsurancePositions(wallet.address),
+        fetchAllInsuranceQueues(wallet.address),
+      ]);
       setPositions(positions);
+      setInsurancePositions(insurancePositions);
+      setInsuranceQueues(insuranceQueues);
     } catch (err) {
       console.error('Error fetching balances', err);
     }
@@ -221,6 +282,8 @@ export const WalletProvider = ({ children }: PropsWithChildren) => {
         wallet,
         walletBalances,
         positions,
+        insurancePositions,
+        insuranceQueues,
         openConnectWalletModal,
         disconnectWallet,
         refetchBalances,

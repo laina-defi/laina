@@ -4,13 +4,12 @@ import { Card } from '@components/Card';
 import { StellarExpertLink } from '@components/Link';
 import { Table } from '@components/Table';
 import WalletCard from '@components/WalletCard/WalletCard';
-import { usePools } from '@contexts/pool-context';
-import { useWallet } from '@contexts/wallet-context';
+import { useInsurancePools } from '@contexts/insurance-pool-context';
 import { contractId } from '@contracts/loan_manager';
-import { CURRENCY_BINDINGS_ARR, type CurrencyBinding } from 'src/currency-bindings';
-import { BorrowMobileCard } from './BorrowMobileCard';
-import { BorrowModal } from './BorrowModal/BorrowModal';
-import { BorrowableAsset } from './BorrowableAsset';
+import { CURRENCY_BINDINGS_ARR, type CurrencyBinding } from 'src/insurance-bindings';
+import { InsuranceAsset } from './InsuranceAsset';
+import { InsureManageModal } from './InsureManageModal';
+import { InsureMobileCard } from './InsureMobileCard';
 
 const links = [
   { to: '/lend', label: 'Lend' },
@@ -18,24 +17,20 @@ const links = [
   { to: '/insure', label: 'Insure' },
 ];
 
-const BorrowPage = () => {
-  const { refetchBalances } = useWallet();
-  const { refetchPools } = usePools();
+const InsurePage = () => {
+  const { refetchPools } = useInsurancePools();
   const [selectedCurrency, setSelectedCurrency] = useState<CurrencyBinding | null>(null);
 
-  const modalId = 'borrow-modal';
+  const manageModalId = 'insure-manage-modal';
 
-  const openBorrowModal = (currency: CurrencyBinding) => {
+  const openManageModal = (currency: CurrencyBinding) => {
     setSelectedCurrency(currency);
-    const modalEl = document.getElementById(modalId) as HTMLDialogElement;
-    modalEl.showModal();
+    (document.getElementById(manageModalId) as HTMLDialogElement).showModal();
   };
 
-  const closeBorrowModal = () => {
-    const modalEl = document.getElementById(modalId) as HTMLDialogElement;
-    modalEl.close();
+  const closeManageModal = () => {
+    (document.getElementById(manageModalId) as HTMLDialogElement).close();
     setSelectedCurrency(null);
-    refetchBalances();
     refetchPools();
   };
 
@@ -45,23 +40,25 @@ const BorrowPage = () => {
         <WalletCard />
         <Card links={links}>
           <div className="px-12 pb-12 pt-4">
-            <h1 className="text-2xl font-semibold mb-4 tracking-tight">Borrow Assets</h1>
+            <div className="flex items-center justify-between mb-4">
+              <h1 className="text-2xl font-semibold tracking-tight">Insure Pools</h1>
+            </div>
             <div className="block md:hidden">
               {CURRENCY_BINDINGS_ARR.map((currency) => (
-                <BorrowMobileCard
+                <InsureMobileCard
                   key={currency.ticker}
                   currency={currency}
-                  onBorrowClicked={() => openBorrowModal(currency)}
+                  onManageClicked={() => openManageModal(currency)}
                 />
               ))}
             </div>
             <div className="hidden md:block">
-              <Table headers={['Asset', null, 'Ticker', 'Balance', 'Borrow APY', null]}>
+              <Table headers={['Asset', null, 'Ticker', 'Pool TVL', 'APY', 'Your Position', null]}>
                 {CURRENCY_BINDINGS_ARR.map((currency) => (
-                  <BorrowableAsset
+                  <InsuranceAsset
                     key={currency.ticker}
                     currency={currency}
-                    onBorrowClicked={() => openBorrowModal(currency)}
+                    onManageClicked={() => openManageModal(currency)}
                   />
                 ))}
               </Table>
@@ -70,9 +67,9 @@ const BorrowPage = () => {
           </div>
         </Card>
       </div>
-      <BorrowModal modalId={modalId} onClose={closeBorrowModal} currency={selectedCurrency} />
+      <InsureManageModal modalId={manageModalId} onClose={closeManageModal} currency={selectedCurrency} />
     </>
   );
 };
 
-export default BorrowPage;
+export default InsurePage;
