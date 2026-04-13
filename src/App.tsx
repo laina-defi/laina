@@ -8,9 +8,9 @@ import { LoansProvider } from '@contexts/loan-context';
 import { PoolProvider } from '@contexts/pool-context';
 import { WalletProvider } from '@contexts/wallet-context';
 import BorrowPage from '@pages/_borrow/BorrowPage';
+import InsurePage from '@pages/_insure/InsurePage';
 import LandingPage from '@pages/_landing/LandingPage';
 import LendPage from '@pages/_lend/LendPage';
-import InsurePage from '@pages/_insure/InsurePage';
 
 const PageWrapper = () => {
   return (

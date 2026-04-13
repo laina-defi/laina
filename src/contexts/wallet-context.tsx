@@ -2,8 +2,8 @@ import { FREIGHTER_ID, StellarWalletsKit, WalletNetwork, allowAllModules } from 
 import type * as StellarSdk from '@stellar/stellar-sdk';
 import { type PropsWithChildren, createContext, useCallback, useContext, useEffect, useState } from 'react';
 
-import { contractClient as loanManagerClient } from '@contracts/loan_manager';
 import { contractClient as faucetClient } from '@contracts/faucet';
+import { contractClient as loanManagerClient } from '@contracts/loan_manager';
 import { getBalances } from '@lib/horizon';
 import { CURRENCIES, type SupportedCurrency } from 'currencies';
 import { CURRENCY_BINDINGS_ARR } from '../currency-bindings';

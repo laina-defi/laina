@@ -4,10 +4,11 @@ import { Card } from '@components/Card';
 import Identicon from '@components/Identicon';
 import { Loading } from '@components/Loading';
 import LoansModal from '@components/LoansModal/LoansModal';
+import { type InsurancePoolRecord, useInsurancePools } from '@contexts/insurance-pool-context';
 import { type Loan, useLoans } from '@contexts/loan-context';
-import { usePools } from '@contexts/pool-context';
+import { type PoolRecord, usePools } from '@contexts/pool-context';
 import { type InsurancePositionsRecord, type PositionsRecord, type PriceRecord, useWallet } from '@contexts/wallet-context';
-import { formatCentAmount, toCents } from '@lib/formatting';
+import { calcDepositAPY, calcInsuranceAPY, formatCentAmount, toCents } from '@lib/formatting';
 import type { SupportedCurrency } from 'currencies';
 import { isNil } from 'ramda';
 
@@ -16,7 +17,8 @@ const LOANS_MODAL_ID = 'loans-modal';
 
 const WalletCard = () => {
   const { wallet, openConnectWalletModal, positions, insurancePositions } = useWallet();
-  const { prices } = usePools();
+  const { prices, pools } = usePools();
+  const { pools: insurancePools } = useInsurancePools();
   const { loans } = useLoans();
 
   if (!wallet) {
@@ -33,6 +35,7 @@ const WalletCard = () => {
 
   const receivables = prices ? calculateTotalReceivables(prices, positions, insurancePositions) : null;
   const liabilities = prices && loans ? calculateTotalLiabilities(prices, loans) : null;
+  const netAPY = prices && pools && insurancePools && loans ? calculateNetAPY(prices, pools, insurancePools, positions, insurancePositions, loans) : null;
 
   if (isNil(receivables)) {
     return (
@@ -118,6 +121,16 @@ const WalletCard = () => {
           ) : (
             <p>You haven't borrowed any assets.</p>
           )}
+          {netAPY !== null && (
+            <div className="flex flex-row items-center">
+              <div className="w-40 mr-10">
+                <p className="text-grey">Net APY</p>
+                <p className={`text-xl leading-5 ${netAPY >= 0 ? 'text-success' : 'text-error'}`}>
+                  {netAPY >= 0 ? '+' : ''}{netAPY.toFixed(2)} %
+                </p>
+              </div>
+            </div>
+          )}
         </div>
       </Card>
       <AssetsModal modalId={ASSET_MODAL_ID} onClose={closeAssetModal} />
@@ -146,6 +159,61 @@ const calculateTotalLiabilities = (prices: PriceRecord, loans: Loan[]): bigint =
     const price = prices[loan.borrowedTicker];
     return acc + toCents(price, loan.borrowedAmount + loan.unpaidInterest);
   }, 0n);
+};
+
+const calculateNetAPY = (
+  prices: PriceRecord,
+  pools: PoolRecord,
+  insurancePools: InsurancePoolRecord,
+  positions: PositionsRecord,
+  insurancePositions: InsurancePositionsRecord,
+  loans: Loan[],
+): number | null => {
+  let earningsPerYear = 0;
+  let totalDeposited = 0;
+  let totalBorrowed = 0;
+
+  // Deposits + locked collateral both sit in the pool and earn the same APY
+  for (const [ticker, pos] of Object.entries(positions)) {
+    if (!pos) continue;
+    const totalShares = pos.receivable_shares + pos.collateral_shares;
+    if (totalShares === 0n) continue;
+    const pool = pools[ticker as SupportedCurrency];
+    const price = prices[ticker as SupportedCurrency];
+    if (!pool || !price) continue;
+    const valueInCents = Number(toCents(price, totalShares));
+    const apy = calcDepositAPY(pool.annualInterestRate, pool.totalBalanceTokens, pool.availableBalanceTokens);
+    totalDeposited += valueInCents;
+    earningsPerYear += valueInCents * apy;
+  }
+
+  for (const [ticker, amount] of Object.entries(insurancePositions)) {
+    if (!amount || amount === 0n) continue;
+    const pool = pools[ticker as SupportedCurrency];
+    const insurancePool = insurancePools[ticker as SupportedCurrency];
+    const price = prices[ticker as SupportedCurrency];
+    if (!pool || !insurancePool || !price) continue;
+    const valueInCents = Number(toCents(price, amount));
+    const apy = calcInsuranceAPY(pool.annualInterestRate, pool.totalBalanceTokens, pool.availableBalanceTokens, insurancePool.totalTokens);
+    totalDeposited += valueInCents;
+    earningsPerYear += valueInCents * apy;
+  }
+
+  for (const loan of loans) {
+    const pool = pools[loan.borrowedTicker];
+    const price = prices[loan.borrowedTicker];
+    if (!pool || !price) continue;
+    const valueInCents = Number(toCents(price, loan.borrowedAmount));
+    // annualInterestRate / 100_000 is already in percent units (same as calcDepositAPY)
+    const apr = Number(pool.annualInterestRate) / 100_000;
+    totalBorrowed += valueInCents;
+    earningsPerYear -= valueInCents * apr;
+  }
+
+  // Both apy/apr values are in percent units (e.g. 7.2 means 7.2%), so no * 100 needed
+  const denominator = totalDeposited > 0 ? totalDeposited : totalBorrowed;
+  if (denominator === 0) return null;
+  return earningsPerYear / denominator;
 };
 
 export default WalletCard;

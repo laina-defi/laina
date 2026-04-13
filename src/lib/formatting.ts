@@ -51,6 +51,45 @@ export const formatAPR = (apr: bigint): string => {
   return `${(Number(apr) / 100_000).toFixed(2)} %`;
 };
 
-export const formatAPY = (apr: bigint): string => {
-  return `${((0.9 * Number(apr)) / 100_000).toFixed(2)} %`;
+// Deposit APY: depositors earn on the utilised portion, after 10% protocol fee, split 50/50.
+// APY = borrowRate × utilization × 0.9 × 0.5
+export const calcDepositAPY = (
+  annualInterestRate: bigint,
+  totalBalanceTokens: bigint,
+  availableBalanceTokens: bigint,
+): number => {
+  if (totalBalanceTokens === 0n) return 0;
+  const utilization = Number(totalBalanceTokens - availableBalanceTokens) / Number(totalBalanceTokens);
+  return (Number(annualInterestRate) / 100_000) * utilization * 0.9 * 0.5;
+};
+
+export const formatDepositAPY = (
+  annualInterestRate: bigint,
+  totalBalanceTokens: bigint,
+  availableBalanceTokens: bigint,
+): string => {
+  return `${calcDepositAPY(annualInterestRate, totalBalanceTokens, availableBalanceTokens).toFixed(2)} %`;
+};
+
+// Insurance APY: insurers earn the same absolute interest as depositors, but their pool is
+// typically much smaller, so APY = borrowRate × borrowed × 0.9 × 0.5 / insurancePoolTotal
+export const calcInsuranceAPY = (
+  annualInterestRate: bigint,
+  totalLendingBalance: bigint,
+  availableLendingBalance: bigint,
+  totalInsuranceTokens: bigint,
+): number => {
+  if (totalInsuranceTokens === 0n) return 0;
+  const borrowed = totalLendingBalance - availableLendingBalance;
+  if (borrowed <= 0n) return 0;
+  return (Number(annualInterestRate) / 100_000) * (Number(borrowed) / Number(totalInsuranceTokens)) * 0.9 * 0.5;
+};
+
+export const formatInsuranceAPY = (
+  annualInterestRate: bigint,
+  totalLendingBalance: bigint,
+  availableLendingBalance: bigint,
+  totalInsuranceTokens: bigint,
+): string => {
+  return `${calcInsuranceAPY(annualInterestRate, totalLendingBalance, availableLendingBalance, totalInsuranceTokens).toFixed(2)} %`;
 };

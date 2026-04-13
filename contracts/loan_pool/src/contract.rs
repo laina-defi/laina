@@ -470,6 +470,9 @@ impl LoanPoolContract {
 
         // Only the interest portion (net of admin) increases the pool's total balance
         storage::adjust_total_balance(&e, interest_paid - amount_to_admin)?;
+
+        let net_interest = interest_paid - amount_to_admin;
+        Self::boost_insurance_pool(&e, net_interest)?;
         Ok(())
     }
 
@@ -513,6 +516,9 @@ impl LoanPoolContract {
         positions::decrease_positions(&e, user, user_liabilities, 0)?;
         storage::adjust_available_balance(&e, borrowed_amount - amount_to_admin)?;
         storage::adjust_total_balance(&e, unpaid_interest - amount_to_admin)?;
+
+        let net_interest = unpaid_interest - amount_to_admin;
+        Self::boost_insurance_pool(&e, net_interest)?;
         Ok(())
     }
 
@@ -609,6 +615,53 @@ impl LoanPoolContract {
         let loan_manager_addr = storage::read_loan_manager_addr(&e)?;
         loan_manager_addr.require_auth();
         storage::write_insurance_pool_address(&e, insurance_pool_addr);
+        Ok(())
+    }
+
+    /// Mints l-tokens equivalent to half of `net_interest` directly to the insurance pool,
+    /// then notifies it to update its internal token accounting. This gives insurers a
+    /// higher effective yield than plain depositors, compensating them for bad-debt risk.
+    /// Skipped silently if no insurance pool is configured or if it has no active insurers.
+    fn boost_insurance_pool(e: &Env, net_interest: i128) -> Result<(), LoanPoolError> {
+        if net_interest <= 1 {
+            return Ok(());
+        }
+
+        let insurance_pool_addr = match storage::read_insurance_pool_address(e) {
+            Ok(addr) => addr,
+            Err(_) => return Ok(()),
+        };
+
+        let insurance_client = insurance_pool::Client::new(e, &insurance_pool_addr);
+        let pool_state = insurance_client.get_pool_state();
+        if pool_state.total_shares == 0 {
+            return Ok(());
+        }
+
+        let total_shares = storage::read_total_shares(e)?;
+        let total_balance = storage::read_total_balance(e)?;
+
+        if total_balance == 0 {
+            return Ok(());
+        }
+
+        // boost ≈ (net_interest / 2) × total_shares / total_balance
+        let boost_shares = (net_interest / 2)
+            .checked_mul(total_shares)
+            .ok_or(LoanPoolError::OverOrUnderFlow)?
+            .checked_div(total_balance)
+            .ok_or(LoanPoolError::OverOrUnderFlow)?;
+
+        if boost_shares == 0 {
+            return Ok(());
+        }
+
+        let share_token_client =
+            share_token::Client::new(e, &storage::read_token_contract_address(e)?);
+        share_token_client.mint(&insurance_pool_addr, &boost_shares);
+        storage::adjust_total_shares(e, boost_shares)?;
+        insurance_client.receive_interest_boost(&boost_shares);
+
         Ok(())
     }
 

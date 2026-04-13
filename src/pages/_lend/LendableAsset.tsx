@@ -4,7 +4,7 @@ import { Loading } from '@components/Loading';
 import { usePools } from '@contexts/pool-context';
 import { type Balance, useWallet } from '@contexts/wallet-context';
 import { isBalanceZero } from '@lib/converters';
-import { formatAPY, formatAmount, toDollarsFormatted } from '@lib/formatting';
+import { formatAmount, formatDepositAPY, toDollarsFormatted } from '@lib/formatting';
 import { isNil } from 'ramda';
 import type { CurrencyBinding } from 'src/currency-bindings';
 
@@ -51,7 +51,7 @@ export const LendableAsset = ({ currency, onDepositClicked }: LendableAssetProps
 
       <td>
         <p className="text-xl font-semibold leading-6">
-          {pool ? formatAPY(pool.annualInterestRate) : <Loading size="xs" />}
+          {pool ? formatDepositAPY(pool.annualInterestRate, pool.totalBalanceTokens, pool.availableBalanceTokens) : <Loading size="xs" />}
         </p>
       </td>
 

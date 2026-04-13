@@ -58,7 +58,7 @@ impl InsurancePool {
         };
 
         // Transfer share tokens from user to this contract
-        share_token_client.transfer(&user, &e.current_contract_address(), &amount);
+        share_token_client.transfer(&user, e.current_contract_address(), &amount);
 
         // Update user's insurance positions
         let positions = storage::read_insurance_positions(&e, &user);
@@ -163,8 +163,8 @@ impl InsurancePool {
     pub fn execute_withdraw(e: Env, user: Address) -> Result<i128, InsurancePoolError> {
         user.require_auth();
 
-        let entry = storage::read_withdraw_queue(&e, &user)
-            .ok_or(InsurancePoolError::NoWithdrawQueue)?;
+        let entry =
+            storage::read_withdraw_queue(&e, &user).ok_or(InsurancePoolError::NoWithdrawQueue)?;
 
         // Enforce 14-day waiting period
         if e.ledger().sequence() - entry.queued_at_ledger < storage::FOURTEEN_DAYS_IN_LEDGERS {
@@ -276,6 +276,30 @@ impl InsurancePool {
         Ok(value)
     }
 
+    /// Called by the paired loan pool to credit earned interest to insurance depositors.
+    /// The loan pool has already minted `ltoken_amount` l-tokens to this contract's address.
+    /// Updating TotalInsuranceTokens (with shares unchanged) means each insurance share
+    /// becomes worth more — giving insurers a higher effective yield than plain depositors.
+    pub fn receive_interest_boost(
+        e: Env,
+        ltoken_amount: i128,
+    ) -> Result<(), InsurancePoolError> {
+        let loan_pool_addr = storage::read_loan_pool_address(&e)?;
+        loan_pool_addr.require_auth();
+
+        if ltoken_amount <= 0 {
+            return Err(InsurancePoolError::NegativeAmount);
+        }
+
+        let total_tokens = storage::read_total_insurance_tokens(&e);
+        let new_total_tokens = total_tokens
+            .checked_add(ltoken_amount)
+            .ok_or(InsurancePoolError::OverOrUnderFlow)?;
+        storage::write_total_insurance_tokens(&e, new_total_tokens);
+
+        Ok(())
+    }
+
     /// Returns the current state of the insurance pool.
     pub fn get_pool_state(e: Env) -> InsurancePoolState {
         InsurancePoolState {
@@ -288,7 +312,10 @@ impl InsurancePool {
 #[cfg(test)]
 mod test {
     use super::*;
-    use soroban_sdk::{testutils::{Address as _, Ledger as _}, Env};
+    use soroban_sdk::{
+        testutils::{Address as _, Ledger as _},
+        Env,
+    };
 
     mod share_token_wasm {
         soroban_sdk::contractimport!(file = "../../target/wasm32v1-none/release/token.wasm");
@@ -319,7 +346,13 @@ mod test {
     }
 
     /// Mint share tokens directly via the token contract (simulates loan pool deposit).
-    fn mint_share_tokens(e: &Env, share_token_addr: &Address, insurance_pool_addr: &Address, to: &Address, amount: i128) {
+    fn mint_share_tokens(
+        e: &Env,
+        share_token_addr: &Address,
+        insurance_pool_addr: &Address,
+        to: &Address,
+        amount: i128,
+    ) {
         let token_client = share_token_wasm::Client::new(e, share_token_addr);
         // The insurance pool is the admin, so it can mint on behalf of any user.
         // We use mock_all_auths so the mint succeeds.

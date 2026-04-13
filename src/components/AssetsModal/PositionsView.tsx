@@ -1,7 +1,7 @@
 import { Button } from '@components/Button';
 import { usePools } from '@contexts/pool-context';
 import { useWallet } from '@contexts/wallet-context';
-import { formatAPY, formatAmount, toDollarsFormatted } from '@lib/formatting';
+import { formatAmount, formatDepositAPY, toDollarsFormatted } from '@lib/formatting';
 import type { SupportedCurrency } from 'currencies';
 import { isNil } from 'ramda';
 import { CURRENCY_BINDINGS } from 'src/currency-bindings';
@@ -87,7 +87,7 @@ const TableRow = ({ receivableShares, ticker, onWithdraw }: TableRowProps) => {
         <p className="text-lg font-semibold leading-5">{formatAmount(totalBalance)}</p>
         <p className="text-base">{!isNil(price) && toDollarsFormatted(price, totalBalance)}</p>
       </td>
-      <td className="text-lg font-semibold">{pool && formatAPY(pool.annualInterestRate)}</td>
+      <td className="text-lg font-semibold">{pool && formatDepositAPY(pool.annualInterestRate, pool.totalBalanceTokens, pool.availableBalanceTokens)}</td>
       <td>
         <Button onClick={handleWithdrawClick}>Withdraw</Button>
       </td>

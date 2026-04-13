@@ -3,7 +3,7 @@ import { Loading } from '@components/Loading';
 import { usePools } from '@contexts/pool-context';
 import { type Balance, useWallet } from '@contexts/wallet-context';
 import { isBalanceZero } from '@lib/converters';
-import { formatAPY, formatAmount, toDollarsFormatted } from '@lib/formatting';
+import { formatAmount, formatDepositAPY, toDollarsFormatted } from '@lib/formatting';
 import { isNil } from 'ramda';
 import type { CurrencyBinding } from 'src/currency-bindings';
 
@@ -47,7 +47,7 @@ export const LendMobileCard = ({ currency, onDepositClicked }: LendMobileCardPro
         </div>
         <div>
           <p className="text-sm opacity-70 mb-1">Supply APY</p>
-          <p className="font-semibold text-lg">{pool ? formatAPY(pool.annualInterestRate) : <Loading size="xs" />}</p>
+          <p className="font-semibold text-lg">{pool ? formatDepositAPY(pool.annualInterestRate, pool.totalBalanceTokens, pool.availableBalanceTokens) : <Loading size="xs" />}</p>
         </div>
       </div>
 

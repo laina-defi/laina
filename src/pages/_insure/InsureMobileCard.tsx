@@ -1,8 +1,9 @@
 import { Button } from '@components/Button';
 import { Loading } from '@components/Loading';
 import { useInsurancePools } from '@contexts/insurance-pool-context';
+import { usePools } from '@contexts/pool-context';
 import { useWallet } from '@contexts/wallet-context';
-import { formatAmount, toDollarsFormatted } from '@lib/formatting';
+import { formatAmount, formatInsuranceAPY, toDollarsFormatted } from '@lib/formatting';
 import { isNil } from 'ramda';
 import type { CurrencyBinding } from 'src/insurance-bindings';
 
@@ -16,7 +17,9 @@ export const InsureMobileCard = ({ currency, onManageClicked }: InsureMobileCard
 
   const { wallet, positions, insurancePositions } = useWallet();
   const { prices, pools } = useInsurancePools();
+  const { pools: lendingPools } = usePools();
   const pool = pools?.[ticker];
+  const lendingPool = lendingPools?.[ticker];
   const price = prices?.[ticker];
 
   const lTokenBalance = positions?.[ticker]?.receivable_shares ?? 0n;
@@ -49,7 +52,9 @@ export const InsureMobileCard = ({ currency, onManageClicked }: InsureMobileCard
         </div>
         <div>
           <p className="text-sm opacity-70 mb-1">APY</p>
-          <p className="font-semibold text-lg">—</p>
+          <p className="font-semibold text-lg">
+            {lendingPool && pool ? formatInsuranceAPY(lendingPool.annualInterestRate, lendingPool.totalBalanceTokens, lendingPool.availableBalanceTokens, pool.totalTokens) : <Loading size="xs" />}
+          </p>
         </div>
         {hasInsurancePosition && (
           <div>

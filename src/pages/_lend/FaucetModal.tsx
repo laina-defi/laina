@@ -1,14 +1,14 @@
-import { useState } from 'react';
 import { Asset, Horizon, Networks, Operation, TransactionBuilder } from '@stellar/stellar-sdk';
+import { useState } from 'react';
 
 import { Button } from '@components/Button';
 import { Dialog, ErrorDialogContent, LoadingDialogContent, SuccessDialogContent } from '@components/Dialog';
 import { useWallet } from '@contexts/wallet-context';
 import { contractClient as faucetClient } from '@contracts/faucet';
-import { sendTransaction } from '@lib/horizon';
-import { CURRENCY_EURC, CURRENCY_USDC } from 'currencies';
 import EURCIcon from '@images/eurc.svg';
 import USDCIcon from '@images/usdc.svg';
+import { sendTransaction } from '@lib/horizon';
+import { CURRENCY_EURC, CURRENCY_USDC } from 'currencies';
 
 const HorizonServer = new Horizon.Server('https://horizon-testnet.stellar.org/');
 const LAI_ISSUER = import.meta.env.PUBLIC_ISSUER_ADDRESS_LAI;
