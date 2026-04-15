@@ -24,6 +24,8 @@ pub struct WithdrawQueueEntry {
 enum InsurancePoolDataKey {
     // The paired loan pool address (authorized to call cover_bad_debt)
     LoanPoolAddress,
+    // The loan manager address (for LAI reward checkpoints)
+    LoanManagerAddress,
     // The share token (lXLM/lUSDC/lEURC) held by this insurance pool
     ShareTokenAddress,
     // Per-depositor internal insurance shares
@@ -45,6 +47,22 @@ fn extend_persistent(e: &Env, key: &InsurancePoolDataKey) {
     e.storage()
         .persistent()
         .extend_ttl(key, POSITIONS_LIFETIME_THRESHOLD, POSITIONS_BUMP_AMOUNT);
+}
+
+pub fn write_loan_manager_address(e: &Env, address: Address) {
+    let key = InsurancePoolDataKey::LoanManagerAddress;
+    e.storage().persistent().set(&key, &address);
+    extend_persistent(e, &key);
+}
+
+pub fn read_loan_manager_address(e: &Env) -> Option<Address> {
+    let key = InsurancePoolDataKey::LoanManagerAddress;
+    if let Some(addr) = e.storage().persistent().get(&key) {
+        extend_persistent(e, &key);
+        Some(addr)
+    } else {
+        None
+    }
 }
 
 pub fn write_loan_pool_address(e: &Env, address: Address) {

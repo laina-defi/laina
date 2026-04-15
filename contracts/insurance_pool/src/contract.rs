@@ -1,4 +1,4 @@
-use soroban_sdk::{contract, contractimpl, contracttype, Address, Env};
+use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, IntoVal, Symbol, Val};
 
 use crate::{error::InsurancePoolError, storage, storage::WithdrawQueueEntry};
 
@@ -18,14 +18,16 @@ pub struct InsurancePool;
 
 #[contractimpl]
 impl InsurancePool {
-    /// Initialize the insurance pool with its paired loan pool and share token.
+    /// Initialize the insurance pool with its paired loan pool, share token, and loan manager.
     pub fn initialize(
         e: Env,
         loan_pool_addr: Address,
         share_token_addr: Address,
+        loan_manager_addr: Address,
     ) -> Result<(), InsurancePoolError> {
         storage::write_loan_pool_address(&e, loan_pool_addr);
         storage::write_share_token_address(&e, share_token_addr);
+        storage::write_loan_manager_address(&e, loan_manager_addr);
         Ok(())
     }
 
@@ -59,6 +61,22 @@ impl InsurancePool {
 
         // Transfer share tokens from user to this contract
         share_token_client.transfer(&user, e.current_contract_address(), &amount);
+
+        // Checkpoint LAI insurer rewards before changing the user's share position.
+        let old_user_shares = storage::read_insurance_positions(&e, &user).insurance_shares;
+        if let Some(manager_addr) = storage::read_loan_manager_address(&e) {
+            let new_user_shares = old_user_shares + insurance_shares_issued;
+            let func = Symbol::new(&e, "checkpoint_insurer_reward");
+            let args: soroban_sdk::Vec<Val> = (
+                e.current_contract_address(),
+                user.clone(),
+                old_user_shares,
+                new_user_shares,
+                total_shares,
+            )
+                .into_val(&e);
+            let _: () = e.invoke_contract(&manager_addr, &func, args);
+        }
 
         // Update user's insurance positions
         let positions = storage::read_insurance_positions(&e, &user);
@@ -193,6 +211,21 @@ impl InsurancePool {
             return Err(InsurancePoolError::InsufficientInsuranceTokens);
         }
 
+        // Checkpoint LAI insurer rewards before reducing the user's share position.
+        if let Some(manager_addr) = storage::read_loan_manager_address(&e) {
+            let new_shares = positions.insurance_shares - entry.queued_shares;
+            let func = Symbol::new(&e, "checkpoint_insurer_reward");
+            let args: soroban_sdk::Vec<Val> = (
+                e.current_contract_address(),
+                user.clone(),
+                positions.insurance_shares,
+                new_shares,
+                total_shares,
+            )
+                .into_val(&e);
+            let _: () = e.invoke_contract(&manager_addr, &func, args);
+        }
+
         // Update user's insurance positions
         let new_shares = positions
             .insurance_shares
@@ -321,6 +354,27 @@ mod test {
         soroban_sdk::contractimport!(file = "../../target/wasm32v1-none/release/token.wasm");
     }
 
+    // Minimal stub that satisfies the checkpoint_insurer_reward cross-contract call without
+    // pulling in the full loan_manager WASM as a test dependency.
+    mod mock_loan_manager {
+        use soroban_sdk::{contract, contractimpl, Address, Env};
+
+        #[contract]
+        pub struct MockLoanManager;
+
+        #[contractimpl]
+        impl MockLoanManager {
+            pub fn checkpoint_insurer_reward(
+                _e: Env,
+                _insurance_pool: Address,
+                _user: Address,
+                _old_shares: i128,
+                _new_shares: i128,
+                _total_shares: i128,
+            ) {}
+        }
+    }
+
     fn setup(e: &Env) -> (InsurancePoolClient<'_>, Address, Address) {
         e.mock_all_auths();
 
@@ -339,8 +393,9 @@ mod test {
         );
 
         let loan_pool_addr = Address::generate(e);
+        let loan_manager_addr = e.register(mock_loan_manager::MockLoanManager, ());
 
-        insurance_client.initialize(&loan_pool_addr, &share_token_addr);
+        insurance_client.initialize(&loan_pool_addr, &share_token_addr, &loan_manager_addr);
 
         (insurance_client, loan_pool_addr, share_token_addr)
     }

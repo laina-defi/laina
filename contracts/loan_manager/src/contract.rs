@@ -1,6 +1,9 @@
 use crate::error::LoanManagerError;
 use crate::oracle::{self, Asset};
-use crate::storage::{self, Loan, LoanId, NewLoan};
+use crate::storage::{self, Loan, LoanId, LaiConfig, LaiPoolState, LaiUserState, NewLoan};
+use crate::storage::{
+    LAI_PRECISION, LAI_TOTAL_LEDGERS, LAI_INSURER_BPS, LAI_BORROWER_BPS,
+};
 
 use soroban_sdk::{contract, contractimpl, token, Address, BytesN, Env, Symbol, Vec};
 
@@ -64,6 +67,24 @@ impl LoanManager {
             &liquidation_threshold,
             &pool_token_address,
         );
+
+        // If LAI distribution is active, flush existing pool accumulators with old rate
+        // before changing num_pools, then initialize state for the new pool.
+        if let Some(config) = storage::read_lai_config(&e) {
+            Self::flush_all_pool_accumulators(&e, &config);
+            let new_num_pools = storage::read_lai_num_pools(&e) + 1;
+            storage::write_lai_num_pools(&e, new_num_pools);
+            let start = e.ledger().sequence().max(config.start_ledger);
+            storage::write_lai_borrower_pool_state(
+                &e,
+                &deployed_address,
+                &LaiPoolState {
+                    acc_per_share: 0,
+                    last_ledger: start,
+                    last_known_total: 0,
+                },
+            );
+        }
 
         Ok(deployed_address)
     }
@@ -144,6 +165,26 @@ impl LoanManager {
 
         // Deposit collateral — returns shares issued
         let collateral_shares = collateral_pool_client.deposit_collateral(&user, &collateral);
+
+        // Checkpoint borrower LAI rewards before changing their liability position.
+        // For a new loan from this pool, old_liabilities = sum of existing loans from same pool.
+        if storage::read_lai_config(&e).is_some() {
+            let borrow_pool_state = borrow_pool_client.get_pool_state();
+            let total_liabilities = borrow_pool_state.total_balance_tokens - borrow_pool_state.available_balance_tokens;
+            let old_liabilities: i128 = storage::read_user_loans(&e, &user)
+                .iter()
+                .filter(|l| l.borrowed_from == borrowed_from)
+                .map(|l| l.borrowed_amount)
+                .sum();
+            Self::checkpoint_borrower_internal(
+                &e,
+                &borrowed_from,
+                &user,
+                old_liabilities,
+                old_liabilities + borrowed,
+                total_liabilities,
+            );
+        }
 
         // Borrow the funds
         let borrowed_amount = borrow_pool_client.borrow(&user, &borrowed);
@@ -338,6 +379,21 @@ impl LoanManager {
 
         let collateral_pool_client = loan_pool::Client::new(e, &collateral_from);
         let borrow_pool_client = loan_pool::Client::new(e, &borrowed_from);
+
+        // Checkpoint borrower LAI rewards before changing their liability position.
+        if storage::read_lai_config(e).is_some() {
+            let borrow_pool_state = borrow_pool_client.get_pool_state();
+            let total_liabilities = borrow_pool_state.total_balance_tokens - borrow_pool_state.available_balance_tokens;
+            Self::checkpoint_borrower_internal(
+                e,
+                &borrowed_from,
+                &user,
+                borrowed_amount,
+                borrowed_amount - amount,
+                total_liabilities,
+            );
+        }
+
         borrow_pool_client.repay(&user, &amount, &unpaid_interest);
 
         let new_unpaid_interest = if amount < unpaid_interest {
@@ -398,6 +454,21 @@ impl LoanManager {
         } = Self::add_interest(e, loan_id.clone())?;
 
         let borrow_pool_client = loan_pool::Client::new(e, &borrowed_from);
+
+        // Checkpoint borrower LAI rewards before closing position (new liabilities = 0).
+        if storage::read_lai_config(e).is_some() {
+            let borrow_pool_state = borrow_pool_client.get_pool_state();
+            let total_liabilities = borrow_pool_state.total_balance_tokens - borrow_pool_state.available_balance_tokens;
+            Self::checkpoint_borrower_internal(
+                e,
+                &borrowed_from,
+                &user,
+                borrowed_amount,
+                0,
+                total_liabilities,
+            );
+        }
+
         borrow_pool_client.repay_and_close(
             &user,
             &borrowed_amount,
@@ -491,6 +562,20 @@ impl LoanManager {
             .ok_or(LoanManagerError::OverOrUnderFlow)?
             .checked_div(10_000_000)
             .ok_or(LoanManagerError::OverOrUnderFlow)?;
+
+        // Checkpoint borrower LAI rewards before reducing their liability position.
+        if storage::read_lai_config(&e).is_some() {
+            let borrow_pool_state = borrow_pool_client.get_pool_state();
+            let total_liabilities = borrow_pool_state.total_balance_tokens - borrow_pool_state.available_balance_tokens;
+            Self::checkpoint_borrower_internal(
+                &e,
+                &borrowed_from,
+                &loan_id.borrower_address,
+                borrowed_amount,
+                borrowed_amount - amount,
+                total_liabilities,
+            );
+        }
 
         borrow_pool_client.liquidate(&user, &amount, &unpaid_interest, &loan_id.borrower_address);
 
@@ -627,6 +712,25 @@ impl LoanManager {
         let pool_client = loan_pool::Client::new(&e, &pool_addr);
         pool_client.set_insurance_pool(&insurance_pool_addr);
 
+        // Store the loan_pool → insurance_pool mapping for LAI distribution
+        storage::write_lai_insurance_pool_for_pool(&e, &pool_addr, &insurance_pool_addr);
+
+        // Initialize insurer pool state if LAI distribution is active
+        if let Some(config) = storage::read_lai_config(&e) {
+            if storage::read_lai_insurer_pool_state(&e, &insurance_pool_addr).is_none() {
+                let start = e.ledger().sequence().max(config.start_ledger);
+                storage::write_lai_insurer_pool_state(
+                    &e,
+                    &insurance_pool_addr,
+                    &LaiPoolState {
+                        acc_per_share: 0,
+                        last_ledger: start,
+                        last_known_total: 0,
+                    },
+                );
+            }
+        }
+
         Ok(())
     }
 
@@ -645,6 +749,342 @@ impl LoanManager {
         storage::delete_loan(&e, &loan_id);
 
         Ok(())
+    }
+
+    /// Initialize the LAI liquidity-mining distribution.
+    /// Transfers 50M LAI must already be in this contract's balance before calling.
+    /// Admin only.
+    pub fn initialize_lai_distribution(
+        e: Env,
+        token: Address,
+        start_ledger: u32,
+    ) -> Result<(), LoanManagerError> {
+        let admin = storage::read_admin(&e)?;
+        admin.require_auth();
+
+        const TOTAL_AMOUNT: i128 = 50_000_000 * 10_000_000; // 50M with 7 decimals
+        let end_ledger = start_ledger + LAI_TOTAL_LEDGERS;
+
+        let config = LaiConfig {
+            token,
+            start_ledger,
+            end_ledger,
+            total_amount: TOTAL_AMOUNT,
+        };
+        storage::write_lai_config(&e, &config);
+
+        // Initialize pool states for all already-registered pools
+        let pool_addresses = storage::read_pool_addresses(&e);
+        let num_pools = pool_addresses.len() as u32;
+        storage::write_lai_num_pools(&e, num_pools);
+
+        for pool in pool_addresses.iter() {
+            storage::write_lai_borrower_pool_state(
+                &e,
+                &pool,
+                &LaiPoolState {
+                    acc_per_share: 0,
+                    last_ledger: start_ledger,
+                    last_known_total: 0,
+                },
+            );
+            if let Some(ins_pool) = storage::read_lai_insurance_pool_for_pool(&e, &pool) {
+                storage::write_lai_insurer_pool_state(
+                    &e,
+                    &ins_pool,
+                    &LaiPoolState {
+                        acc_per_share: 0,
+                        last_ledger: start_ledger,
+                        last_known_total: 0,
+                    },
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Called by insurance_pool contracts when a user's share position changes.
+    /// Caller must be a registered insurance pool.
+    pub fn checkpoint_insurer_reward(
+        e: Env,
+        insurance_pool: Address,
+        user: Address,
+        old_shares: i128,
+        new_shares: i128,
+        total_shares: i128,
+    ) -> Result<(), LoanManagerError> {
+        insurance_pool.require_auth();
+
+        let config = match storage::read_lai_config(&e) {
+            Some(c) => c,
+            None => return Ok(()), // LAI not initialized — ignore silently
+        };
+
+        Self::checkpoint_insurer_internal(
+            &e,
+            &config,
+            &insurance_pool,
+            &user,
+            old_shares,
+            new_shares,
+            total_shares,
+        );
+
+        Ok(())
+    }
+
+    /// Claim all accumulated LAI rewards for a user (both borrower and insurer sides).
+    /// Returns the total amount of LAI transferred.
+    pub fn claim_lai_rewards(e: Env, user: Address) -> Result<i128, LoanManagerError> {
+        user.require_auth();
+
+        let config = match storage::read_lai_config(&e) {
+            Some(c) => c,
+            None => return Ok(0),
+        };
+
+        let mut total_pending: i128 = 0;
+        let pool_addresses = storage::read_pool_addresses(&e);
+
+        for pool in pool_addresses.iter() {
+            // --- Borrower side ---
+            if let Some(mut pool_state) = storage::read_lai_borrower_pool_state(&e, &pool) {
+                // Compute current liabilities from loan records
+                let user_liabilities: i128 = storage::read_user_loans(&e, &user)
+                    .iter()
+                    .filter(|l| l.borrowed_from == pool)
+                    .map(|l| l.borrowed_amount)
+                    .sum();
+
+                // Advance accumulator using last known total
+                Self::advance_accumulator(
+                    &e,
+                    &config,
+                    &mut pool_state,
+                    LAI_BORROWER_BPS,
+                );
+
+                let user_state = storage::read_lai_borrower_user_state(&e, &pool, &user);
+                let earned = user_liabilities
+                    .checked_mul(pool_state.acc_per_share)
+                    .unwrap_or(0)
+                    / LAI_PRECISION
+                    - user_state.reward_debt;
+                let earned = earned.max(0);
+
+                storage::write_lai_borrower_pool_state(&e, &pool, &pool_state);
+                storage::write_lai_borrower_user_state(
+                    &e,
+                    &pool,
+                    &user,
+                    &LaiUserState {
+                        reward_debt: user_liabilities
+                            .checked_mul(pool_state.acc_per_share)
+                            .unwrap_or(0)
+                            / LAI_PRECISION,
+                        pending: 0,
+                        position: user_liabilities,
+                    },
+                );
+                total_pending += user_state.pending + earned;
+            }
+
+            // --- Insurer side ---
+            if let Some(ins_pool) = storage::read_lai_insurance_pool_for_pool(&e, &pool) {
+                if let Some(mut ins_state) = storage::read_lai_insurer_pool_state(&e, &ins_pool) {
+                    let user_ins_state =
+                        storage::read_lai_insurer_user_state(&e, &ins_pool, &user);
+                    let user_shares = user_ins_state.position;
+
+                    Self::advance_accumulator(
+                        &e,
+                        &config,
+                        &mut ins_state,
+                        LAI_INSURER_BPS,
+                    );
+
+                    let earned = user_shares
+                        .checked_mul(ins_state.acc_per_share)
+                        .unwrap_or(0)
+                        / LAI_PRECISION
+                        - user_ins_state.reward_debt;
+                    let earned = earned.max(0);
+
+                    storage::write_lai_insurer_pool_state(&e, &ins_pool, &ins_state);
+                    storage::write_lai_insurer_user_state(
+                        &e,
+                        &ins_pool,
+                        &user,
+                        &LaiUserState {
+                            reward_debt: user_shares
+                                .checked_mul(ins_state.acc_per_share)
+                                .unwrap_or(0)
+                                / LAI_PRECISION,
+                            pending: 0,
+                            position: user_shares,
+                        },
+                    );
+                    total_pending += user_ins_state.pending + earned;
+                }
+            }
+        }
+
+        if total_pending > 0 {
+            let lai_client = token::Client::new(&e, &config.token);
+            lai_client.transfer(&e.current_contract_address(), &user, &total_pending);
+        }
+
+        Ok(total_pending)
+    }
+
+    // ── Internal LAI helpers ──────────────────────────────────────────────────
+
+    /// Advance `pool_state.acc_per_share` from `last_ledger` to current ledger (capped at end_ledger).
+    /// Uses `last_known_total` stored in pool_state. Mutates pool_state in place; caller must write it back.
+    fn advance_accumulator(
+        e: &Env,
+        config: &LaiConfig,
+        pool_state: &mut LaiPoolState,
+        side_bps: i128,
+    ) {
+        let num_pools = storage::read_lai_num_pools(e) as i128;
+        if num_pools == 0 {
+            return;
+        }
+
+        let current_ledger = e.ledger().sequence().min(config.end_ledger);
+        if current_ledger <= pool_state.last_ledger {
+            pool_state.last_ledger = current_ledger;
+            return;
+        }
+
+        let elapsed = (current_ledger - pool_state.last_ledger) as i128;
+        // emission for this side (insurer or borrower) per pool per ledger
+        let emission_per_ledger = config.total_amount / num_pools / LAI_TOTAL_LEDGERS as i128
+            * side_bps / 10_000;
+
+        if pool_state.last_known_total > 0 {
+            let new_rewards = emission_per_ledger * elapsed;
+            pool_state.acc_per_share += new_rewards * LAI_PRECISION / pool_state.last_known_total;
+        }
+        // If last_known_total == 0: emissions are lost (no users in pool), accumulator stays unchanged.
+
+        pool_state.last_ledger = current_ledger;
+    }
+
+    /// Checkpoint a user's borrower reward for a given pool.
+    fn checkpoint_borrower_internal(
+        e: &Env,
+        pool: &Address,
+        user: &Address,
+        old_liabilities: i128,
+        new_liabilities: i128,
+        total_liabilities: i128,
+    ) {
+        let config = match storage::read_lai_config(e) {
+            Some(c) => c,
+            None => return,
+        };
+        let mut pool_state = match storage::read_lai_borrower_pool_state(e, pool) {
+            Some(s) => s,
+            None => return,
+        };
+
+        // Advance accumulator using the OLD total (correct: rewards during elapsed ledgers
+        // were earned by whoever held positions then, not the post-event total).
+        pool_state.last_known_total = total_liabilities;
+        Self::advance_accumulator(e, &config, &mut pool_state, LAI_BORROWER_BPS);
+        // Update to the POST-event total so the next checkpoint advances correctly.
+        // Without this, last_known_total stays at the old value (0 for first borrower),
+        // causing advance_accumulator to skip every future call.
+        pool_state.last_known_total = total_liabilities + (new_liabilities - old_liabilities);
+
+        let user_state = storage::read_lai_borrower_user_state(e, pool, user);
+        let earned = old_liabilities
+            .checked_mul(pool_state.acc_per_share)
+            .unwrap_or(0)
+            / LAI_PRECISION
+            - user_state.reward_debt;
+        let earned = earned.max(0);
+
+        storage::write_lai_borrower_pool_state(e, pool, &pool_state);
+        storage::write_lai_borrower_user_state(
+            e,
+            pool,
+            user,
+            &LaiUserState {
+                reward_debt: new_liabilities
+                    .checked_mul(pool_state.acc_per_share)
+                    .unwrap_or(0)
+                    / LAI_PRECISION,
+                pending: user_state.pending + earned,
+                position: new_liabilities,
+            },
+        );
+    }
+
+    /// Checkpoint a user's insurer reward for a given insurance pool.
+    fn checkpoint_insurer_internal(
+        e: &Env,
+        config: &LaiConfig,
+        ins_pool: &Address,
+        user: &Address,
+        old_shares: i128,
+        new_shares: i128,
+        total_shares: i128,
+    ) {
+        let mut pool_state = match storage::read_lai_insurer_pool_state(e, ins_pool) {
+            Some(s) => s,
+            None => return,
+        };
+
+        // Advance using the OLD total, then update to the POST-event total.
+        // Same fix as checkpoint_borrower_internal: without updating after advance,
+        // last_known_total stays 0 for the first depositor and rewards are lost forever.
+        pool_state.last_known_total = total_shares;
+        Self::advance_accumulator(e, config, &mut pool_state, LAI_INSURER_BPS);
+        pool_state.last_known_total = total_shares + (new_shares - old_shares);
+
+        let user_state = storage::read_lai_insurer_user_state(e, ins_pool, user);
+        let earned = old_shares
+            .checked_mul(pool_state.acc_per_share)
+            .unwrap_or(0)
+            / LAI_PRECISION
+            - user_state.reward_debt;
+        let earned = earned.max(0);
+
+        storage::write_lai_insurer_pool_state(e, ins_pool, &pool_state);
+        storage::write_lai_insurer_user_state(
+            e,
+            ins_pool,
+            user,
+            &LaiUserState {
+                reward_debt: new_shares
+                    .checked_mul(pool_state.acc_per_share)
+                    .unwrap_or(0)
+                    / LAI_PRECISION,
+                pending: user_state.pending + earned,
+                position: new_shares,
+            },
+        );
+    }
+
+    /// Flush all existing pool accumulators with the current emission rate.
+    /// Must be called before LaiNumPools changes (e.g. on deploy_pool).
+    fn flush_all_pool_accumulators(e: &Env, config: &LaiConfig) {
+        for pool in storage::read_pool_addresses(e).iter() {
+            if let Some(mut pool_state) = storage::read_lai_borrower_pool_state(e, &pool) {
+                Self::advance_accumulator(e, config, &mut pool_state, LAI_BORROWER_BPS);
+                storage::write_lai_borrower_pool_state(e, &pool, &pool_state);
+            }
+            if let Some(ins_pool) = storage::read_lai_insurance_pool_for_pool(e, &pool) {
+                if let Some(mut ins_state) = storage::read_lai_insurer_pool_state(e, &ins_pool) {
+                    Self::advance_accumulator(e, config, &mut ins_state, LAI_INSURER_BPS);
+                    storage::write_lai_insurer_pool_state(e, &ins_pool, &ins_state);
+                }
+            }
+        }
     }
 }
 
@@ -1412,6 +1852,110 @@ mod tests {
         assert_eq!(loan1.borrowed_amount, 100);
         assert_eq!(loan2.borrowed_amount, 200);
         assert_eq!(loan3.borrowed_amount, 300);
+    }
+
+    #[test]
+    fn lai_borrower_earns_rewards_after_first_borrow() {
+        let e = Env::default();
+        e.mock_all_auths_allowing_non_root_auth();
+        e.ledger().with_mut(|li| {
+            li.sequence_number = 100_000;
+            li.timestamp = 1;
+            li.min_persistent_entry_ttl = 10_000_000;
+            li.min_temp_entry_ttl = 1_000_000;
+            li.max_entry_ttl = 10_000_001;
+        });
+
+        let TestEnv {
+            user,
+            manager_addr,
+            manager_client,
+            pool_xlm_addr,
+            pool_usdc_addr,
+            ..
+        } = setup_test_env(&e);
+
+        // Register LAI token and fund the loan manager with 50M LAI
+        let lai_admin = Address::generate(&e);
+        let lai_addr = e.register_stellar_asset_contract_v2(lai_admin).address();
+        let lai_asset_client = StellarAssetClient::new(&e, &lai_addr);
+        let lai_token_client = TokenClient::new(&e, &lai_addr);
+        lai_asset_client.mint(&manager_addr, &(50_000_000i128 * 10_000_000i128));
+
+        // Initialize LAI distribution starting at current ledger
+        manager_client.initialize_lai_distribution(&lai_addr, &100_000u32);
+
+        // First ever borrow: total_liabilities == 0 before this call.
+        // BUG: checkpoint_borrower_internal sets last_known_total = 0 (the old total)
+        // and never updates it to the post-borrow total, so advance_accumulator always
+        // skips reward accumulation, leaving this borrower with 0 LAI forever.
+        manager_client.create_loan(&user, &100, &pool_usdc_addr, &1_000, &pool_xlm_addr);
+
+        // Advance ~100k ledgers so rewards should have accumulated
+        e.ledger().with_mut(|li| {
+            li.sequence_number = 200_000;
+        });
+
+        let rewards = manager_client.claim_lai_rewards(&user);
+        assert!(
+            rewards > 0,
+            "First borrower should earn LAI after 100k ledgers, got {rewards}"
+        );
+        assert_eq!(lai_token_client.balance(&user), rewards);
+    }
+
+    #[test]
+    fn lai_insurer_earns_rewards_after_first_deposit() {
+        let e = Env::default();
+        e.mock_all_auths_allowing_non_root_auth();
+        e.ledger().with_mut(|li| {
+            li.sequence_number = 100_000;
+            li.timestamp = 1;
+            li.min_persistent_entry_ttl = 10_000_000;
+            li.min_temp_entry_ttl = 1_000_000;
+            li.max_entry_ttl = 10_000_001;
+        });
+
+        let TestEnv {
+            user,
+            manager_addr,
+            manager_client,
+            pool_usdc_addr,
+            ..
+        } = setup_test_env(&e);
+
+        // Register LAI token and fund the loan manager with 50M LAI
+        let lai_admin = Address::generate(&e);
+        let lai_addr = e.register_stellar_asset_contract_v2(lai_admin).address();
+        let lai_asset_client = StellarAssetClient::new(&e, &lai_addr);
+        let lai_token_client = TokenClient::new(&e, &lai_addr);
+        lai_asset_client.mint(&manager_addr, &(50_000_000i128 * 10_000_000i128));
+
+        // Initialize LAI distribution starting at current ledger
+        manager_client.initialize_lai_distribution(&lai_addr, &100_000u32);
+
+        // Register an insurance pool for the USDC pool
+        let ins_pool_addr = Address::generate(&e);
+        manager_client.set_insurance_pool(&pool_usdc_addr, &ins_pool_addr);
+
+        // First ever insurer: total_shares == 0 before this deposit.
+        // BUG: checkpoint_insurer_internal sets last_known_total = 0 (the old total)
+        // and never updates it to the post-deposit total, so advance_accumulator always
+        // skips reward accumulation, leaving this insurer with 0 LAI forever.
+        // Simulate a user depositing 500 shares (old=0, new=500, total=0)
+        manager_client.checkpoint_insurer_reward(&ins_pool_addr, &user, &0i128, &500i128, &0i128);
+
+        // Advance ~100k ledgers so rewards should have accumulated
+        e.ledger().with_mut(|li| {
+            li.sequence_number = 200_000;
+        });
+
+        let rewards = manager_client.claim_lai_rewards(&user);
+        assert!(
+            rewards > 0,
+            "First insurer should earn LAI after 100k ledgers, got {rewards}"
+        );
+        assert_eq!(lai_token_client.balance(&user), rewards);
     }
 
     /* Test setup helpers */
