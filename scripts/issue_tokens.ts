@@ -68,16 +68,17 @@ export const issueTokens = async (): Promise<IssuedTokens> => {
   const laiAsset = new Asset('LAI', issuer.publicKey());
 
   // Issuer can always pay themselves their own asset — idempotent on re-runs
+  // LAI total supply is 100M (50M for distribution + 50M reserve/other uses)
   const mintTx = new TransactionBuilder(account, { fee: BASE_FEE, networkPassphrase: NETWORK })
     .addOperation(Operation.payment({ destination: issuer.publicKey(), asset: usdcAsset, amount: '1000000000' }))
     .addOperation(Operation.payment({ destination: issuer.publicKey(), asset: eurcAsset, amount: '1000000000' }))
-    .addOperation(Operation.payment({ destination: issuer.publicKey(), asset: laiAsset, amount: '1000000000' }))
+    .addOperation(Operation.payment({ destination: issuer.publicKey(), asset: laiAsset, amount: '100000000' }))
     .setTimeout(30)
     .build();
 
   mintTx.sign(issuer);
   await server.submitTransaction(mintTx);
-  console.log('Minted 1B of USDC, EURC, LAI to issuer');
+  console.log('Minted 1B of USDC, EURC and 100M of LAI to issuer');
 
   // Small delay so the ledger reflects the minted balances before SAC deploy
   await new Promise((r) => setTimeout(r, 3000));

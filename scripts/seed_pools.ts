@@ -5,7 +5,7 @@
  * Must be called after pools and faucet are deployed.
  */
 import { Keypair, Horizon, TransactionBuilder, Networks, Operation, Asset, BASE_FEE } from '@stellar/stellar-sdk';
-import { exe } from './util';
+import { exe, withRetry } from './util';
 import type { IssuedTokens } from './issue_tokens';
 
 const HORIZON_URL = 'https://horizon-testnet.stellar.org';
@@ -13,20 +13,6 @@ const NETWORK = Networks.TESTNET;
 
 const server = new Horizon.Server(HORIZON_URL);
 const SCALAR_7 = 10_000_000n;
-
-const withRetry = async <T>(fn: () => Promise<T>, retries = 4, baseDelayMs = 3000): Promise<T> => {
-  for (let attempt = 1; attempt <= retries; attempt++) {
-    try {
-      return await fn();
-    } catch (err: unknown) {
-      if (attempt === retries) throw err;
-      const msg = err instanceof Error ? err.message : String(err);
-      console.log(`Horizon error (attempt ${attempt}/${retries}): ${msg} — retrying in ${baseDelayMs * attempt}ms`);
-      await new Promise(r => setTimeout(r, baseDelayMs * attempt));
-    }
-  }
-  throw new Error('unreachable');
-};
 
 // XLM comes from the deployer's own balance (capped by friendbot at 10k).
 // USDC/EURC are minted freely from the issuer, so a larger seed is fine.

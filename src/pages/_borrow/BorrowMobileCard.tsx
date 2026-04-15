@@ -5,7 +5,7 @@ import { Loading } from '@components/Loading';
 import { usePools } from '@contexts/pool-context';
 import { useWallet } from '@contexts/wallet-context';
 import { isBalanceZero } from '@lib/converters';
-import { formatAPR, formatAmount, toDollarsFormatted } from '@lib/formatting';
+import { calcBorrowerLaiAPR, formatAmount, toDollarsFormatted } from '@lib/formatting';
 import { isNil } from 'ramda';
 import type { CurrencyBinding } from 'src/currency-bindings';
 
@@ -62,8 +62,21 @@ export const BorrowMobileCard = ({ currency, onBorrowClicked }: BorrowMobileCard
           </p>
         </div>
         <div>
-          <p className="text-sm opacity-70 mb-1">Borrow APY</p>
-          <p className="font-semibold text-lg">{pool ? formatAPR(pool.annualInterestRate) : <Loading size="xs" />}</p>
+          <p className="text-sm opacity-70 mb-1">Borrow APR</p>
+          {pool && price !== undefined ? (() => {
+            const baseAPR = Number(pool.annualInterestRate) / 100_000;
+            const laiAPR = calcBorrowerLaiAPR(pool.totalBalanceTokens, pool.availableBalanceTokens, price);
+            const netAPR = baseAPR - laiAPR;
+            const tip = `Base borrow rate: ${baseAPR.toFixed(2)}%. You earn LAI token rewards worth ${laiAPR.toFixed(2)}% of your borrowed amount per year, reducing your net cost to ${netAPR.toFixed(2)}%.`;
+            return (
+              <span className="flex items-center gap-1">
+                <span className="font-semibold text-lg">{netAPR.toFixed(2)} %</span>
+                <span className="tooltip tooltip-left cursor-help" data-tip={tip}>
+                  <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="opacity-40"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+                </span>
+              </span>
+            );
+          })() : <Loading size="xs" />}
         </div>
       </div>
 

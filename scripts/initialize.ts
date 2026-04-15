@@ -20,6 +20,8 @@ import { setPrice } from './set-oracle-price';
 import { issueTokens, type IssuedTokens } from './issue_tokens';
 import { seedPools, fundFaucet } from './seed_pools';
 
+const HORIZON_URL = 'https://horizon-testnet.stellar.org';
+
 const account = process.env.SOROBAN_ACCOUNT;
 const shouldDeployMockOracle = process.argv.includes('--mock-oracle');
 
@@ -107,7 +109,8 @@ const deployInsurancePool = (poolAddress: string, shareTokenAddress: string, ins
 --network testnet \
 -- initialize \
 --loan_pool_addr ${poolAddress} \
---share_token_addr ${shareTokenAddress}`,
+--share_token_addr ${shareTokenAddress} \
+--loan_manager_addr ${loanManagerAddress(true)}`,
   );
 
   exe(
@@ -165,6 +168,41 @@ const deployLoanPools = (tokens: IssuedTokens, xlmAddress: string) => {
   }
 };
 
+const initializeLaiDistribution = async (tokens: IssuedTokens) => {
+  const loanManager = loanManagerAddress(true);
+  const SCALAR_7 = 10_000_000n;
+  const amount = 50_000_000n * SCALAR_7;
+
+  // Transfer 50M LAI from issuer to loan_manager via SAC (contracts can't receive classic payments)
+  exe(
+    `stellar contract invoke \
+--id ${tokens.laiAddress} \
+--source-account ${tokens.issuer.secret()} \
+--network testnet \
+-- transfer \
+--from ${tokens.issuer.publicKey()} \
+--to ${loanManager} \
+--amount ${amount}`,
+  );
+  console.log(`Transferred 50M LAI to loan_manager (${loanManager})`);
+
+  // Get current ledger for start_ledger
+  const ledgerRes = await fetch(`${HORIZON_URL}/`);
+  const ledgerJson = await ledgerRes.json() as { core_latest_ledger: number };
+  const currentLedger = ledgerJson.core_latest_ledger;
+
+  exe(
+    `stellar contract invoke \
+--id ${loanManager} \
+--source-account ${account} \
+--network testnet \
+-- initialize_lai_distribution \
+--token ${tokens.laiAddress} \
+--start_ledger ${currentLedger}`,
+  );
+  console.log(`LAI distribution initialized at ledger ${currentLedger}`);
+};
+
 const deployFaucet = (tokens: IssuedTokens): string => {
   deploy(`./target/wasm32v1-none/release/faucet.wasm`);
   const faucetAddress = readTextFile('./.stellar/contract-ids/faucet.txt');
@@ -202,6 +240,7 @@ const oracleForInit = shouldDeployMockOracle ? deployMockOracle() : (process.env
 deployLoanManager(oracleForInit);
 const xlmAddress = deployNativeXlmSac();
 deployLoanPools(tokens, xlmAddress);
+await initializeLaiDistribution(tokens);
 
 const xlmPoolId = readTextFile('./.stellar/contract-ids/pool_xlm.txt');
 const usdcPoolId = readTextFile('./.stellar/contract-ids/pool_usdc.txt');
@@ -220,3 +259,4 @@ createContractImports();
 
 console.log('\nInitialization successful!');
 logDeploymentInfo();
+process.exit(0);

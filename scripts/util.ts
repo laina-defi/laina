@@ -139,6 +139,20 @@ const importContract = (contractName: string) => {
   console.log(`Created import for ${contractName}`);
 };
 
+export const withRetry = async <T>(fn: () => Promise<T>, retries = 4, baseDelayMs = 3000): Promise<T> => {
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      return await fn();
+    } catch (err: unknown) {
+      if (attempt === retries) throw err;
+      const msg = err instanceof Error ? err.message : String(err);
+      console.log(`Horizon error (attempt ${attempt}/${retries}): ${msg} — retrying in ${baseDelayMs * attempt}ms`);
+      await new Promise(r => setTimeout(r, baseDelayMs * attempt));
+    }
+  }
+  throw new Error('unreachable');
+};
+
 export const logDeploymentInfo = () => {
   console.log(`  Network: ${process.env.SOROBAN_NETWORK}`);
   console.log(`  Account: ${process.env.SOROBAN_ACCOUNT}`);

@@ -59,6 +59,7 @@ export type WalletContext = {
   positions: PositionsRecord;
   insurancePositions: InsurancePositionsRecord;
   insuranceQueues: InsuranceQueuesRecord;
+  pendingLai: bigint | null;
   openConnectWalletModal: () => void;
   disconnectWallet: () => void;
   refetchBalances: () => void;
@@ -85,6 +86,7 @@ const Context = createContext<WalletContext>({
   positions: {},
   insurancePositions: {},
   insuranceQueues: {},
+  pendingLai: null,
   openConnectWalletModal: () => {},
   disconnectWallet: () => {},
   refetchBalances: () => {},
@@ -121,6 +123,16 @@ const fetchAllInsurancePositions = async (user: string): Promise<InsurancePositi
     }),
   );
   return Object.fromEntries(results);
+};
+
+const fetchPendingLai = async (user: string): Promise<bigint> => {
+  try {
+    const tx = await loanManagerClient.claim_lai_rewards({ user });
+    const result = tx.result;
+    return result.isOk() ? result.unwrap() : 0n;
+  } catch {
+    return 0n;
+  }
 };
 
 const fetchAllInsuranceQueues = async (user: string): Promise<InsuranceQueuesRecord> => {
@@ -191,6 +203,7 @@ export const WalletProvider = ({ children }: PropsWithChildren) => {
   const [positions, setPositions] = useState<PositionsRecord>({});
   const [insurancePositions, setInsurancePositions] = useState<InsurancePositionsRecord>({});
   const [insuranceQueues, setInsuranceQueues] = useState<InsuranceQueuesRecord>({});
+  const [pendingLai, setPendingLai] = useState<bigint | null>(null);
 
   const loadWallet = useCallback(async (name: string) => {
     try {
@@ -211,12 +224,14 @@ export const WalletProvider = ({ children }: PropsWithChildren) => {
       const balances = await getBalances(address);
       setWalletBalances(createBalanceRecord(balances));
       setPositions(await fetchAllPositions(address));
-      const [insurPos, insurQueues] = await Promise.all([
+      const [insurPos, insurQueues, lai] = await Promise.all([
         fetchAllInsurancePositions(address),
         fetchAllInsuranceQueues(address),
+        fetchPendingLai(address),
       ]);
       setInsurancePositions(insurPos);
       setInsuranceQueues(insurQueues);
+      setPendingLai(lai);
 
       const timeout = new Date();
       timeout.setDate(timeout.getDate() + WALLET_TIMEOUT_DAYS);
@@ -254,6 +269,7 @@ export const WalletProvider = ({ children }: PropsWithChildren) => {
     setPositions({});
     setInsurancePositions({});
     setInsuranceQueues({});
+    setPendingLai(null);
     deleteWalletState();
   };
 
@@ -263,14 +279,16 @@ export const WalletProvider = ({ children }: PropsWithChildren) => {
     try {
       const balances = await getBalances(wallet.address);
       setWalletBalances(createBalanceRecord(balances));
-      const [positions, insurancePositions, insuranceQueues] = await Promise.all([
+      const [positions, insurancePositions, insuranceQueues, lai] = await Promise.all([
         fetchAllPositions(wallet.address),
         fetchAllInsurancePositions(wallet.address),
         fetchAllInsuranceQueues(wallet.address),
+        fetchPendingLai(wallet.address),
       ]);
       setPositions(positions);
       setInsurancePositions(insurancePositions);
       setInsuranceQueues(insuranceQueues);
+      setPendingLai(lai);
     } catch (err) {
       console.error('Error fetching balances', err);
     }
@@ -284,6 +302,7 @@ export const WalletProvider = ({ children }: PropsWithChildren) => {
         positions,
         insurancePositions,
         insuranceQueues,
+        pendingLai,
         openConnectWalletModal,
         disconnectWallet,
         refetchBalances,

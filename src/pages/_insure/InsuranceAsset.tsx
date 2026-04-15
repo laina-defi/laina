@@ -4,7 +4,7 @@ import { Loading } from '@components/Loading';
 import { useInsurancePools } from '@contexts/insurance-pool-context';
 import { usePools } from '@contexts/pool-context';
 import { useWallet } from '@contexts/wallet-context';
-import { formatAmount, formatInsuranceAPY, toDollarsFormatted } from '@lib/formatting';
+import { calcInsuranceAPY, calcInsurerLaiAPR, formatAmount, toDollarsFormatted } from '@lib/formatting';
 import { isNil } from 'ramda';
 import type { CurrencyBinding } from 'src/insurance-bindings';
 
@@ -53,9 +53,20 @@ export const InsuranceAsset = ({ currency, onManageClicked }: InsuranceAssetProp
       </td>
 
       <td>
-        <p className="text-xl font-semibold leading-6">
-          {lendingPool && pool ? formatInsuranceAPY(lendingPool.annualInterestRate, lendingPool.totalBalanceTokens, lendingPool.availableBalanceTokens, pool.totalTokens) : <Loading size="xs" />}
-        </p>
+        {lendingPool && pool && price !== undefined ? (() => {
+          const baseAPY = calcInsuranceAPY(lendingPool.annualInterestRate, lendingPool.totalBalanceTokens, lendingPool.availableBalanceTokens, pool.totalTokens);
+          const laiAPR = calcInsurerLaiAPR(pool.totalTokens, price);
+          const netAPY = baseAPY + laiAPR;
+          const tip = `Interest earnings: ${baseAPY.toFixed(2)}% from lending income. Plus ${laiAPR.toFixed(2)}% in LAI token rewards per year. Net APY: ${netAPY.toFixed(2)}%.`;
+          return (
+            <span className="flex items-center gap-1">
+              <span className="text-xl font-semibold leading-6">{netAPY.toFixed(2)} %</span>
+              <span className="tooltip tooltip-left cursor-help" data-tip={tip}>
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="opacity-40"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+              </span>
+            </span>
+          );
+        })() : <Loading size="xs" />}
       </td>
 
       <td>
