@@ -36,9 +36,12 @@ const LinkItem = ({ to, children }: PropsWithChildren<{ to: string }>) => {
   return (
     <Link
       to={to}
-      className={`text-base rounded font-semibold px-4 mr-2 py-2 transition hover:text-black ${selected ? 'text-black bg-grey-light' : 'text-grey'}`}
+      className={`relative text-base font-semibold px-4 mr-2 py-2 transition hover:text-black ${selected ? 'text-black' : 'text-grey'}`}
     >
       {children}
+      {selected && (
+        <span className="absolute bottom-0 left-4 right-4 h-0.5 bg-gradient-to-r from-cyan to-magenta rounded-full" />
+      )}
     </Link>
   );
 };

@@ -1,4 +1,4 @@
-import { MdOutlineArrowOutward } from 'react-icons/md';
+import { PiArrowSquareOut } from 'react-icons/pi';
 
 export interface LinkProps {
   className?: string;
@@ -10,13 +10,13 @@ export const StellarExpertLink = ({ className = '', text = 'View contract', cont
   const href = `https://stellar.expert/explorer/testnet/contract/${contractId}`;
   return (
     <a
-      className={`link flex flex-row hover:text-grey transition ${className}`}
+      className={`link flex flex-row items-center gap-0.5 hover:text-grey transition ${className}`}
       href={href}
       target="_blank"
       rel="noreferrer"
     >
       {text}
-      <MdOutlineArrowOutward className="mt-1" size=".9rem" />
+      <PiArrowSquareOut size="0.9rem" />
     </a>
   );
 };

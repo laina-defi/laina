@@ -16,7 +16,7 @@ const PageWrapper = () => {
   return (
     <div className="min-h-screen flex flex-col">
       <Nav />
-      <main className="max-w-screen flex-1 w-[74rem]">
+      <main className="flex-1 w-[74rem] max-w-full mx-auto px-4 md:px-0">
         <Outlet />
       </main>
       <Footer />

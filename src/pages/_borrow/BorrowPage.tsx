@@ -2,13 +2,11 @@ import { useState } from 'react';
 
 import { Card } from '@components/Card';
 import { StellarExpertLink } from '@components/Link';
-import { Table } from '@components/Table';
 import WalletCard from '@components/WalletCard/WalletCard';
 import { usePools } from '@contexts/pool-context';
 import { useWallet } from '@contexts/wallet-context';
 import { contractId } from '@contracts/loan_manager';
 import { CURRENCY_BINDINGS_ARR, type CurrencyBinding } from 'src/currency-bindings';
-import { BorrowMobileCard } from './BorrowMobileCard';
 import { BorrowModal } from './BorrowModal/BorrowModal';
 import { BorrowableAsset } from './BorrowableAsset';
 
@@ -44,29 +42,33 @@ const BorrowPage = () => {
       <div className="my-14">
         <WalletCard />
         <Card links={links}>
-          <div className="px-12 pb-12 pt-4">
-            <h1 className="text-2xl font-semibold mb-4 tracking-tight">Borrow Assets</h1>
-            <div className="block md:hidden">
+          <div className="px-6 md:px-12 pb-12 pt-4">
+            <div className="mb-2">
+              <h1 className="text-2xl font-semibold tracking-tight">Borrow Assets</h1>
+              <p className="text-grey mt-1">Borrow against your collateral. LAI rewards offset your borrowing cost.</p>
+            </div>
+
+            {/* Desktop column headers */}
+            <div className="hidden md:grid md:grid-cols-[80px_1fr_90px_150px_150px_130px] px-1 pb-2 mt-6 border-b border-grey-light">
+              <div />
+              <div className="text-sm font-semibold text-grey">Asset</div>
+              <div className="text-sm font-semibold text-grey">Ticker</div>
+              <div className="text-sm font-semibold text-grey">Available</div>
+              <div className="text-sm font-semibold text-grey">Borrow APR</div>
+              <div />
+            </div>
+
+            <div>
               {CURRENCY_BINDINGS_ARR.map((currency) => (
-                <BorrowMobileCard
+                <BorrowableAsset
                   key={currency.ticker}
                   currency={currency}
                   onBorrowClicked={() => openBorrowModal(currency)}
                 />
               ))}
             </div>
-            <div className="hidden md:block">
-              <Table headers={['Asset', null, 'Ticker', 'Balance', 'Borrow APY', null]}>
-                {CURRENCY_BINDINGS_ARR.map((currency) => (
-                  <BorrowableAsset
-                    key={currency.ticker}
-                    currency={currency}
-                    onBorrowClicked={() => openBorrowModal(currency)}
-                  />
-                ))}
-              </Table>
-            </div>
-            <StellarExpertLink className="mt-3" contractId={contractId} text="View Loan Manager contract" />
+
+            <StellarExpertLink className="mt-4 text-sm" contractId={contractId} text="View Loan Manager contract" />
           </div>
         </Card>
       </div>

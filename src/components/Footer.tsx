@@ -1,14 +1,14 @@
 import type { ComponentType } from 'react';
-import { FaDiscord, FaGithub, FaXTwitter } from 'react-icons/fa6';
+import { PiDiscordLogoFill, PiGithubLogoFill, PiXLogoFill } from 'react-icons/pi';
 
 export default function Footer() {
   return (
     <footer className="bg-black px-4 flex flex-col items-center justify-center">
       <div className="flex flex-row w-[74rem] max-w-full flex-wrap items-center mb-20">
         <div className="md:w-1/2 flex flex-col pt-10 px-4">
-          <SocialLink href="https://discord.com/invite/gnUAFr3fUv" text="Laina DeFi" Icon={FaDiscord} />
-          <SocialLink href="https://x.com/Lainadefi" text="@Lainadefi" Icon={FaXTwitter} />
-          <SocialLink href="https://github.com/laina-defi" text="laina-defi" Icon={FaGithub} />
+          <SocialLink href="https://discord.com/invite/gnUAFr3fUv" text="Laina DeFi" Icon={PiDiscordLogoFill} />
+          <SocialLink href="https://x.com/Lainadefi" text="@Lainadefi" Icon={PiXLogoFill} />
+          <SocialLink href="https://github.com/laina-defi" text="laina-defi" Icon={PiGithubLogoFill} />
         </div>
         <div className="md:w-1/2 pt-10 px-4 md:pl-14">
           <p className="text-white max-w-full text-lg">This website does not use cookies.</p>
