@@ -7,7 +7,7 @@ import { useWallet } from '@contexts/wallet-context';
 import { contractClient as faucetClient } from '@contracts/faucet';
 import EURCIcon from '@images/eurc.svg';
 import USDCIcon from '@images/usdc.svg';
-import { sendTransaction } from '@lib/horizon';
+import { getBalances, sendTransaction } from '@lib/horizon';
 import { CURRENCY_EURC, CURRENCY_USDC } from 'currencies';
 
 const HorizonServer = new Horizon.Server('https://horizon-testnet.stellar.org/');
@@ -20,18 +20,32 @@ const FAUCET_TOKENS = [
   { ticker: 'LAI',  icon: null },
 ] as const;
 
-/** Build a single classic tx that adds trustlines for USDC, EURC and LAI. */
+const hasTrustline = (balances: Horizon.HorizonApi.BalanceLine[], ticker: string, issuer: string) =>
+  balances.some(
+    (b) => b.asset_type !== 'native' && b.asset_code === ticker && b.asset_issuer === issuer,
+  );
+
+/** Build a classic tx that adds only the missing trustlines, or null if all exist. */
 const createTrustlinesTx = async (address: string) => {
+  const balances = await getBalances(address);
+
+  const missing = [
+    { asset: new Asset(CURRENCY_USDC.ticker, CURRENCY_USDC.issuer), ticker: CURRENCY_USDC.ticker, issuer: CURRENCY_USDC.issuer },
+    { asset: new Asset(CURRENCY_EURC.ticker, CURRENCY_EURC.issuer), ticker: CURRENCY_EURC.ticker, issuer: CURRENCY_EURC.issuer },
+    { asset: new Asset('LAI', LAI_ISSUER), ticker: 'LAI', issuer: LAI_ISSUER },
+  ].filter(({ ticker, issuer }) => !hasTrustline(balances, ticker, issuer));
+
+  if (missing.length === 0) return null;
+
   const sourceAccount = await HorizonServer.loadAccount(address);
-  return new TransactionBuilder(sourceAccount, {
+  const builder = new TransactionBuilder(sourceAccount, {
     networkPassphrase: Networks.TESTNET,
     fee: '100000',
-  })
-    .addOperation(Operation.changeTrust({ asset: new Asset(CURRENCY_USDC.ticker, CURRENCY_USDC.issuer) }))
-    .addOperation(Operation.changeTrust({ asset: new Asset(CURRENCY_EURC.ticker, CURRENCY_EURC.issuer) }))
-    .addOperation(Operation.changeTrust({ asset: new Asset('LAI', LAI_ISSUER) }))
-    .setTimeout(300)
-    .build();
+  });
+  for (const { asset } of missing) {
+    builder.addOperation(Operation.changeTrust({ asset }));
+  }
+  return builder.setTimeout(300).build();
 };
 
 export interface FaucetModalProps {
@@ -99,7 +113,7 @@ export const FaucetModal = ({ modalId, onClose }: FaucetModalProps) => {
         ))}
       </ul>
 
-      <p className="text-grey text-sm mb-8">Your wallet will prompt you twice — once to set up token accounts, once to claim.</p>
+      <p className="text-grey text-sm mb-8">Your wallet will prompt you to set up any missing token accounts, then to claim.</p>
 
       <div className="flex flex-row justify-end gap-4">
         <Button onClick={closeModal} variant="ghost">Cancel</Button>
@@ -130,12 +144,13 @@ const useFaucetFlow = () => {
     }
 
     try {
-      setIsSettingUp(true);
       const trustTx = await createTrustlinesTx(wallet.address);
-      const { signedTxXdr } = await signTransaction(trustTx.toXDR());
-      await sendTransaction(signedTxXdr);
-
-      setIsSettingUp(false);
+      if (trustTx) {
+        setIsSettingUp(true);
+        const { signedTxXdr } = await signTransaction(trustTx.toXDR());
+        await sendTransaction(signedTxXdr);
+        setIsSettingUp(false);
+      }
       setIsClaiming(true);
       const claimTx = await faucetClient.claim({ to: wallet.address });
       await claimTx.signAndSend({ signTransaction });
