@@ -1090,7 +1090,7 @@ impl LoanManager {
 
 #[cfg(test)]
 mod tests {
-    use crate::contract::loan_pool::{PoolState, Positions};
+    use crate::contract::loan_pool::{PoolState, PoolStatus, Positions};
 
     use super::*;
     use loan_pool::Currency;
@@ -1277,6 +1277,7 @@ mod tests {
 
         xlm_asset_client.mint(&admin, &9_001);
         pool_xlm_client.deposit(&admin, &9_001);
+        pool_xlm_client.update_status(&9_001);
         usdc_asset_client.mint(&user, &100_000);
 
         // Create a loan.
@@ -1406,6 +1407,7 @@ mod tests {
             available_balance_tokens: 2000,
             total_balance_shares: 1998,
             total_balance_tokens: 2002,
+            pool_status: PoolStatus::Healthy,
         };
         assert_eq!(pool_state, pool_usdc_client.get_pool_state());
 
@@ -2039,6 +2041,11 @@ mod tests {
         // Deposit some of the admin's tokens for borrowing.
         pool_usdc_client.deposit(&admin, &1_000);
         pool_eurc_client.deposit(&admin, &1_000);
+
+        // No insurance pool is set up in the test environment, so transition the pools to
+        // Healthy manually by supplying a token count that satisfies the ≥10% threshold.
+        pool_usdc_client.update_status(&1_000);
+        pool_eurc_client.update_status(&1_000);
 
         TestEnv {
             admin,

@@ -1,3 +1,4 @@
+use crate::storage::PoolStatus;
 use soroban_sdk::contracttype;
 
 #[contracttype]
@@ -7,4 +8,5 @@ pub struct PoolState {
     pub available_balance_tokens: i128,
     pub total_balance_shares: i128,
     pub annual_interest_rate: i128,
+    pub pool_status: PoolStatus,
 }

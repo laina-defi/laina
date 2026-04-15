@@ -45,7 +45,7 @@ impl LoanPoolContract {
         storage::write_accrual(&e, 10_000_000); // Default initial accrual value.
         storage::write_accrual_last_updated(&e, e.ledger().timestamp());
         storage::change_interest_rate_multiplier(&e, 1); // Temporary parameter
-        storage::change_pool_status(&e, PoolStatus::Healthy);
+        storage::change_pool_status(&e, PoolStatus::Caution);
         storage::write_token_contract_address(&e, token_contract_address);
     }
 
@@ -106,6 +106,7 @@ impl LoanPoolContract {
             storage::adjust_total_shares(&e, shares_issued)?;
             storage::adjust_total_balance(&e, amount)?;
 
+            Self::check_and_update_status(&e);
             Ok(amount)
         }
     }
@@ -174,11 +175,14 @@ impl LoanPoolContract {
 
         let new_annual_interest_rate = Self::get_interest(e.clone())?;
 
+        Self::check_and_update_status(&e);
+
         let pool_state = PoolState {
             total_balance_tokens: new_total_balance_tokens,
             available_balance_tokens: new_available_balance_tokens,
             total_balance_shares: new_total_balance_shares,
             annual_interest_rate: new_annual_interest_rate,
+            pool_status: storage::read_pool_status(&e)?,
         };
         Ok(pool_state)
     }
@@ -403,8 +407,56 @@ impl LoanPoolContract {
             total_balance_tokens: storage::read_total_balance(&e)?,
             available_balance_tokens: storage::read_available_balance(&e)?,
             total_balance_shares: storage::read_total_shares(&e)?,
-            annual_interest_rate: interest::get_interest(e)?,
+            annual_interest_rate: interest::get_interest(e.clone())?,
+            pool_status: storage::read_pool_status(&e)?,
         })
+    }
+
+    /// Recompute and persist pool status based on the insurance-to-loan-pool token ratio.
+    /// Transitions between Healthy and Caution only; never overrides Frozen or Restricted.
+    /// Called by the insurance pool after deposits/withdrawals, passing its current token total
+    /// directly to avoid a re-entrant call back into the insurance pool.
+    pub fn update_status(e: Env, insurance_tokens: i128) {
+        Self::apply_status_logic(&e, insurance_tokens);
+    }
+
+    /// Reads the insurance pool state and applies status logic. Only safe to call when the
+    /// insurance pool is NOT already on the call stack (i.e. from loan pool's own deposit/withdraw).
+    fn check_and_update_status(e: &Env) {
+        let insurance_pool_addr = match storage::read_insurance_pool_address(e) {
+            Ok(addr) => addr,
+            Err(_) => return, // No insurance pool registered yet — stay Caution.
+        };
+        let ins_tokens = insurance_pool::Client::new(e, &insurance_pool_addr)
+            .get_pool_state()
+            .total_tokens;
+        Self::apply_status_logic(e, ins_tokens);
+    }
+
+    fn apply_status_logic(e: &Env, ins_tokens: i128) {
+        let current = match storage::read_pool_status(e) {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+        // Never automatically override Frozen or Restricted (manual admin states).
+        if current == PoolStatus::Frozen || current == PoolStatus::Restricted {
+            return;
+        }
+
+        let loan_tokens = match storage::read_total_balance(e) {
+            Ok(t) => t,
+            Err(_) => return,
+        };
+
+        let new_status = if ins_tokens > 0 && ins_tokens.saturating_mul(10) >= loan_tokens {
+            PoolStatus::Healthy
+        } else {
+            PoolStatus::Caution
+        };
+
+        if new_status != current {
+            storage::change_pool_status(e, new_status);
+        }
     }
 
     pub fn increase_liabilities(e: Env, user: Address, amount: i128) -> Result<(), LoanPoolError> {
@@ -721,6 +773,32 @@ mod test {
         soroban_sdk::contractimport!(file = "../../target/wasm32v1-none/release/token.wasm");
     }
 
+    // Minimal stub that satisfies the get_pool_state cross-contract call made by
+    // check_and_update_status, without requiring the full insurance_pool WASM.
+    // Always returns enough tokens to satisfy the ≥10% threshold.
+    mod mock_insurance_pool {
+        use soroban_sdk::{contract, contractimpl, contracttype, Env};
+
+        #[contracttype]
+        pub struct InsurancePoolState {
+            pub total_tokens: i128,
+            pub total_shares: i128,
+        }
+
+        #[contract]
+        pub struct MockInsurancePool;
+
+        #[contractimpl]
+        impl MockInsurancePool {
+            pub fn get_pool_state(_e: Env) -> InsurancePoolState {
+                InsurancePoolState {
+                    total_tokens: 1_000_000_000,
+                    total_shares: 1_000_000_000,
+                }
+            }
+        }
+    }
+
     const TEST_LIQUIDATION_THRESHOLD: i128 = 8_000_000;
 
     /// Register a share token contract with the given pool address as admin.
@@ -822,6 +900,10 @@ mod test {
             &TEST_LIQUIDATION_THRESHOLD,
             &share_token_addr,
         );
+
+        // Register mock insurance pool so check_and_update_status sets the pool to Healthy.
+        let mock_ins_pool = e.register(mock_insurance_pool::MockInsurancePool, ());
+        contract_client.set_insurance_pool(&mock_ins_pool);
 
         // Deposit funds for the borrower to loan.
         let depositer = Address::generate(&e);
@@ -1058,6 +1140,10 @@ mod test {
             &share_token_addr,
         );
 
+        // Register mock insurance pool so check_and_update_status sets the pool to Healthy.
+        let mock_ins_pool = e.register(mock_insurance_pool::MockInsurancePool, ());
+        contract_client.set_insurance_pool(&mock_ins_pool);
+
         let result: i128 = contract_client.deposit(&user, &amount);
 
         assert_eq!(result, amount);
@@ -1113,6 +1199,10 @@ mod test {
             &TEST_LIQUIDATION_THRESHOLD,
             &share_token_addr,
         );
+
+        // Register mock insurance pool so check_and_update_status sets the pool to Healthy.
+        let mock_ins_pool = e.register(mock_insurance_pool::MockInsurancePool, ());
+        contract_client.set_insurance_pool(&mock_ins_pool);
 
         let result: i128 = contract_client.deposit(&user, &amount);
 

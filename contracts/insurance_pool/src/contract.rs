@@ -96,6 +96,14 @@ impl InsurancePool {
         storage::write_total_insurance_tokens(&e, new_total_tokens);
         storage::write_total_insurance_shares(&e, new_total_shares);
 
+        // Notify paired loan pool so it can recompute its status.
+        // Pass new_total_tokens directly to avoid a re-entrant call back into this contract.
+        if let Ok(loan_pool_addr) = storage::read_loan_pool_address(&e) {
+            let func = Symbol::new(&e, "update_status");
+            let args = soroban_sdk::vec![&e, soroban_sdk::IntoVal::into_val(&new_total_tokens, &e)];
+            let _: () = e.invoke_contract(&loan_pool_addr, &func, args);
+        }
+
         Ok(insurance_shares_issued)
     }
 
@@ -250,6 +258,14 @@ impl InsurancePool {
 
         storage::delete_withdraw_queue(&e, &user);
 
+        // Notify paired loan pool so it can recompute its status.
+        // Pass new_total_tokens directly to avoid a re-entrant call back into this contract.
+        if let Ok(loan_pool_addr) = storage::read_loan_pool_address(&e) {
+            let func = Symbol::new(&e, "update_status");
+            let args = soroban_sdk::vec![&e, soroban_sdk::IntoVal::into_val(&new_total_tokens, &e)];
+            let _: () = e.invoke_contract(&loan_pool_addr, &func, args);
+        }
+
         Ok(tokens_out)
     }
 
@@ -375,6 +391,20 @@ mod test {
         }
     }
 
+    // Minimal stub that absorbs the update_status cross-contract call made after deposits
+    // and withdrawals, without pulling in the full loan_pool WASM as a test dependency.
+    mod mock_loan_pool {
+        use soroban_sdk::{contract, contractimpl, Env};
+
+        #[contract]
+        pub struct MockLoanPool;
+
+        #[contractimpl]
+        impl MockLoanPool {
+            pub fn update_status(_e: Env, _insurance_tokens: i128) {}
+        }
+    }
+
     fn setup(e: &Env) -> (InsurancePoolClient<'_>, Address, Address) {
         e.mock_all_auths();
 
@@ -392,7 +422,7 @@ mod test {
             ),
         );
 
-        let loan_pool_addr = Address::generate(e);
+        let loan_pool_addr = e.register(mock_loan_pool::MockLoanPool, ());
         let loan_manager_addr = e.register(mock_loan_manager::MockLoanManager, ());
 
         insurance_client.initialize(&loan_pool_addr, &share_token_addr, &loan_manager_addr);
