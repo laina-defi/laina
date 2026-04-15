@@ -7,11 +7,14 @@ export type PriceRecord = {
   [K in SupportedCurrency]: bigint;
 };
 
+export type PoolStatus = 'Healthy' | 'Caution' | 'Restricted' | 'Frozen';
+
 export type PoolState = {
   totalBalanceTokens: bigint;
   totalBalanceShares: bigint;
   availableBalanceTokens: bigint;
   annualInterestRate: bigint;
+  poolStatus: PoolStatus;
 };
 
 export type PoolRecord = {
@@ -61,6 +64,7 @@ const fetchPoolState = async (ticker: SupportedCurrency): Promise<PoolState> => 
       totalBalanceShares: value.total_balance_shares,
       availableBalanceTokens: value.available_balance_tokens,
       annualInterestRate: value.annual_interest_rate,
+      poolStatus: (value.pool_status as { tag: PoolStatus }).tag,
     };
   }
   const error = result.unwrapErr();
@@ -70,6 +74,7 @@ const fetchPoolState = async (ticker: SupportedCurrency): Promise<PoolState> => 
     totalBalanceShares: 0n,
     availableBalanceTokens: 0n,
     annualInterestRate: 0n,
+    poolStatus: 'Caution',
   };
 };
 

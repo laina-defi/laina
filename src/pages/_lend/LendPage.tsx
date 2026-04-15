@@ -65,7 +65,7 @@ const LendPage = () => {
               ))}
             </div>
             <div className="hidden md:block">
-              <Table headers={['Asset', null, 'Ticker', 'Balance', 'Supply APY', null]}>
+              <Table headers={['Asset', null, 'Ticker', 'Balance', 'Supply APY', 'Status', null]}>
                 {CURRENCY_BINDINGS_ARR.map((currency) => (
                   <LendableAsset
                     key={currency.ticker}

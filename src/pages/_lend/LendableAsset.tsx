@@ -1,12 +1,36 @@
 import { Button } from '@components/Button';
 import { StellarExpertLink } from '@components/Link';
 import { Loading } from '@components/Loading';
-import { usePools } from '@contexts/pool-context';
+import { type PoolStatus, usePools } from '@contexts/pool-context';
 import { type Balance, useWallet } from '@contexts/wallet-context';
 import { isBalanceZero } from '@lib/converters';
 import { formatAmount, formatDepositAPY, toDollarsFormatted } from '@lib/formatting';
 import { isNil } from 'ramda';
+import { FaCircleCheck, FaCircleExclamation, FaCircleXmark, FaLock } from 'react-icons/fa6';
 import type { CurrencyBinding } from 'src/currency-bindings';
+
+const statusConfig: Record<PoolStatus, { color: string; icon: React.ReactNode; tip: string }> = {
+  Healthy: {
+    color: 'badge-success',
+    icon: <FaCircleCheck />,
+    tip: 'Borrowing and deposits are open. Insurance pool covers ≥10% of pool balance.',
+  },
+  Caution: {
+    color: 'badge-warning',
+    icon: <FaCircleExclamation />,
+    tip: 'Deposits allowed, but borrowing is disabled. Insurance pool is below the 10% coverage threshold.',
+  },
+  Restricted: {
+    color: 'badge-error',
+    icon: <FaCircleXmark />,
+    tip: 'New deposits and borrowing are disabled. Repayments and liquidations still work.',
+  },
+  Frozen: {
+    color: 'badge-neutral',
+    icon: <FaLock />,
+    tip: 'Pool is frozen. Only repayments and liquidations are permitted.',
+  },
+};
 
 export interface LendableAssetProps {
   currency: CurrencyBinding;
@@ -53,6 +77,22 @@ export const LendableAsset = ({ currency, onDepositClicked }: LendableAssetProps
         <p className="text-xl font-semibold leading-6">
           {pool ? formatDepositAPY(pool.annualInterestRate, pool.totalBalanceTokens, pool.availableBalanceTokens) : <Loading size="xs" />}
         </p>
+      </td>
+
+      <td>
+        {pool ? (() => {
+          const { color, icon, tip } = statusConfig[pool.poolStatus];
+          return (
+            <div className="tooltip tooltip-left" data-tip={tip}>
+              <span className={`badge badge-outline gap-1.5 ${color}`}>
+                {icon}
+                {pool.poolStatus}
+              </span>
+            </div>
+          );
+        })() : (
+          <Loading size="xs" />
+        )}
       </td>
 
       <td className="pr-0">
