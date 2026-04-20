@@ -38,7 +38,7 @@ pub struct LaiConfig {
 #[derive(Clone)]
 #[contracttype]
 pub struct LaiPoolState {
-    pub acc_per_share: i128,    // accumulated LAI per share unit × LAI_PRECISION
+    pub acc_per_share: i128, // accumulated LAI per share unit × LAI_PRECISION
     pub last_ledger: u32,
     pub last_known_total: i128, // total shares/liabilities at last update (used in claim to advance acc without cross-contract calls)
 }
@@ -48,7 +48,7 @@ pub struct LaiPoolState {
 pub struct LaiUserState {
     pub reward_debt: i128, // position × acc_per_share at last checkpoint
     pub pending: i128,     // claimable LAI (stroops)
-    pub position: i128,    // user's last known position (shares for insurers, liabilities for borrowers)
+    pub position: i128, // user's last known position (shares for insurers, liabilities for borrowers)
 }
 
 #[derive(Clone)]
@@ -320,9 +320,11 @@ pub fn write_lai_config(e: &Env, config: &LaiConfig) {
 pub fn read_lai_config(e: &Env) -> Option<LaiConfig> {
     let key = LoanManagerDataKey::LaiConfig;
     if let Some(config) = e.storage().persistent().get(&key) {
-        e.storage()
-            .persistent()
-            .extend_ttl(&key, POSITIONS_LIFETIME_THRESHOLD, POSITIONS_BUMP_AMOUNT);
+        e.storage().persistent().extend_ttl(
+            &key,
+            POSITIONS_LIFETIME_THRESHOLD,
+            POSITIONS_BUMP_AMOUNT,
+        );
         Some(config)
     } else {
         None
@@ -353,9 +355,11 @@ pub fn write_lai_borrower_pool_state(e: &Env, pool: &Address, state: &LaiPoolSta
 pub fn read_lai_borrower_pool_state(e: &Env, pool: &Address) -> Option<LaiPoolState> {
     let key = LoanManagerDataKey::LaiBorrowerPoolState(pool.clone());
     if let Some(state) = e.storage().persistent().get(&key) {
-        e.storage()
-            .persistent()
-            .extend_ttl(&key, POSITIONS_LIFETIME_THRESHOLD, POSITIONS_BUMP_AMOUNT);
+        e.storage().persistent().extend_ttl(
+            &key,
+            POSITIONS_LIFETIME_THRESHOLD,
+            POSITIONS_BUMP_AMOUNT,
+        );
         Some(state)
     } else {
         None
@@ -373,16 +377,23 @@ pub fn write_lai_insurer_pool_state(e: &Env, ins_pool: &Address, state: &LaiPool
 pub fn read_lai_insurer_pool_state(e: &Env, ins_pool: &Address) -> Option<LaiPoolState> {
     let key = LoanManagerDataKey::LaiInsurerPoolState(ins_pool.clone());
     if let Some(state) = e.storage().persistent().get(&key) {
-        e.storage()
-            .persistent()
-            .extend_ttl(&key, POSITIONS_LIFETIME_THRESHOLD, POSITIONS_BUMP_AMOUNT);
+        e.storage().persistent().extend_ttl(
+            &key,
+            POSITIONS_LIFETIME_THRESHOLD,
+            POSITIONS_BUMP_AMOUNT,
+        );
         Some(state)
     } else {
         None
     }
 }
 
-pub fn write_lai_borrower_user_state(e: &Env, pool: &Address, user: &Address, state: &LaiUserState) {
+pub fn write_lai_borrower_user_state(
+    e: &Env,
+    pool: &Address,
+    user: &Address,
+    state: &LaiUserState,
+) {
     let key = LoanManagerDataKey::LaiBorrowerUserState(pool.clone(), user.clone());
     e.storage().persistent().set(&key, state);
     e.storage()
@@ -393,9 +404,11 @@ pub fn write_lai_borrower_user_state(e: &Env, pool: &Address, user: &Address, st
 pub fn read_lai_borrower_user_state(e: &Env, pool: &Address, user: &Address) -> LaiUserState {
     let key = LoanManagerDataKey::LaiBorrowerUserState(pool.clone(), user.clone());
     if let Some(state) = e.storage().persistent().get(&key) {
-        e.storage()
-            .persistent()
-            .extend_ttl(&key, POSITIONS_LIFETIME_THRESHOLD, POSITIONS_BUMP_AMOUNT);
+        e.storage().persistent().extend_ttl(
+            &key,
+            POSITIONS_LIFETIME_THRESHOLD,
+            POSITIONS_BUMP_AMOUNT,
+        );
         state
     } else {
         LaiUserState {
@@ -406,7 +419,12 @@ pub fn read_lai_borrower_user_state(e: &Env, pool: &Address, user: &Address) -> 
     }
 }
 
-pub fn write_lai_insurer_user_state(e: &Env, ins_pool: &Address, user: &Address, state: &LaiUserState) {
+pub fn write_lai_insurer_user_state(
+    e: &Env,
+    ins_pool: &Address,
+    user: &Address,
+    state: &LaiUserState,
+) {
     let key = LoanManagerDataKey::LaiInsurerUserState(ins_pool.clone(), user.clone());
     e.storage().persistent().set(&key, state);
     e.storage()
@@ -417,9 +435,11 @@ pub fn write_lai_insurer_user_state(e: &Env, ins_pool: &Address, user: &Address,
 pub fn read_lai_insurer_user_state(e: &Env, ins_pool: &Address, user: &Address) -> LaiUserState {
     let key = LoanManagerDataKey::LaiInsurerUserState(ins_pool.clone(), user.clone());
     if let Some(state) = e.storage().persistent().get(&key) {
-        e.storage()
-            .persistent()
-            .extend_ttl(&key, POSITIONS_LIFETIME_THRESHOLD, POSITIONS_BUMP_AMOUNT);
+        e.storage().persistent().extend_ttl(
+            &key,
+            POSITIONS_LIFETIME_THRESHOLD,
+            POSITIONS_BUMP_AMOUNT,
+        );
         state
     } else {
         LaiUserState {
@@ -441,9 +461,11 @@ pub fn write_lai_insurance_pool_for_pool(e: &Env, pool: &Address, ins_pool: &Add
 pub fn read_lai_insurance_pool_for_pool(e: &Env, pool: &Address) -> Option<Address> {
     let key = LoanManagerDataKey::LaiInsurancePoolForPool(pool.clone());
     if let Some(ins_pool) = e.storage().persistent().get(&key) {
-        e.storage()
-            .persistent()
-            .extend_ttl(&key, POSITIONS_LIFETIME_THRESHOLD, POSITIONS_BUMP_AMOUNT);
+        e.storage().persistent().extend_ttl(
+            &key,
+            POSITIONS_LIFETIME_THRESHOLD,
+            POSITIONS_BUMP_AMOUNT,
+        );
         Some(ins_pool)
     } else {
         None

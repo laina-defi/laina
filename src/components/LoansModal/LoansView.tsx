@@ -72,7 +72,7 @@ const TableRow = ({ loan, onRepay, onAdjustCollateral }: TableRowProps) => {
 
   const healthFactor =
     loanAmountCents && loanAmountCents > 0n
-      ? Number(collateralAmountCents) * 0.8 / Number(loanAmountCents) // 0.8 magic number collateral factor TODO: Add fetching from pools.
+      ? (Number(collateralAmountCents) * 0.8) / Number(loanAmountCents) // 0.8 magic number collateral factor TODO: Add fetching from pools.
       : 0;
 
   return (
@@ -98,7 +98,9 @@ const TableRow = ({ loan, onRepay, onAdjustCollateral }: TableRowProps) => {
       <td>{pool ? formatAPR(pool.annualInterestRate) : null}</td>
       <td className="flex flex-col gap-2">
         <Button onClick={handleRepayClicked}>Repay</Button>
-        <Button variant="ghost" onClick={handleAdjustCollateralClicked}>Collateral</Button>
+        <Button variant="ghost" onClick={handleAdjustCollateralClicked}>
+          Collateral
+        </Button>
       </td>
     </tr>
   );

@@ -39,10 +39,9 @@ const deploySAC = (ticker: string, issuerPublic: string, issuerSecret: string): 
     return address;
   } catch {
     // SAC already exists — its address is deterministic, just look it up
-    const address = execSync(
-      `stellar contract id asset --asset ${ticker}:${issuerPublic} --network testnet`,
-      { encoding: 'utf-8' },
-    ).trim();
+    const address = execSync(`stellar contract id asset --asset ${ticker}:${issuerPublic} --network testnet`, {
+      encoding: 'utf-8',
+    }).trim();
     console.log(`${ticker} SAC already exists: ${address}`);
     return address;
   }

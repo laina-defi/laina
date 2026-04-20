@@ -106,12 +106,44 @@ const deployLoanPools = () => {
   const wasmHash = readTextFile('./.stellar/contract-wasm-hash/loan_pool.txt');
 
   const pools = [
-    { tokenContractAddress: CURRENCIES[0].tokenContractAddress, ticker: 'XLM',  loanPoolName: 'pool_xlm',  shareTokenName: 'Laina XLM',  shareTokenSymbol: 'lXLM',  shareTokenFile: 'token_xlm',  insurancePoolFile: 'insurance_pool_xlm'  },
-    { tokenContractAddress: CURRENCIES[1].tokenContractAddress, ticker: 'USDC', loanPoolName: 'pool_usdc', shareTokenName: 'Laina USDC', shareTokenSymbol: 'lUSDC', shareTokenFile: 'token_usdc', insurancePoolFile: 'insurance_pool_usdc' },
-    { tokenContractAddress: CURRENCIES[2].tokenContractAddress, ticker: 'EURC', loanPoolName: 'pool_eurc', shareTokenName: 'Laina EURC', shareTokenSymbol: 'lEURC', shareTokenFile: 'token_eurc', insurancePoolFile: 'insurance_pool_eurc' },
+    {
+      tokenContractAddress: CURRENCIES[0].tokenContractAddress,
+      ticker: 'XLM',
+      loanPoolName: 'pool_xlm',
+      shareTokenName: 'Laina XLM',
+      shareTokenSymbol: 'lXLM',
+      shareTokenFile: 'token_xlm',
+      insurancePoolFile: 'insurance_pool_xlm',
+    },
+    {
+      tokenContractAddress: CURRENCIES[1].tokenContractAddress,
+      ticker: 'USDC',
+      loanPoolName: 'pool_usdc',
+      shareTokenName: 'Laina USDC',
+      shareTokenSymbol: 'lUSDC',
+      shareTokenFile: 'token_usdc',
+      insurancePoolFile: 'insurance_pool_usdc',
+    },
+    {
+      tokenContractAddress: CURRENCIES[2].tokenContractAddress,
+      ticker: 'EURC',
+      loanPoolName: 'pool_eurc',
+      shareTokenName: 'Laina EURC',
+      shareTokenSymbol: 'lEURC',
+      shareTokenFile: 'token_eurc',
+      insurancePoolFile: 'insurance_pool_eurc',
+    },
   ];
 
-  for (const { tokenContractAddress, ticker, loanPoolName, shareTokenName, shareTokenSymbol, shareTokenFile, insurancePoolFile } of pools) {
+  for (const {
+    tokenContractAddress,
+    ticker,
+    loanPoolName,
+    shareTokenName,
+    shareTokenSymbol,
+    shareTokenFile,
+    insurancePoolFile,
+  } of pools) {
     const shareTokenAddress = deployShareToken(shareTokenName, shareTokenSymbol, shareTokenFile);
 
     const salt = crypto.randomBytes(32).toString('hex');

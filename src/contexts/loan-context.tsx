@@ -53,7 +53,8 @@ export const LoansProvider = ({ children }: PropsWithChildren) => {
         if (pools) {
           const collateralPool = pools[collateralTicker];
           if (collateralPool && collateralPool.totalBalanceShares > 0n) {
-            collateralAmount = (collateralShares * collateralPool.totalBalanceTokens) / collateralPool.totalBalanceShares;
+            collateralAmount =
+              (collateralShares * collateralPool.totalBalanceTokens) / collateralPool.totalBalanceShares;
           }
         }
 

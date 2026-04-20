@@ -36,25 +36,27 @@ export const InsuranceAsset = ({ currency, onManageClicked }: InsuranceAssetProp
       : null;
 
   const apyContent =
-    lendingPool && pool && price !== undefined ? (() => {
-      const baseAPY = calcInsuranceAPY(
-        lendingPool.annualInterestRate,
-        lendingPool.totalBalanceTokens,
-        lendingPool.availableBalanceTokens,
-        pool.totalTokens,
-      );
-      const laiAPR = calcInsurerLaiAPR(pool.totalTokens, price);
-      const netAPY = baseAPY + laiAPR;
-      const tip = `Interest earnings: ${baseAPY.toFixed(2)}% from lending income. Plus ${laiAPR.toFixed(2)}% in LAI token rewards per year. Net APY: ${netAPY.toFixed(2)}%.`;
-      return (
-        <span className="flex items-center gap-1">
-          <span className="font-semibold leading-5">{netAPY.toFixed(2)} %</span>
-          <span className="tooltip tooltip-left cursor-help" data-tip={tip}>
-            <PiInfo size={14} className="opacity-40 hover:opacity-70 transition-opacity" />
+    lendingPool && pool && price !== undefined ? (
+      (() => {
+        const baseAPY = calcInsuranceAPY(
+          lendingPool.annualInterestRate,
+          lendingPool.totalBalanceTokens,
+          lendingPool.availableBalanceTokens,
+          pool.totalTokens,
+        );
+        const laiAPR = calcInsurerLaiAPR(pool.totalTokens, price);
+        const netAPY = baseAPY + laiAPR;
+        const tip = `Interest earnings: ${baseAPY.toFixed(2)}% from lending income. Plus ${laiAPR.toFixed(2)}% in LAI token rewards per year. Net APY: ${netAPY.toFixed(2)}%.`;
+        return (
+          <span className="flex items-center gap-1">
+            <span className="font-semibold leading-5">{netAPY.toFixed(2)} %</span>
+            <span className="tooltip tooltip-left cursor-help" data-tip={tip}>
+              <PiInfo size={14} className="opacity-40 hover:opacity-70 transition-opacity" />
+            </span>
           </span>
-        </span>
-      );
-    })() : (
+        );
+      })()
+    ) : (
       <Loading size="xs" />
     );
 
@@ -109,9 +111,7 @@ export const InsuranceAsset = ({ currency, onManageClicked }: InsuranceAssetProp
             <div>
               <p className="text-xs text-grey mb-0.5">My Position</p>
               <p className="text-sm font-semibold leading-5">{formatAmount(insuranceBalance)}</p>
-              <p className="text-xs text-grey">
-                {!isNil(price) && toDollarsFormatted(price, insuranceBalance)}
-              </p>
+              <p className="text-xs text-grey">{!isNil(price) && toDollarsFormatted(price, insuranceBalance)}</p>
             </div>
           )}
         </div>

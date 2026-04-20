@@ -96,10 +96,7 @@ export const calcBorrowerLaiAPR = (
 // LAI APR earned by insurers in a single pool, as a percentage.
 // Insurers receive 70% of annual LAI emissions, split equally across pools.
 // APR = (LAI USD value per year for this pool side) / (total insurer deposit USD value)
-export const calcInsurerLaiAPR = (
-  totalInsuranceTokens: bigint,
-  tokenPrice: bigint,
-): number => {
+export const calcInsurerLaiAPR = (totalInsuranceTokens: bigint, tokenPrice: bigint): number => {
   if (totalInsuranceTokens === 0n || tokenPrice === 0n) return 0;
   const laiPoolYearlyUSD = (LAI_YEARLY_USD * 0.7) / LAI_NUM_POOLS;
   const insurerUSD = Number(toCents(tokenPrice, totalInsuranceTokens)) / 100;

@@ -91,7 +91,9 @@ export const InsureDepositModal = ({ modalId, onClose, currency }: InsureDeposit
   return (
     <Dialog className="min-w-[760px]" modalId={modalId} onClose={closeModal}>
       <h3 className="font-bold text-xl mb-2">Deposit l{name}</h3>
-      <p className="text-sm opacity-70 mb-8">Deposit your l{ticker} tokens to provide insurance coverage for the {name} pool.</p>
+      <p className="text-sm opacity-70 mb-8">
+        Deposit your l{ticker} tokens to provide insurance coverage for the {name} pool.
+      </p>
       <p className="text-lg mb-2">Amount to deposit</p>
       <CryptoAmountSelector
         max={lTokenBalance}

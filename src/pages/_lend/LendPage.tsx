@@ -54,7 +54,9 @@ const LendPage = () => {
                 <h1 className="text-2xl font-semibold tracking-tight">Lend Assets</h1>
                 <p className="text-grey mt-1">Supply assets to earn interest.</p>
               </div>
-              <Button onClick={openFaucetModal} className="flex-none">Get test tokens</Button>
+              <Button onClick={openFaucetModal} className="flex-none">
+                Get test tokens
+              </Button>
             </div>
 
             {/* Desktop column headers */}

@@ -1,9 +1,7 @@
 use crate::error::LoanManagerError;
 use crate::oracle::{self, Asset};
-use crate::storage::{self, Loan, LoanId, LaiConfig, LaiPoolState, LaiUserState, NewLoan};
-use crate::storage::{
-    LAI_PRECISION, LAI_TOTAL_LEDGERS, LAI_INSURER_BPS, LAI_BORROWER_BPS,
-};
+use crate::storage::{self, LaiConfig, LaiPoolState, LaiUserState, Loan, LoanId, NewLoan};
+use crate::storage::{LAI_BORROWER_BPS, LAI_INSURER_BPS, LAI_PRECISION, LAI_TOTAL_LEDGERS};
 
 use soroban_sdk::{contract, contractimpl, token, Address, BytesN, Env, Symbol, Vec};
 
@@ -858,12 +856,7 @@ impl LoanManager {
                     .sum();
 
                 // Advance accumulator using last known total
-                Self::advance_accumulator(
-                    &e,
-                    &config,
-                    &mut pool_state,
-                    LAI_BORROWER_BPS,
-                );
+                Self::advance_accumulator(&e, &config, &mut pool_state, LAI_BORROWER_BPS);
 
                 let user_state = storage::read_lai_borrower_user_state(&e, &pool, &user);
                 let earned = user_liabilities
@@ -893,16 +886,10 @@ impl LoanManager {
             // --- Insurer side ---
             if let Some(ins_pool) = storage::read_lai_insurance_pool_for_pool(&e, &pool) {
                 if let Some(mut ins_state) = storage::read_lai_insurer_pool_state(&e, &ins_pool) {
-                    let user_ins_state =
-                        storage::read_lai_insurer_user_state(&e, &ins_pool, &user);
+                    let user_ins_state = storage::read_lai_insurer_user_state(&e, &ins_pool, &user);
                     let user_shares = user_ins_state.position;
 
-                    Self::advance_accumulator(
-                        &e,
-                        &config,
-                        &mut ins_state,
-                        LAI_INSURER_BPS,
-                    );
+                    Self::advance_accumulator(&e, &config, &mut ins_state, LAI_INSURER_BPS);
 
                     let earned = user_shares
                         .checked_mul(ins_state.acc_per_share)
@@ -961,8 +948,8 @@ impl LoanManager {
 
         let elapsed = (current_ledger - pool_state.last_ledger) as i128;
         // emission for this side (insurer or borrower) per pool per ledger
-        let emission_per_ledger = config.total_amount / num_pools / LAI_TOTAL_LEDGERS as i128
-            * side_bps / 10_000;
+        let emission_per_ledger =
+            config.total_amount / num_pools / LAI_TOTAL_LEDGERS as i128 * side_bps / 10_000;
 
         if pool_state.last_known_total > 0 {
             let new_rewards = emission_per_ledger * elapsed;

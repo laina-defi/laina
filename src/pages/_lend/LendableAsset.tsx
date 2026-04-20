@@ -172,9 +172,7 @@ export const LendableAsset = ({ currency, onDepositClicked }: LendableAssetProps
         </div>
 
         {/* Action */}
-        <div className="flex justify-end pr-2 py-2">
-          {actionButton}
-        </div>
+        <div className="flex justify-end pr-2 py-2">{actionButton}</div>
       </div>
     </div>
   );

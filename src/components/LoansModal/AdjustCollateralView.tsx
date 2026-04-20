@@ -35,15 +35,10 @@ const AdjustCollateralView = ({ loan, onBack }: AdjustCollateralViewProps) => {
   const collateralPool = pools?.[collateralTicker];
 
   const balanceRecord = walletBalances?.[collateralTicker];
-  const walletBalance =
-    balanceRecord?.trustLine ? getStroops(balanceRecord.balanceLine.balance) : 0n;
+  const walletBalance = balanceRecord?.trustLine ? getStroops(balanceRecord.balanceLine.balance) : 0n;
   // XLM needs 3 XLM reserve
   const maxAdd =
-    collateralTicker === 'XLM'
-      ? walletBalance > 30_000_000n
-        ? walletBalance - 30_000_000n
-        : 0n
-      : walletBalance;
+    collateralTicker === 'XLM' ? (walletBalance > 30_000_000n ? walletBalance - 30_000_000n : 0n) : walletBalance;
 
   // Calculate preview health factor
   const loanTotal = borrowedAmount + unpaidInterest;
@@ -51,12 +46,15 @@ const AdjustCollateralView = ({ loan, onBack }: AdjustCollateralViewProps) => {
 
   let previewCollateral = collateralAmount;
   if (amount > 0n) {
-    previewCollateral = mode === 'add' ? collateralAmount + amount : collateralAmount > amount ? collateralAmount - amount : 0n;
+    previewCollateral =
+      mode === 'add' ? collateralAmount + amount : collateralAmount > amount ? collateralAmount - amount : 0n;
   }
   const previewCollateralCents = collateralPrice ? toCents(collateralPrice, previewCollateral) : undefined;
 
   const collateralFactor = collateralPool
-    ? (collateralPool.totalBalanceTokens > 0n ? 8_000_000n : 8_000_000n) // default 80% — ideally fetched from contract
+    ? collateralPool.totalBalanceTokens > 0n
+      ? 8_000_000n
+      : 8_000_000n // default 80% — ideally fetched from contract
     : 8_000_000n;
 
   const previewHealthFactor =
@@ -121,7 +119,8 @@ const AdjustCollateralView = ({ loan, onBack }: AdjustCollateralViewProps) => {
     <div className="md:w-[700px]">
       <h3 className="text-xl font-bold tracking-tight">Adjust {name} Collateral</h3>
       <p className="my-4">
-        Your collateral earns interest while locked. Add more to improve your health factor, or remove some to free up funds.
+        Your collateral earns interest while locked. Add more to improve your health factor, or remove some to free up
+        funds.
       </p>
       <p className="mb-4">
         Current collateral: {formatAmount(collateralAmount)} {collateralTicker}
@@ -133,17 +132,29 @@ const AdjustCollateralView = ({ loan, onBack }: AdjustCollateralViewProps) => {
       </p>
 
       <div className="tabs tabs-boxed mb-6">
-        <button type="button" className={`tab ${mode === 'add' ? 'tab-active' : ''}`} onClick={() => { setMode('add'); setAmount(0n); }}>
+        <button
+          type="button"
+          className={`tab ${mode === 'add' ? 'tab-active' : ''}`}
+          onClick={() => {
+            setMode('add');
+            setAmount(0n);
+          }}
+        >
           Add Collateral
         </button>
-        <button type="button" className={`tab ${mode === 'remove' ? 'tab-active' : ''}`} onClick={() => { setMode('remove'); setAmount(0n); }}>
+        <button
+          type="button"
+          className={`tab ${mode === 'remove' ? 'tab-active' : ''}`}
+          onClick={() => {
+            setMode('remove');
+            setAmount(0n);
+          }}
+        >
           Remove Collateral
         </button>
       </div>
 
-      <p className="font-bold mb-2">
-        {mode === 'add' ? 'Amount to add' : 'Amount to remove'}
-      </p>
+      <p className="font-bold mb-2">{mode === 'add' ? 'Amount to add' : 'Amount to remove'}</p>
       <CryptoAmountSelector
         max={mode === 'add' ? maxAdd : collateralAmount}
         value={amount}

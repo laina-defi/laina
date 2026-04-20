@@ -5,7 +5,11 @@ import path from 'path';
 /** Update or append a key=value pair in .env */
 export const writeEnvVar = (key: string, value: string, envPath = '.env') => {
   let content = '';
-  try { content = readFileSync(envPath, 'utf8'); } catch { /* file may not exist yet */ }
+  try {
+    content = readFileSync(envPath, 'utf8');
+  } catch {
+    /* file may not exist yet */
+  }
   const line = `${key}=${value}`;
   const re = new RegExp(`^${key}=.*`, 'm');
   content = re.test(content) ? content.replace(re, line) : `${content}\n${line}`;
@@ -113,7 +117,16 @@ const bind = (contractName: string, address: string | undefined) => {
 };
 
 export const createContractImports = () => {
-  const CONTRACTS = ['loan_manager', 'pool_xlm', 'pool_usdc', 'pool_eurc', 'faucet', 'insurance_pool_xlm', 'insurance_pool_usdc', 'insurance_pool_eurc'];
+  const CONTRACTS = [
+    'loan_manager',
+    'pool_xlm',
+    'pool_usdc',
+    'pool_eurc',
+    'faucet',
+    'insurance_pool_xlm',
+    'insurance_pool_usdc',
+    'insurance_pool_eurc',
+  ];
   CONTRACTS.forEach(importContract);
 };
 
@@ -147,7 +160,7 @@ export const withRetry = async <T>(fn: () => Promise<T>, retries = 4, baseDelayM
       if (attempt === retries) throw err;
       const msg = err instanceof Error ? err.message : String(err);
       console.log(`Horizon error (attempt ${attempt}/${retries}): ${msg} — retrying in ${baseDelayMs * attempt}ms`);
-      await new Promise(r => setTimeout(r, baseDelayMs * attempt));
+      await new Promise((r) => setTimeout(r, baseDelayMs * attempt));
     }
   }
   throw new Error('unreachable');

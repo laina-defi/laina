@@ -6,9 +6,21 @@ import LoansModal from '@components/LoansModal/LoansModal';
 import { type InsurancePoolRecord, useInsurancePools } from '@contexts/insurance-pool-context';
 import { type Loan, useLoans } from '@contexts/loan-context';
 import { type PoolRecord, usePools } from '@contexts/pool-context';
-import { type InsurancePositionsRecord, type PositionsRecord, type PriceRecord, useWallet } from '@contexts/wallet-context';
+import {
+  type InsurancePositionsRecord,
+  type PositionsRecord,
+  type PriceRecord,
+  useWallet,
+} from '@contexts/wallet-context';
 import { contractClient as loanManagerClient } from '@contracts/loan_manager';
-import { calcBorrowerLaiAPR, calcDepositAPY, calcInsuranceAPY, calcInsurerLaiAPR, formatCentAmount, toCents } from '@lib/formatting';
+import {
+  calcBorrowerLaiAPR,
+  calcDepositAPY,
+  calcInsuranceAPY,
+  calcInsurerLaiAPR,
+  formatCentAmount,
+  toCents,
+} from '@lib/formatting';
 import type { SupportedCurrency } from 'currencies';
 import { isNil } from 'ramda';
 import { useEffect, useState } from 'react';
@@ -24,7 +36,15 @@ const formatLaiAmount = (amount: number): string => {
 };
 
 const WalletCard = () => {
-  const { wallet, openConnectWalletModal, positions, insurancePositions, pendingLai, signTransaction, refetchBalances } = useWallet();
+  const {
+    wallet,
+    openConnectWalletModal,
+    positions,
+    insurancePositions,
+    pendingLai,
+    signTransaction,
+    refetchBalances,
+  } = useWallet();
   const { prices, pools } = usePools();
   const { pools: insurancePools } = useInsurancePools();
   const { loans } = useLoans();
@@ -33,7 +53,10 @@ const WalletCard = () => {
 
   const receivables = prices ? calculateTotalReceivables(prices, positions, insurancePositions) : null;
   const liabilities = prices && loans ? calculateTotalLiabilities(prices, loans) : null;
-  const netAPYData = prices && pools && insurancePools && loans ? calculateNetAPY(prices, pools, insurancePools, positions, insurancePositions, loans) : null;
+  const netAPYData =
+    prices && pools && insurancePools && loans
+      ? calculateNetAPY(prices, pools, insurancePools, positions, insurancePositions, loans)
+      : null;
   const hasPendingLai = pendingLai !== null && pendingLai > 0n;
 
   // Reset the accumulator whenever real on-chain data arrives.
@@ -49,7 +72,8 @@ const WalletCard = () => {
     let lastTs: number | null = null;
     const tick = (now: number) => {
       if (lastTs !== null) {
-        setLaiAccumulator(prev => prev + laiPerSecond * ((now - lastTs!) / 1000));
+        const delta = now - lastTs;
+        setLaiAccumulator((prev) => prev + laiPerSecond * (delta / 1000));
       }
       lastTs = now;
       rafId = requestAnimationFrame(tick);
@@ -175,29 +199,35 @@ const WalletCard = () => {
               </div>
 
               {/* Net APY */}
-              {netAPYData !== null && (() => {
-                const { netAPY, baseAPY, laiBoost } = netAPYData;
-                const tip = `Base yield: ${baseAPY.toFixed(2)}% from interest earnings. Plus ${laiBoost.toFixed(2)}% from LAI token rewards. Net APY: ${netAPY.toFixed(2)}%.`;
-                return (
-                  <div>
-                    <p className="text-xs text-grey mb-1">Net APY</p>
-                    <span className="flex items-center gap-1.5">
-                      <span className={`text-xl font-semibold leading-6 ${netAPY >= 0 ? 'text-success' : 'text-error'}`}>
-                        {netAPY >= 0 ? '+' : ''}{netAPY.toFixed(2)} %
+              {netAPYData !== null &&
+                (() => {
+                  const { netAPY, baseAPY, laiBoost } = netAPYData;
+                  const tip = `Base yield: ${baseAPY.toFixed(2)}% from interest earnings. Plus ${laiBoost.toFixed(2)}% from LAI token rewards. Net APY: ${netAPY.toFixed(2)}%.`;
+                  return (
+                    <div>
+                      <p className="text-xs text-grey mb-1">Net APY</p>
+                      <span className="flex items-center gap-1.5">
+                        <span
+                          className={`text-xl font-semibold leading-6 ${netAPY >= 0 ? 'text-success' : 'text-error'}`}
+                        >
+                          {netAPY >= 0 ? '+' : ''}
+                          {netAPY.toFixed(2)} %
+                        </span>
+                        <span className="tooltip tooltip-right cursor-help" data-tip={tip}>
+                          <PiInfo size={14} className="opacity-40 hover:opacity-70 transition-opacity" />
+                        </span>
                       </span>
-                      <span className="tooltip tooltip-right cursor-help" data-tip={tip}>
-                        <PiInfo size={14} className="opacity-40 hover:opacity-70 transition-opacity" />
-                      </span>
-                    </span>
-                  </div>
-                );
-              })()}
+                    </div>
+                  );
+                })()}
 
               {/* Pending LAI */}
               {hasPendingLai && (
                 <div>
                   <p className="text-xs text-grey mb-1">Pending LAI</p>
-                  <p className="text-xl font-semibold leading-6 bg-gradient-to-r from-cyan to-magenta bg-clip-text text-transparent tabular-nums">{displayLai !== null ? formatLaiAmount(displayLai) : '—'} LAI</p>
+                  <p className="text-xl font-semibold leading-6 bg-gradient-to-r from-cyan to-magenta bg-clip-text text-transparent tabular-nums">
+                    {displayLai !== null ? formatLaiAmount(displayLai) : '—'} LAI
+                  </p>
                   <button
                     type="button"
                     onClick={handleClaimLai}
@@ -275,7 +305,12 @@ const calculateNetAPY = (
     const price = prices[ticker as SupportedCurrency];
     if (!pool || !insurancePool || !price) continue;
     const valueInCents = Number(toCents(price, amount));
-    const baseAPY = calcInsuranceAPY(pool.annualInterestRate, pool.totalBalanceTokens, pool.availableBalanceTokens, insurancePool.totalTokens);
+    const baseAPY = calcInsuranceAPY(
+      pool.annualInterestRate,
+      pool.totalBalanceTokens,
+      pool.availableBalanceTokens,
+      insurancePool.totalTokens,
+    );
     const laiAPR = calcInsurerLaiAPR(insurancePool.totalTokens, price);
     totalDeposited += valueInCents;
     earningsPerYear += valueInCents * (baseAPY + laiAPR);
@@ -299,7 +334,7 @@ const calculateNetAPY = (
   const netAPY = earningsPerYear / denominator;
   const laiBoost = laiEarningsPerYear / denominator;
   // laiEarningsPerYear is in (cents × percentage-points); /10000 → USD/year; /LAI_PRICE_USD → LAI/year; /SECONDS_PER_YEAR → LAI/s
-  const laiPerSecond = (laiEarningsPerYear / 10_000) / 0.01 / (365 * 24 * 3600);
+  const laiPerSecond = laiEarningsPerYear / 10_000 / 0.01 / (365 * 24 * 3600);
   return { netAPY, baseAPY: netAPY - laiBoost, laiBoost, laiPerSecond };
 };
 

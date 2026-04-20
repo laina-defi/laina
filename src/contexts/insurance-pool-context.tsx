@@ -25,7 +25,7 @@ export type InsurancePoolContext = {
 const Context = createContext<InsurancePoolContext>({
   prices: null,
   pools: null,
-  refetchPools: () => { },
+  refetchPools: () => {},
 });
 
 const fetchAllPrices = async (): Promise<PriceRecord> => {
@@ -45,7 +45,11 @@ const fetchPriceData = async (ticker: string): Promise<bigint> => {
 };
 
 const fetchInsurancePools = async (): Promise<InsurancePoolRecord> => {
-  const [XLM, USDC, EURC] = await Promise.all([fetchInsurancePoolState('XLM'), fetchInsurancePoolState('USDC'), fetchInsurancePoolState('EURC')]);
+  const [XLM, USDC, EURC] = await Promise.all([
+    fetchInsurancePoolState('XLM'),
+    fetchInsurancePoolState('USDC'),
+    fetchInsurancePoolState('EURC'),
+  ]);
   return { XLM, USDC, EURC };
 };
 

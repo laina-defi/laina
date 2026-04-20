@@ -329,10 +329,7 @@ impl InsurancePool {
     /// The loan pool has already minted `ltoken_amount` l-tokens to this contract's address.
     /// Updating TotalInsuranceTokens (with shares unchanged) means each insurance share
     /// becomes worth more — giving insurers a higher effective yield than plain depositors.
-    pub fn receive_interest_boost(
-        e: Env,
-        ltoken_amount: i128,
-    ) -> Result<(), InsurancePoolError> {
+    pub fn receive_interest_boost(e: Env, ltoken_amount: i128) -> Result<(), InsurancePoolError> {
         let loan_pool_addr = storage::read_loan_pool_address(&e)?;
         loan_pool_addr.require_auth();
 
@@ -387,7 +384,8 @@ mod test {
                 _old_shares: i128,
                 _new_shares: i128,
                 _total_shares: i128,
-            ) {}
+            ) {
+            }
         }
     }
 

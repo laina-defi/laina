@@ -58,16 +58,13 @@ const deployLoanManager = (oracleAddress: string) => {
 const deployNativeXlmSac = (): string => {
   let address: string;
   try {
-    address = execSync(
-      `stellar contract asset deploy --asset native --network testnet --source-account ${account}`,
-      { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] },
-    ).trim();
+    address = execSync(`stellar contract asset deploy --asset native --network testnet --source-account ${account}`, {
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+    }).trim();
     console.log(`Native XLM SAC deployed: ${address}`);
   } catch {
-    address = execSync(
-      `stellar contract id asset --asset native --network testnet`,
-      { encoding: 'utf-8' },
-    ).trim();
+    address = execSync(`stellar contract id asset --asset native --network testnet`, { encoding: 'utf-8' }).trim();
     console.log(`Native XLM SAC already exists: ${address}`);
   }
   writeEnvVar('PUBLIC_CONTRACT_ADDRESS_XLM', address);
@@ -130,12 +127,44 @@ const deployLoanPools = (tokens: IssuedTokens, xlmAddress: string) => {
   const wasmHash = readTextFile('./.stellar/contract-wasm-hash/loan_pool.txt');
 
   const pools = [
-    { tokenAddress: xlmAddress,         ticker: 'XLM',  poolName: 'pool_xlm',  shareTokenName: 'Laina XLM',  shareTokenSymbol: 'lXLM',  shareTokenFile: 'token_xlm',  insurancePoolFile: 'insurance_pool_xlm'  },
-    { tokenAddress: tokens.usdcAddress, ticker: 'USDC', poolName: 'pool_usdc', shareTokenName: 'Laina USDC', shareTokenSymbol: 'lUSDC', shareTokenFile: 'token_usdc', insurancePoolFile: 'insurance_pool_usdc' },
-    { tokenAddress: tokens.eurcAddress, ticker: 'EURC', poolName: 'pool_eurc', shareTokenName: 'Laina EURC', shareTokenSymbol: 'lEURC', shareTokenFile: 'token_eurc', insurancePoolFile: 'insurance_pool_eurc' },
+    {
+      tokenAddress: xlmAddress,
+      ticker: 'XLM',
+      poolName: 'pool_xlm',
+      shareTokenName: 'Laina XLM',
+      shareTokenSymbol: 'lXLM',
+      shareTokenFile: 'token_xlm',
+      insurancePoolFile: 'insurance_pool_xlm',
+    },
+    {
+      tokenAddress: tokens.usdcAddress,
+      ticker: 'USDC',
+      poolName: 'pool_usdc',
+      shareTokenName: 'Laina USDC',
+      shareTokenSymbol: 'lUSDC',
+      shareTokenFile: 'token_usdc',
+      insurancePoolFile: 'insurance_pool_usdc',
+    },
+    {
+      tokenAddress: tokens.eurcAddress,
+      ticker: 'EURC',
+      poolName: 'pool_eurc',
+      shareTokenName: 'Laina EURC',
+      shareTokenSymbol: 'lEURC',
+      shareTokenFile: 'token_eurc',
+      insurancePoolFile: 'insurance_pool_eurc',
+    },
   ];
 
-  for (const { tokenAddress, ticker, poolName, shareTokenName, shareTokenSymbol, shareTokenFile, insurancePoolFile } of pools) {
+  for (const {
+    tokenAddress,
+    ticker,
+    poolName,
+    shareTokenName,
+    shareTokenSymbol,
+    shareTokenFile,
+    insurancePoolFile,
+  } of pools) {
     const shareTokenAddress = deployShareToken(shareTokenName, shareTokenSymbol, shareTokenFile);
 
     const salt = crypto.randomBytes(32).toString('hex');
@@ -188,7 +217,7 @@ const initializeLaiDistribution = async (tokens: IssuedTokens) => {
 
   // Get current ledger for start_ledger
   const ledgerRes = await fetch(`${HORIZON_URL}/`);
-  const ledgerJson = await ledgerRes.json() as { core_latest_ledger: number };
+  const ledgerJson = (await ledgerRes.json()) as { core_latest_ledger: number };
   const currentLedger = ledgerJson.core_latest_ledger;
 
   exe(

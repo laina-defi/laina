@@ -17,21 +17,27 @@ const CLAIM_AMOUNT = '10,000';
 const FAUCET_TOKENS = [
   { ticker: 'USDC', icon: USDCIcon.src },
   { ticker: 'EURC', icon: EURCIcon.src },
-  { ticker: 'LAI',  icon: null },
+  { ticker: 'LAI', icon: null },
 ] as const;
 
 const hasTrustline = (balances: Horizon.HorizonApi.BalanceLine[], ticker: string, issuer: string) =>
-  balances.some(
-    (b) => b.asset_type !== 'native' && b.asset_code === ticker && b.asset_issuer === issuer,
-  );
+  balances.some((b) => b.asset_type !== 'native' && b.asset_code === ticker && b.asset_issuer === issuer);
 
 /** Build a classic tx that adds only the missing trustlines, or null if all exist. */
 const createTrustlinesTx = async (address: string) => {
   const balances = await getBalances(address);
 
   const missing = [
-    { asset: new Asset(CURRENCY_USDC.ticker, CURRENCY_USDC.issuer), ticker: CURRENCY_USDC.ticker, issuer: CURRENCY_USDC.issuer },
-    { asset: new Asset(CURRENCY_EURC.ticker, CURRENCY_EURC.issuer), ticker: CURRENCY_EURC.ticker, issuer: CURRENCY_EURC.issuer },
+    {
+      asset: new Asset(CURRENCY_USDC.ticker, CURRENCY_USDC.issuer),
+      ticker: CURRENCY_USDC.ticker,
+      issuer: CURRENCY_USDC.issuer,
+    },
+    {
+      asset: new Asset(CURRENCY_EURC.ticker, CURRENCY_EURC.issuer),
+      ticker: CURRENCY_EURC.ticker,
+      issuer: CURRENCY_EURC.issuer,
+    },
     { asset: new Asset('LAI', LAI_ISSUER), ticker: 'LAI', issuer: LAI_ISSUER },
   ].filter(({ ticker, issuer }) => !hasTrustline(balances, ticker, issuer));
 
@@ -63,16 +69,34 @@ export const FaucetModal = ({ modalId, onClose }: FaucetModalProps) => {
 
   if (isSettingUp) {
     return (
-      <Dialog modalId={modalId} onClose={() => { /* prevent close during tx */ }}>
-        <LoadingDialogContent title="Setting up token accounts" subtitle="Adding trustlines for USDC, EURC and LAI." onClick={closeModal} />
+      <Dialog
+        modalId={modalId}
+        onClose={() => {
+          /* prevent close during tx */
+        }}
+      >
+        <LoadingDialogContent
+          title="Setting up token accounts"
+          subtitle="Adding trustlines for USDC, EURC and LAI."
+          onClick={closeModal}
+        />
       </Dialog>
     );
   }
 
   if (isClaiming) {
     return (
-      <Dialog modalId={modalId} onClose={() => { /* prevent close during tx */ }}>
-        <LoadingDialogContent title="Claiming tokens" subtitle="Sending 10,000 USDC, EURC and LAI to your wallet." onClick={closeModal} />
+      <Dialog
+        modalId={modalId}
+        onClose={() => {
+          /* prevent close during tx */
+        }}
+      >
+        <LoadingDialogContent
+          title="Claiming tokens"
+          subtitle="Sending 10,000 USDC, EURC and LAI to your wallet."
+          onClick={closeModal}
+        />
       </Dialog>
     );
   }
@@ -102,10 +126,13 @@ export const FaucetModal = ({ modalId, onClose }: FaucetModalProps) => {
         {FAUCET_TOKENS.map(({ ticker, icon }) => (
           <li key={ticker} className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              {icon
-                ? <img src={icon} alt={ticker} className="h-9 w-9" />
-                : <span className="h-9 w-9 rounded-full bg-black flex items-center justify-center text-white text-sm font-bold">LAI</span>
-              }
+              {icon ? (
+                <img src={icon} alt={ticker} className="h-9 w-9" />
+              ) : (
+                <span className="h-9 w-9 rounded-full bg-black flex items-center justify-center text-white text-sm font-bold">
+                  LAI
+                </span>
+              )}
               <span className="font-semibold text-lg tracking-tight">{ticker}</span>
             </div>
             <span className="font-semibold text-lg">{CLAIM_AMOUNT}</span>
@@ -113,10 +140,14 @@ export const FaucetModal = ({ modalId, onClose }: FaucetModalProps) => {
         ))}
       </ul>
 
-      <p className="text-grey text-sm mb-8">Your wallet will prompt you to set up any missing token accounts, then to claim.</p>
+      <p className="text-grey text-sm mb-8">
+        Your wallet will prompt you to set up any missing token accounts, then to claim.
+      </p>
 
       <div className="flex flex-row justify-end gap-4">
-        <Button onClick={closeModal} variant="ghost">Cancel</Button>
+        <Button onClick={closeModal} variant="ghost">
+          Cancel
+        </Button>
         <Button onClick={run}>Claim tokens</Button>
       </div>
     </Dialog>

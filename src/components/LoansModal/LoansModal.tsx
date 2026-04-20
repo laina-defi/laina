@@ -41,11 +41,13 @@ const LoansModal = ({ modalId, onClose }: LoansModalProps) => {
   return (
     <Dialog modalId={modalId} onClose={handleClose} className="min-w-96">
       {activeView === 'list' && (
-        <LoansView onClose={handleClose} onRepay={handleRepayClicked} onAdjustCollateral={handleAdjustCollateralClicked} />
+        <LoansView
+          onClose={handleClose}
+          onRepay={handleRepayClicked}
+          onAdjustCollateral={handleAdjustCollateralClicked}
+        />
       )}
-      {activeView === 'repay' && !isNil(selectedLoan) && (
-        <RepayView loan={selectedLoan} onBack={handleBackClicked} />
-      )}
+      {activeView === 'repay' && !isNil(selectedLoan) && <RepayView loan={selectedLoan} onBack={handleBackClicked} />}
       {activeView === 'adjust-collateral' && !isNil(selectedLoan) && (
         <AdjustCollateralView loan={selectedLoan} onBack={handleBackClicked} />
       )}

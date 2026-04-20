@@ -17,9 +17,7 @@ mod share_token {
 }
 
 mod insurance_pool {
-    soroban_sdk::contractimport!(
-        file = "../../target/wasm32v1-none/release/insurance_pool.wasm"
-    );
+    soroban_sdk::contractimport!(file = "../../target/wasm32v1-none/release/insurance_pool.wasm");
 }
 
 #[contract]
@@ -372,9 +370,8 @@ impl LoanPoolContract {
         let stored = storage::read_stored_positions(&e, &user);
         let share_token_client = share_token::Client::new(
             &e,
-            &storage::read_token_contract_address(&e).unwrap_or_else(|_| {
-                panic!("token contract address not set")
-            }),
+            &storage::read_token_contract_address(&e)
+                .unwrap_or_else(|_| panic!("token contract address not set")),
         );
         Positions {
             receivable_shares: share_token_client.balance(&user),
@@ -680,10 +677,7 @@ impl LoanPoolContract {
     }
 
     /// Set the insurance pool address. Only callable by the loan manager.
-    pub fn set_insurance_pool(
-        e: Env,
-        insurance_pool_addr: Address,
-    ) -> Result<(), LoanPoolError> {
+    pub fn set_insurance_pool(e: Env, insurance_pool_addr: Address) -> Result<(), LoanPoolError> {
         let loan_manager_addr = storage::read_loan_manager_addr(&e)?;
         loan_manager_addr.require_auth();
         storage::write_insurance_pool_address(&e, insurance_pool_addr);

@@ -42,20 +42,22 @@ export const BorrowableAsset = ({ currency, onBorrowClicked }: BorrowableAssetPr
   }, [pool, wallet, isCollateral]);
 
   const aprContent =
-    pool && price !== undefined ? (() => {
-      const baseAPR = Number(pool.annualInterestRate) / 100_000;
-      const laiAPR = calcBorrowerLaiAPR(pool.totalBalanceTokens, pool.availableBalanceTokens, price);
-      const netAPR = baseAPR - laiAPR;
-      const tip = `Base borrow rate: ${baseAPR.toFixed(2)}%. You earn LAI token rewards worth ${laiAPR.toFixed(2)}% of your borrowed amount per year, reducing your net cost to ${netAPR.toFixed(2)}%.`;
-      return (
-        <span className="flex items-center gap-1">
-          <span className="font-semibold leading-5">{netAPR.toFixed(2)} %</span>
-          <span className="tooltip tooltip-left cursor-help" data-tip={tip}>
-            <PiInfo size={14} className="opacity-40 hover:opacity-70 transition-opacity" />
+    pool && price !== undefined ? (
+      (() => {
+        const baseAPR = Number(pool.annualInterestRate) / 100_000;
+        const laiAPR = calcBorrowerLaiAPR(pool.totalBalanceTokens, pool.availableBalanceTokens, price);
+        const netAPR = baseAPR - laiAPR;
+        const tip = `Base borrow rate: ${baseAPR.toFixed(2)}%. You earn LAI token rewards worth ${laiAPR.toFixed(2)}% of your borrowed amount per year, reducing your net cost to ${netAPR.toFixed(2)}%.`;
+        return (
+          <span className="flex items-center gap-1">
+            <span className="font-semibold leading-5">{netAPR.toFixed(2)} %</span>
+            <span className="tooltip tooltip-left cursor-help" data-tip={tip}>
+              <PiInfo size={14} className="opacity-40 hover:opacity-70 transition-opacity" />
+            </span>
           </span>
-        </span>
-      );
-    })() : (
+        );
+      })()
+    ) : (
       <Loading size="xs" />
     );
 

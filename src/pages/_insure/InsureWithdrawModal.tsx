@@ -16,7 +16,8 @@ export interface InsureWithdrawModalProps {
 }
 
 export const InsureWithdrawModal = ({ modalId, onClose, currency }: InsureWithdrawModalProps) => {
-  const { sendTransaction, isWithdrawing, isWithdrawSuccess, withdrawError, resetState } = useWithdrawTransaction(currency);
+  const { sendTransaction, isWithdrawing, isWithdrawSuccess, withdrawError, resetState } =
+    useWithdrawTransaction(currency);
   const { wallet, insurancePositions, refetchBalances } = useWallet();
   const { prices } = useInsurancePools();
   const [amount, setAmount] = useState(0n);
@@ -79,7 +80,9 @@ export const InsureWithdrawModal = ({ modalId, onClose, currency }: InsureWithdr
   return (
     <Dialog className="min-w-[760px]" modalId={modalId} onClose={closeModal}>
       <h3 className="font-bold text-xl mb-2">Withdraw l{name}</h3>
-      <p className="text-sm opacity-70 mb-8">Withdraw your l{ticker} tokens from the {name} insurance pool.</p>
+      <p className="text-sm opacity-70 mb-8">
+        Withdraw your l{ticker} tokens from the {name} insurance pool.
+      </p>
       <p className="text-lg mb-2">Amount to withdraw</p>
       <CryptoAmountSelector
         max={insuranceBalance}

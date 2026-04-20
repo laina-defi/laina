@@ -61,14 +61,21 @@ export const InsureManageModal = ({ modalId, onClose, currency }: InsureManageMo
   if (deposit.isDepositing) {
     return (
       <Dialog modalId={modalId} onClose={() => {}}>
-        <LoadingDialogContent title="Depositing" subtitle={`Depositing ${stroopsToDecimalString(depositAmount)} l${ticker}.`} onClick={closeModal} />
+        <LoadingDialogContent
+          title="Depositing"
+          subtitle={`Depositing ${stroopsToDecimalString(depositAmount)} l${ticker}.`}
+          onClick={closeModal}
+        />
       </Dialog>
     );
   }
   if (deposit.isDepositSuccess) {
     return (
       <Dialog modalId={modalId} onClose={closeModal}>
-        <SuccessDialogContent subtitle={`Successfully deposited ${stroopsToDecimalString(depositAmount)} l${ticker}.`} onClick={closeModal} />
+        <SuccessDialogContent
+          subtitle={`Successfully deposited ${stroopsToDecimalString(depositAmount)} l${ticker}.`}
+          onClick={closeModal}
+        />
       </Dialog>
     );
   }
@@ -83,14 +90,21 @@ export const InsureManageModal = ({ modalId, onClose, currency }: InsureManageMo
   if (queueWithdraw.isQueuing) {
     return (
       <Dialog modalId={modalId} onClose={() => {}}>
-        <LoadingDialogContent title="Starting queue" subtitle={`Queueing ${stroopsToDecimalString(withdrawAmount)} l${ticker} for withdrawal.`} onClick={closeModal} />
+        <LoadingDialogContent
+          title="Starting queue"
+          subtitle={`Queueing ${stroopsToDecimalString(withdrawAmount)} l${ticker} for withdrawal.`}
+          onClick={closeModal}
+        />
       </Dialog>
     );
   }
   if (queueWithdraw.isQueueSuccess) {
     return (
       <Dialog modalId={modalId} onClose={closeModal}>
-        <SuccessDialogContent subtitle={`Withdrawal queue started for ${stroopsToDecimalString(withdrawAmount)} l${ticker}. Come back in 14 days to execute.`} onClick={closeModal} />
+        <SuccessDialogContent
+          subtitle={`Withdrawal queue started for ${stroopsToDecimalString(withdrawAmount)} l${ticker}. Come back in 14 days to execute.`}
+          onClick={closeModal}
+        />
       </Dialog>
     );
   }
@@ -105,7 +119,11 @@ export const InsureManageModal = ({ modalId, onClose, currency }: InsureManageMo
   if (cancelQueue.isCancelling) {
     return (
       <Dialog modalId={modalId} onClose={() => {}}>
-        <LoadingDialogContent title="Cancelling queue" subtitle="Cancelling your withdrawal queue." onClick={closeModal} />
+        <LoadingDialogContent
+          title="Cancelling queue"
+          subtitle="Cancelling your withdrawal queue."
+          onClick={closeModal}
+        />
       </Dialog>
     );
   }
@@ -127,14 +145,21 @@ export const InsureManageModal = ({ modalId, onClose, currency }: InsureManageMo
   if (executeWithdraw.isExecuting) {
     return (
       <Dialog modalId={modalId} onClose={() => {}}>
-        <LoadingDialogContent title="Executing withdrawal" subtitle={`Withdrawing your l${ticker} tokens from the insurance pool.`} onClick={closeModal} />
+        <LoadingDialogContent
+          title="Executing withdrawal"
+          subtitle={`Withdrawing your l${ticker} tokens from the insurance pool.`}
+          onClick={closeModal}
+        />
       </Dialog>
     );
   }
   if (executeWithdraw.isExecuteSuccess) {
     return (
       <Dialog modalId={modalId} onClose={closeModal}>
-        <SuccessDialogContent subtitle={`Successfully withdrew your l${ticker} tokens from the insurance pool.`} onClick={closeModal} />
+        <SuccessDialogContent
+          subtitle={`Successfully withdrew your l${ticker} tokens from the insurance pool.`}
+          onClick={closeModal}
+        />
       </Dialog>
     );
   }
@@ -151,14 +176,10 @@ export const InsureManageModal = ({ modalId, onClose, currency }: InsureManageMo
 
   // Compute approximate token value of queued shares at current pool rate
   const queuedTokenValue =
-    queue && pool && pool.totalShares > 0n
-      ? (queue.queued_shares * pool.totalTokens) / pool.totalShares
-      : null;
+    queue && pool && pool.totalShares > 0n ? (queue.queued_shares * pool.totalTokens) / pool.totalShares : null;
 
   const nowSeconds = Date.now() / 1000;
-  const isQueueReady = queue
-    ? nowSeconds >= Number(queue.queued_at_timestamp) + FOURTEEN_DAYS_IN_SECONDS
-    : false;
+  const isQueueReady = queue ? nowSeconds >= Number(queue.queued_at_timestamp) + FOURTEEN_DAYS_IN_SECONDS : false;
 
   return (
     <Dialog className="min-w-[760px]" modalId={modalId} onClose={closeModal}>
@@ -185,7 +206,9 @@ export const InsureManageModal = ({ modalId, onClose, currency }: InsureManageMo
 
       {tab === 'deposit' && (
         <>
-          <p className="text-sm opacity-70 mb-8">Deposit your l{ticker} tokens to provide insurance coverage for the {name} pool.</p>
+          <p className="text-sm opacity-70 mb-8">
+            Deposit your l{ticker} tokens to provide insurance coverage for the {name} pool.
+          </p>
           <p className="text-lg mb-2">Amount to deposit</p>
           <CryptoAmountSelector
             max={lTokenBalance}
@@ -196,7 +219,9 @@ export const InsureManageModal = ({ modalId, onClose, currency }: InsureManageMo
             onSelectMaximum={() => setDepositAmount(lTokenBalance)}
           />
           <div className="flex flex-row justify-end mt-8">
-            <Button onClick={closeModal} variant="ghost" className="mr-4">Cancel</Button>
+            <Button onClick={closeModal} variant="ghost" className="mr-4">
+              Cancel
+            </Button>
             <Button
               disabled={depositAmount === 0n || depositAmount > lTokenBalance}
               onClick={() => deposit.sendTransaction(depositAmount)}
@@ -210,8 +235,8 @@ export const InsureManageModal = ({ modalId, onClose, currency }: InsureManageMo
       {tab === 'withdraw' && !queue && (
         <>
           <p className="text-sm opacity-70 mb-8">
-            Queue a withdrawal from the {name} insurance pool. After a 14-day waiting period you can execute the withdrawal.
-            During this time you continue to absorb any bad debt events.
+            Queue a withdrawal from the {name} insurance pool. After a 14-day waiting period you can execute the
+            withdrawal. During this time you continue to absorb any bad debt events.
           </p>
           <p className="text-lg mb-2">Amount to withdraw</p>
           <CryptoAmountSelector
@@ -223,7 +248,9 @@ export const InsureManageModal = ({ modalId, onClose, currency }: InsureManageMo
             onSelectMaximum={() => setWithdrawAmount(insuranceBalance)}
           />
           <div className="flex flex-row justify-end mt-8">
-            <Button onClick={closeModal} variant="ghost" className="mr-4">Cancel</Button>
+            <Button onClick={closeModal} variant="ghost" className="mr-4">
+              Cancel
+            </Button>
             <Button
               disabled={withdrawAmount === 0n || withdrawAmount > insuranceBalance}
               onClick={() => queueWithdraw.sendTransaction(withdrawAmount)}
@@ -236,24 +263,29 @@ export const InsureManageModal = ({ modalId, onClose, currency }: InsureManageMo
 
       {tab === 'withdraw' && queue && (
         <>
-          <p className="text-sm opacity-70 mb-6">Your withdrawal is queued. You continue to absorb bad debt events until you execute the withdrawal.</p>
+          <p className="text-sm opacity-70 mb-6">
+            Your withdrawal is queued. You continue to absorb bad debt events until you execute the withdrawal.
+          </p>
           <div className="mb-6">
             <QueueProgressBar queuedAtTimestamp={queue.queued_at_timestamp} />
           </div>
           {!isNil(queuedTokenValue) && (
             <div className="mb-6">
               <p className="text-sm opacity-70 mb-1">Queued amount (current value)</p>
-              <p className="font-semibold text-lg">{formatAmount(queuedTokenValue)} l{ticker}</p>
+              <p className="font-semibold text-lg">
+                {formatAmount(queuedTokenValue)} l{ticker}
+              </p>
               {!isNil(price) && <p className="text-sm opacity-70">{/* dollar value shown via formatAmount */}</p>}
             </div>
           )}
           <div className="flex flex-row justify-end gap-3 mt-8">
-            <Button onClick={closeModal} variant="ghost">Cancel</Button>
-            <Button onClick={() => cancelQueue.sendTransaction()} variant="ghost">Cancel Queue</Button>
-            <Button
-              disabled={!isQueueReady}
-              onClick={() => executeWithdraw.sendTransaction()}
-            >
+            <Button onClick={closeModal} variant="ghost">
+              Cancel
+            </Button>
+            <Button onClick={() => cancelQueue.sendTransaction()} variant="ghost">
+              Cancel Queue
+            </Button>
+            <Button disabled={!isQueueReady} onClick={() => executeWithdraw.sendTransaction()}>
               {isQueueReady ? 'Execute Withdraw' : 'Not ready yet'}
             </Button>
           </div>
@@ -309,7 +341,10 @@ const useQueueWithdrawTransaction = (currency: CurrencyBinding | null) => {
     if (!wallet || !currency) return;
     setIsQueuing(true);
     try {
-      const tx = await currency.contractClient.queue_withdraw({ user: wallet.address, amount_in_tokens: amountInTokens });
+      const tx = await currency.contractClient.queue_withdraw({
+        user: wallet.address,
+        amount_in_tokens: amountInTokens,
+      });
       await tx.signAndSend({ signTransaction });
       setIsQueueSuccess(true);
       setQueueError(null);
