@@ -73,6 +73,11 @@ enum PoolDataKey {
     TokenContractAddress,
     // Insurance pool contract address,
     InsurancePoolAddress,
+    // Total outstanding borrower liabilities including accrued interest.
+    // Mirrors the sum of all per-user positions.liabilities.  Kept separately
+    // from total_balance so the LAI accumulator denominator stays correct as
+    // interest compounds via increase_liabilities.
+    TotalLiabilitiesTokens,
 }
 
 /* Contract events */
@@ -387,4 +392,22 @@ pub fn read_insurance_pool_address(e: &Env) -> Result<Address, LoanPoolError> {
         .persistent()
         .get(&PoolDataKey::InsurancePoolAddress)
         .ok_or(LoanPoolError::InsurancePoolAddress)
+}
+
+pub fn read_total_liabilities(e: &Env) -> i128 {
+    e.storage()
+        .persistent()
+        .get(&PoolDataKey::TotalLiabilitiesTokens)
+        .unwrap_or(0)
+}
+
+pub fn adjust_total_liabilities(e: &Env, amount: i128) -> Result<i128, LoanPoolError> {
+    let key = PoolDataKey::TotalLiabilitiesTokens;
+    let current: i128 = e.storage().persistent().get(&key).unwrap_or(0);
+    let new_amount = current
+        .checked_add(amount)
+        .ok_or(LoanPoolError::OverOrUnderFlow)?;
+    e.storage().persistent().set(&key, &new_amount);
+    extend_persistent(e, &key);
+    Ok(new_amount)
 }

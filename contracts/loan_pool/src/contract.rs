@@ -180,6 +180,7 @@ impl LoanPoolContract {
         let pool_state = PoolState {
             total_balance_tokens: new_total_balance_tokens,
             available_balance_tokens: new_available_balance_tokens,
+            total_liabilities_tokens: storage::read_total_liabilities(&e),
             total_balance_shares: new_total_balance_shares,
             annual_interest_rate: new_annual_interest_rate,
             pool_status: storage::read_pool_status(&e)?,
@@ -212,6 +213,7 @@ impl LoanPoolContract {
         )?;
 
         positions::increase_positions(&e, user.clone(), amount, 0)?;
+        storage::adjust_total_liabilities(&e, amount)?;
 
         let token_address = &storage::read_currency(&e)?.token_address;
         let client = token::Client::new(&e, token_address);
@@ -406,6 +408,7 @@ impl LoanPoolContract {
         Ok(PoolState {
             total_balance_tokens: storage::read_total_balance(&e)?,
             available_balance_tokens: storage::read_available_balance(&e)?,
+            total_liabilities_tokens: storage::read_total_liabilities(&e),
             total_balance_shares: storage::read_total_shares(&e)?,
             annual_interest_rate: interest::get_interest(e.clone())?,
             pool_status: storage::read_pool_status(&e)?,
@@ -464,6 +467,7 @@ impl LoanPoolContract {
         loan_manager_addr.require_auth();
 
         positions::increase_positions(&e, user.clone(), amount, 0)?;
+        storage::adjust_total_liabilities(&e, amount)?;
         Ok(())
     }
 
@@ -516,6 +520,12 @@ impl LoanPoolContract {
         };
 
         positions::decrease_positions(&e, user, liabilities_to_decrease, 0)?;
+        storage::adjust_total_liabilities(
+            &e,
+            liabilities_to_decrease
+                .checked_neg()
+                .ok_or(LoanPoolError::OverOrUnderFlow)?,
+        )?;
 
         // All net paid funds (principal + interest - admin) increase available liquidity
         storage::adjust_available_balance(&e, amount - amount_to_admin)?;
@@ -566,6 +576,12 @@ impl LoanPoolContract {
 
         let user_liabilities = storage::read_stored_positions(&e, &user).liabilities;
         positions::decrease_positions(&e, user, user_liabilities, 0)?;
+        storage::adjust_total_liabilities(
+            &e,
+            user_liabilities
+                .checked_neg()
+                .ok_or(LoanPoolError::OverOrUnderFlow)?,
+        )?;
         storage::adjust_available_balance(&e, borrowed_amount - amount_to_admin)?;
         storage::adjust_total_balance(&e, unpaid_interest - amount_to_admin)?;
 
@@ -606,6 +622,10 @@ impl LoanPoolContract {
         client.transfer(&user, &loan_manager_addr, &amount_to_admin);
 
         positions::decrease_positions(&e, loan_owner, amount, 0)?;
+        storage::adjust_total_liabilities(
+            &e,
+            amount.checked_neg().ok_or(LoanPoolError::OverOrUnderFlow)?,
+        )?;
         storage::adjust_available_balance(&e, amount_to_storage)?;
         Ok(())
     }

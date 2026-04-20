@@ -170,7 +170,7 @@ impl LoanManager {
         // For a new loan from this pool, old_liabilities = sum of existing loans from same pool.
         if storage::read_lai_config(&e).is_some() {
             let borrow_pool_state = borrow_pool_client.get_pool_state();
-            let total_liabilities = borrow_pool_state.total_balance_tokens - borrow_pool_state.available_balance_tokens;
+            let total_liabilities = borrow_pool_state.total_liabilities_tokens;
             let old_liabilities: i128 = storage::read_user_loans(&e, &user)
                 .iter()
                 .filter(|l| l.borrowed_from == borrowed_from)
@@ -383,7 +383,7 @@ impl LoanManager {
         // Checkpoint borrower LAI rewards before changing their liability position.
         if storage::read_lai_config(e).is_some() {
             let borrow_pool_state = borrow_pool_client.get_pool_state();
-            let total_liabilities = borrow_pool_state.total_balance_tokens - borrow_pool_state.available_balance_tokens;
+            let total_liabilities = borrow_pool_state.total_liabilities_tokens;
             Self::checkpoint_borrower_internal(
                 e,
                 &borrowed_from,
@@ -458,7 +458,7 @@ impl LoanManager {
         // Checkpoint borrower LAI rewards before closing position (new liabilities = 0).
         if storage::read_lai_config(e).is_some() {
             let borrow_pool_state = borrow_pool_client.get_pool_state();
-            let total_liabilities = borrow_pool_state.total_balance_tokens - borrow_pool_state.available_balance_tokens;
+            let total_liabilities = borrow_pool_state.total_liabilities_tokens;
             Self::checkpoint_borrower_internal(
                 e,
                 &borrowed_from,
@@ -566,7 +566,7 @@ impl LoanManager {
         // Checkpoint borrower LAI rewards before reducing their liability position.
         if storage::read_lai_config(&e).is_some() {
             let borrow_pool_state = borrow_pool_client.get_pool_state();
-            let total_liabilities = borrow_pool_state.total_balance_tokens - borrow_pool_state.available_balance_tokens;
+            let total_liabilities = borrow_pool_state.total_liabilities_tokens;
             Self::checkpoint_borrower_internal(
                 &e,
                 &borrowed_from,
@@ -1405,6 +1405,7 @@ mod tests {
         let pool_state = PoolState {
             annual_interest_rate: 200887,
             available_balance_tokens: 2000,
+            total_liabilities_tokens: 0,
             total_balance_shares: 1998,
             total_balance_tokens: 2002,
             pool_status: PoolStatus::Healthy,
