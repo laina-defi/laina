@@ -15,6 +15,8 @@ export type PoolState = {
   availableBalanceTokens: bigint;
   annualInterestRate: bigint;
   poolStatus: PoolStatus;
+  collateralFactor: bigint;
+  interestRateMultiplier: bigint;
 };
 
 export type PoolRecord = {
@@ -56,18 +58,24 @@ const fetchPools = async (): Promise<PoolRecord> => {
 
 const fetchPoolState = async (ticker: SupportedCurrency): Promise<PoolState> => {
   const { contractClient } = CURRENCY_BINDINGS[ticker];
-  const { result } = await contractClient.get_pool_state();
-  if (result.isOk()) {
-    const value = result.unwrap();
+  const [stateRes, collateralRes, multiplierRes] = await Promise.all([
+    contractClient.get_pool_state(),
+    contractClient.get_collateral_factor(),
+    contractClient.get_interest_rate_multiplier(),
+  ]);
+  if (stateRes.result.isOk()) {
+    const value = stateRes.result.unwrap();
     return {
       totalBalanceTokens: value.total_balance_tokens,
       totalBalanceShares: value.total_balance_shares,
       availableBalanceTokens: value.available_balance_tokens,
       annualInterestRate: value.annual_interest_rate,
       poolStatus: (value.pool_status as { tag: PoolStatus }).tag,
+      collateralFactor: collateralRes.result.isOk() ? collateralRes.result.unwrap() : 0n,
+      interestRateMultiplier: multiplierRes.result.isOk() ? multiplierRes.result.unwrap() : 0n,
     };
   }
-  const error = result.unwrapErr();
+  const error = stateRes.result.unwrapErr();
   console.error('Error: ', error);
   return {
     totalBalanceTokens: 0n,
@@ -75,6 +83,8 @@ const fetchPoolState = async (ticker: SupportedCurrency): Promise<PoolState> => 
     availableBalanceTokens: 0n,
     annualInterestRate: 0n,
     poolStatus: 'Caution',
+    collateralFactor: 0n,
+    interestRateMultiplier: 0n,
   };
 };
 

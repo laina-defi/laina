@@ -1,12 +1,22 @@
+import { useState } from 'react';
+
 import { Button } from '@components/Button';
 import { StellarExpertLink } from '@components/Link';
 import { Loading } from '@components/Loading';
 import { type PoolStatus, usePools } from '@contexts/pool-context';
 import { type Balance, useWallet } from '@contexts/wallet-context';
 import { isBalanceZero } from '@lib/converters';
-import { formatAmount, formatDepositAPY, toDollarsFormatted } from '@lib/formatting';
+import { formatAmount, formatCollateralFactor, formatDepositAPY, toDollarsFormatted } from '@lib/formatting';
 import { isNil } from 'ramda';
-import { PiCheckCircleFill, PiInfo, PiLockSimpleFill, PiWarningCircleFill, PiXCircleFill } from 'react-icons/pi';
+import {
+  PiCaretDown,
+  PiCaretUp,
+  PiCheckCircleFill,
+  PiInfo,
+  PiLockSimpleFill,
+  PiWarningCircleFill,
+  PiXCircleFill,
+} from 'react-icons/pi';
 import type { CurrencyBinding } from 'src/currency-bindings';
 
 const statusConfig: Record<PoolStatus, { iconClass: string; icon: React.ReactNode; tip: string }> = {
@@ -38,7 +48,8 @@ export interface LendableAssetProps {
 }
 
 export const LendableAsset = ({ currency, onDepositClicked }: LendableAssetProps) => {
-  const { icon, name, ticker, issuerName, contractId } = currency;
+  const { icon, name, ticker, issuerName, contractId, tokenContractAddress } = currency;
+  const [isExpanded, setIsExpanded] = useState(false);
 
   const { wallet, walletBalances } = useWallet();
   const { prices, pools } = usePools();
@@ -67,6 +78,42 @@ export const LendableAsset = ({ currency, onDepositClicked }: LendableAssetProps
     </Button>
   );
 
+  const expandedPanel = isExpanded && (
+    <div className="px-4 pb-4 pt-2 grid grid-cols-2 md:grid-cols-4 gap-4 bg-grey-lighter/20 border-t border-grey-light">
+      <div>
+        <p className="text-xs text-grey mb-0.5">Collateral Factor</p>
+        <p className="text-sm font-semibold">
+          {pool ? formatCollateralFactor(pool.collateralFactor) : <Loading size="xs" />}
+        </p>
+      </div>
+      <div>
+        <p className="text-xs text-grey mb-0.5">Interest Rate Multiplier</p>
+        <p className="text-sm font-semibold">
+          {pool ? String(pool.interestRateMultiplier) : <Loading size="xs" />}
+        </p>
+      </div>
+      <div>
+        <p className="text-xs text-grey mb-0.5">Pool Contract</p>
+        <StellarExpertLink contractId={contractId} text="View contract" className="text-sm" />
+      </div>
+      <div>
+        <p className="text-xs text-grey mb-0.5">Token Contract</p>
+        <StellarExpertLink contractId={tokenContractAddress} text="View contract" className="text-sm" />
+      </div>
+    </div>
+  );
+
+  const chevron = (
+    <button
+      type="button"
+      onClick={() => setIsExpanded((v) => !v)}
+      className="p-1 rounded hover:bg-grey-lighter/50 transition-colors text-grey"
+      aria-label={isExpanded ? 'Collapse details' : 'Expand details'}
+    >
+      {isExpanded ? <PiCaretUp size={18} /> : <PiCaretDown size={18} />}
+    </button>
+  );
+
   return (
     <div className="border-b border-grey-light last:border-none hover:bg-grey-lighter/30 transition-colors">
       {/* ── Mobile card layout (hidden at md+) ── */}
@@ -84,6 +131,7 @@ export const LendableAsset = ({ currency, onDepositClicked }: LendableAssetProps
               {status.icon}
             </span>
           )}
+          {chevron}
         </div>
 
         <div className="grid grid-cols-3 gap-3 mb-4">
@@ -112,22 +160,19 @@ export const LendableAsset = ({ currency, onDepositClicked }: LendableAssetProps
           </div>
         </div>
 
-        <StellarExpertLink contractId={contractId} text="View pool contract" className="text-sm mb-3" />
-
         {actionButton}
       </div>
 
       {/* ── Desktop grid row layout (hidden below md) ── */}
-      <div className="hidden md:grid md:grid-cols-[80px_1fr_40px_90px_150px_120px_130px_130px] md:items-center md:min-h-[6.5rem] md:px-1">
+      <div className="hidden md:grid md:grid-cols-[80px_1fr_40px_90px_150px_120px_130px_130px_40px] md:items-center md:min-h-[6.5rem] md:px-1">
         {/* Icon */}
         <div className="flex justify-center">
           <img src={icon} alt="" className="max-h-12 max-w-[48px]" />
         </div>
 
-        {/* Name + link */}
+        {/* Name */}
         <div>
           <h2 className="font-semibold text-xl tracking-tight">{name}</h2>
-          <StellarExpertLink contractId={contractId} text="View pool contract" />
         </div>
 
         {/* Status icon */}
@@ -173,7 +218,12 @@ export const LendableAsset = ({ currency, onDepositClicked }: LendableAssetProps
 
         {/* Action */}
         <div className="flex justify-end pr-2 py-2">{actionButton}</div>
+
+        {/* Expand toggle */}
+        <div className="flex justify-center">{chevron}</div>
       </div>
+
+      {expandedPanel}
     </div>
   );
 };
