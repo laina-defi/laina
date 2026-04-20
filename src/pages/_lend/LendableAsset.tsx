@@ -70,7 +70,7 @@ export const LendableAsset = ({ currency, onDepositClicked }: LendableAssetProps
   return (
     <div className="border-b border-grey-light last:border-none hover:bg-grey-lighter/30 transition-colors">
       {/* ── Mobile card layout (hidden at md+) ── */}
-      <div className="md:hidden p-4">
+      <div className="md:hidden py-4">
         <div className="flex items-center gap-3 mb-4">
           <img src={icon} alt="" className="w-10 h-10 flex-none" />
           <div className="flex-1 min-w-0">

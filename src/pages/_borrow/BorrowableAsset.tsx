@@ -74,7 +74,7 @@ export const BorrowableAsset = ({ currency, onBorrowClicked }: BorrowableAssetPr
   return (
     <div className="border-b border-grey-light last:border-none hover:bg-grey-lighter/30 transition-colors">
       {/* ── Mobile card layout ── */}
-      <div className="md:hidden p-4">
+      <div className="md:hidden py-4">
         <div className="flex items-center gap-3 mb-4">
           <img src={icon} alt="" className="w-12 h-12 flex-none" />
           <div className="flex-1 min-w-0">
