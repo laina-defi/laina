@@ -8,7 +8,7 @@ import { useWallet } from '@contexts/wallet-context';
 import { isBalanceZero } from '@lib/converters';
 import { calcBorrowerLaiAPR, formatAmount, formatCollateralFactor, toDollarsFormatted } from '@lib/formatting';
 import { isNil } from 'ramda';
-import { PiCaretDown, PiCaretUp, PiInfo } from 'react-icons/pi';
+import { PiCaretDown, PiInfo } from 'react-icons/pi';
 import type { CurrencyBinding } from 'src/currency-bindings';
 
 export interface BorrowableAssetProps {
@@ -29,8 +29,8 @@ export const BorrowableAsset = ({ currency, onBorrowClicked }: BorrowableAssetPr
   const isCollateral = !walletBalances
     ? false
     : Object.entries(walletBalances)
-        .filter(([t]) => t !== ticker)
-        .some(([, b]) => b.trustLine && !isBalanceZero(b.balanceLine.balance));
+      .filter(([t]) => t !== ticker)
+      .some(([, b]) => b.trustLine && !isBalanceZero(b.balanceLine.balance));
 
   const borrowDisabled = !wallet || !isCollateral || !pool || pool.availableBalanceTokens === 0n;
 
@@ -64,7 +64,7 @@ export const BorrowableAsset = ({ currency, onBorrowClicked }: BorrowableAssetPr
 
   const actionButton = borrowDisabled ? (
     <div className="tooltip w-full md:w-auto" data-tip={tooltip}>
-      <Button disabled={true} onClick={() => {}} className="w-full md:w-auto">
+      <Button disabled={true} onClick={() => { }} className="w-full md:w-auto">
         Borrow
       </Button>
     </div>
@@ -74,27 +74,31 @@ export const BorrowableAsset = ({ currency, onBorrowClicked }: BorrowableAssetPr
     </Button>
   );
 
-  const expandedPanel = isExpanded && (
-    <div className="px-4 pb-4 pt-2 grid grid-cols-2 md:grid-cols-4 gap-4 bg-grey-lighter/20 border-t border-grey-light">
-      <div>
-        <p className="text-xs text-grey mb-0.5">Collateral Factor</p>
-        <p className="text-sm font-semibold">
-          {pool ? formatCollateralFactor(pool.collateralFactor) : <Loading size="xs" />}
-        </p>
-      </div>
-      <div>
-        <p className="text-xs text-grey mb-0.5">Interest Rate Multiplier</p>
-        <p className="text-sm font-semibold">
-          {pool ? String(pool.interestRateMultiplier) : <Loading size="xs" />}
-        </p>
-      </div>
-      <div>
-        <p className="text-xs text-grey mb-0.5">Pool Contract</p>
-        <StellarExpertLink contractId={contractId} text="View contract" className="text-sm" />
-      </div>
-      <div>
-        <p className="text-xs text-grey mb-0.5">Token Contract</p>
-        <StellarExpertLink contractId={tokenContractAddress} text="View contract" className="text-sm" />
+  const expandedPanel = (
+    <div
+      className={`overflow-hidden transition-[max-height] duration-300 ease-in-out ${isExpanded ? 'max-h-40' : 'max-h-0'}`}
+    >
+      <div className="px-4 pb-4 pt-2 grid grid-cols-2 md:grid-cols-4 gap-4 bg-grey-lighter/20 border-t border-grey-light">
+        <div>
+          <p className="text-xs text-grey mb-0.5">Collateral Factor</p>
+          <p className="text-sm font-semibold">
+            {pool ? formatCollateralFactor(pool.collateralFactor) : <Loading size="xs" />}
+          </p>
+        </div>
+        <div>
+          <p className="text-xs text-grey mb-0.5">Interest Rate Multiplier</p>
+          <p className="text-sm font-semibold">
+            {pool ? String(pool.interestRateMultiplier) : <Loading size="xs" />}
+          </p>
+        </div>
+        <div>
+          <p className="text-xs text-grey mb-0.5">Pool Contract</p>
+          <StellarExpertLink contractId={contractId} text="View contract" className="text-sm" />
+        </div>
+        <div>
+          <p className="text-xs text-grey mb-0.5">Token Contract</p>
+          <StellarExpertLink contractId={tokenContractAddress} text="View contract" className="text-sm" />
+        </div>
       </div>
     </div>
   );
@@ -103,13 +107,17 @@ export const BorrowableAsset = ({ currency, onBorrowClicked }: BorrowableAssetPr
     <button
       type="button"
       onClick={() => setIsExpanded((v) => !v)}
-      className="p-1 rounded hover:bg-grey-lighter/50 transition-colors text-grey"
+      className="p-1 rounded flex items-center justify-center hover:bg-grey-lighter/50 transition-colors text-grey"
       aria-label={isExpanded ? 'Collapse details' : 'Expand details'}
     >
-      {isExpanded ? <PiCaretUp size={18} /> : <PiCaretDown size={18} />}
+      <span
+        className={`inline-block transition-transform duration-300 ${isExpanded ? 'rotate-180' : ''
+          }`}
+      >
+        <PiCaretDown size={18} />
+      </span>
     </button>
   );
-
   return (
     <div className="border-b border-grey-light last:border-none hover:bg-grey-lighter/30 transition-colors">
       {/* ── Mobile card layout ── */}

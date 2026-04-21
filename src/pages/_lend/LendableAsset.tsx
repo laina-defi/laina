@@ -10,7 +10,6 @@ import { formatAmount, formatCollateralFactor, formatDepositAPY, toDollarsFormat
 import { isNil } from 'ramda';
 import {
   PiCaretDown,
-  PiCaretUp,
   PiCheckCircleFill,
   PiInfo,
   PiLockSimpleFill,
@@ -78,27 +77,31 @@ export const LendableAsset = ({ currency, onDepositClicked }: LendableAssetProps
     </Button>
   );
 
-  const expandedPanel = isExpanded && (
-    <div className="px-4 pb-4 pt-2 grid grid-cols-2 md:grid-cols-4 gap-4 bg-grey-lighter/20 border-t border-grey-light">
-      <div>
-        <p className="text-xs text-grey mb-0.5">Collateral Factor</p>
-        <p className="text-sm font-semibold">
-          {pool ? formatCollateralFactor(pool.collateralFactor) : <Loading size="xs" />}
-        </p>
-      </div>
-      <div>
-        <p className="text-xs text-grey mb-0.5">Interest Rate Multiplier</p>
-        <p className="text-sm font-semibold">
-          {pool ? String(pool.interestRateMultiplier) : <Loading size="xs" />}
-        </p>
-      </div>
-      <div>
-        <p className="text-xs text-grey mb-0.5">Pool Contract</p>
-        <StellarExpertLink contractId={contractId} text="View contract" className="text-sm" />
-      </div>
-      <div>
-        <p className="text-xs text-grey mb-0.5">Token Contract</p>
-        <StellarExpertLink contractId={tokenContractAddress} text="View contract" className="text-sm" />
+  const expandedPanel = (
+    <div
+      className={`overflow-hidden transition-[max-height] duration-300 ease-in-out ${isExpanded ? 'max-h-40' : 'max-h-0'}`}
+    >
+      <div className="px-4 pb-4 pt-2 grid grid-cols-2 md:grid-cols-4 gap-4 bg-grey-lighter/20 border-t border-grey-light">
+        <div>
+          <p className="text-xs text-grey mb-0.5">Collateral Factor</p>
+          <p className="text-sm font-semibold">
+            {pool ? formatCollateralFactor(pool.collateralFactor) : <Loading size="xs" />}
+          </p>
+        </div>
+        <div>
+          <p className="text-xs text-grey mb-0.5">Interest Rate Multiplier</p>
+          <p className="text-sm font-semibold">
+            {pool ? String(pool.interestRateMultiplier) : <Loading size="xs" />}
+          </p>
+        </div>
+        <div>
+          <p className="text-xs text-grey mb-0.5">Pool Contract</p>
+          <StellarExpertLink contractId={contractId} text="View contract" className="text-sm" />
+        </div>
+        <div>
+          <p className="text-xs text-grey mb-0.5">Token Contract</p>
+          <StellarExpertLink contractId={tokenContractAddress} text="View contract" className="text-sm" />
+        </div>
       </div>
     </div>
   );
@@ -107,10 +110,12 @@ export const LendableAsset = ({ currency, onDepositClicked }: LendableAssetProps
     <button
       type="button"
       onClick={() => setIsExpanded((v) => !v)}
-      className="p-1 rounded hover:bg-grey-lighter/50 transition-colors text-grey"
+      className="p-1 rounded flex items-center justify-center hover:bg-grey-lighter/50 transition-colors text-grey"
       aria-label={isExpanded ? 'Collapse details' : 'Expand details'}
     >
-      {isExpanded ? <PiCaretUp size={18} /> : <PiCaretDown size={18} />}
+      <span className={`inline-block transition-transform duration-300 ${isExpanded ? 'rotate-180' : ''}`}>
+        <PiCaretDown size={18} />
+      </span>
     </button>
   );
 
