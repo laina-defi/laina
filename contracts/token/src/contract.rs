@@ -30,6 +30,7 @@ pub struct SetAdmin {
     new_admin: Address,
 }
 
+#[allow(dead_code)]
 #[contractimpl]
 impl Token {
     pub fn __constructor(e: Env, admin: Address, decimal: u32, name: String, symbol: String) {
