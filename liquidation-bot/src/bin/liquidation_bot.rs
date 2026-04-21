@@ -308,11 +308,13 @@ async fn fetch_prices(
         #[cfg(not(feature = "local"))]
         let network = Networks::testnet();
 
-        let mut builder = TransactionBuilder::new(source_account.clone(), network, None);
-        builder.fee(1000u32);
-        builder.add_operation(fetch_prices_op);
-
-        let mut tx = builder.build();
+        let mut tx = {
+            let mut account_ref = source_account.borrow_mut();
+            let mut builder = TransactionBuilder::new(&mut account_ref, network, None);
+            builder.fee(1000u32);
+            builder.add_operation(fetch_prices_op);
+            builder.build()
+        };
         tx.sign(std::slice::from_ref(&config.source_keypair));
 
         // Simulate transaction and handle response
@@ -495,11 +497,13 @@ async fn attempt_liquidating(loan: Loan, server: &Server) -> Result<(), Error> {
         .map_err(|e| anyhow::anyhow!("Account::new failed: {}", e))?,
     ));
 
-    let mut builder = TransactionBuilder::new(source_account.clone(), network, None);
-    builder.fee(10000_u32);
-    builder.add_operation(read_loan_op);
-
-    let mut tx = builder.build();
+    let mut tx = {
+        let mut account_ref = source_account.borrow_mut();
+        let mut builder = TransactionBuilder::new(&mut account_ref, network, None);
+        builder.fee(10000_u32);
+        builder.add_operation(read_loan_op);
+        builder.build()
+    };
 
     // Prepare transaction (includes simulation)
     tx = match server.prepare_transaction(&tx).await {

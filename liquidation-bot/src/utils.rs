@@ -342,15 +342,16 @@ mod tests {
 
     #[test]
     fn extract_map_success() {
-        let mut entries = Vec::new();
-        entries.push(ScMapEntry {
-            key: ScVal::Symbol(ScSymbol(StringM::from_str("borrower").unwrap())),
-            val: ScVal::U32(1000),
-        });
-        entries.push(ScMapEntry {
-            key: ScVal::Symbol(ScSymbol(StringM::from_str("amount").unwrap())),
-            val: ScVal::U32(5000),
-        });
+        let entries = vec![
+            ScMapEntry {
+                key: ScVal::Symbol(ScSymbol(StringM::from_str("borrower").unwrap())),
+                val: ScVal::U32(1000),
+            },
+            ScMapEntry {
+                key: ScVal::Symbol(ScSymbol(StringM::from_str("amount").unwrap())),
+                val: ScVal::U32(5000),
+            },
+        ];
 
         let scmap = ScMap(entries.try_into().unwrap());
         let scval = ScVal::Map(Some(scmap));
@@ -487,18 +488,19 @@ mod tests {
     #[test]
     fn parse_loan_from_rpc_event_success() {
         // Create loan_id map
-        let mut loan_id_entries = Vec::new();
-        loan_id_entries.push(ScMapEntry {
-            key: ScVal::Symbol(ScSymbol(StringM::from_str("borrower_address").unwrap())),
-            val: ScVal::Address(
-                ScAddress::from_str("CCDF2NOJXOW73SXXB6BZRAPGVNJU7VMUURXCVLRHCHHAXHOY2TVRLFFP")
-                    .unwrap(),
-            ),
-        });
-        loan_id_entries.push(ScMapEntry {
-            key: ScVal::Symbol(ScSymbol(StringM::from_str("nonce").unwrap())),
-            val: ScVal::U64(3),
-        });
+        let loan_id_entries = vec![
+            ScMapEntry {
+                key: ScVal::Symbol(ScSymbol(StringM::from_str("borrower_address").unwrap())),
+                val: ScVal::Address(
+                    ScAddress::from_str("CCDF2NOJXOW73SXXB6BZRAPGVNJU7VMUURXCVLRHCHHAXHOY2TVRLFFP")
+                        .unwrap(),
+                ),
+            },
+            ScMapEntry {
+                key: ScVal::Symbol(ScSymbol(StringM::from_str("nonce").unwrap())),
+                val: ScVal::U64(3),
+            },
+        ];
         let loan_id_map = ScMap(loan_id_entries.try_into().unwrap());
 
         // Create loan map

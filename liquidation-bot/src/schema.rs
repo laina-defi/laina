@@ -20,4 +20,7 @@ diesel::table! {
     }
 }
 
-diesel::allow_tables_to_appear_in_same_query!(loans, prices,);
+diesel::allow_tables_to_appear_in_same_query!(
+    loans,
+    prices,
+);
