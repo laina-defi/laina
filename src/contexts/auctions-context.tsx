@@ -98,14 +98,10 @@ export const AuctionsProvider = ({ children }: PropsWithChildren) => {
         }
       };
 
-      console.debug('[auctions] rpcUrl:', rpcUrl, '| contractId:', loanManagerContractId, '| latestLedger:', latestLedger);
-      console.debug('[auctions] total contract events:', allEvents.length, allEvents.map(getEventName));
-
       const createdAuctions = allEvents
         .filter((e) => getEventName(e) === 'bad_debt_auction_created')
         .map(parseAuction)
         .filter(Boolean) as AuctionItem[];
-      console.debug('[auctions] parsed created:', createdAuctions.length, createdAuctions);
 
       const deletedKeys = new Set(
         allEvents
@@ -116,22 +112,16 @@ export const AuctionsProvider = ({ children }: PropsWithChildren) => {
       );
 
       const liveAuctions = createdAuctions.filter((a) => !deletedKeys.has(auctionKey(a.loan_id)));
-      console.debug('[auctions] live auctions:', liveAuctions.length, liveAuctions);
 
       const currentPools = poolsRef.current;
-      console.debug('[auctions] pools available:', !!currentPools, currentPools ? Object.keys(currentPools) : []);
 
       const enriched = await Promise.all(
         liveAuctions.map(async (auctionItem): Promise<AuctionWithDetails | null> => {
           try {
             const { result } = await loanManagerClient.get_loan({ loan_id: auctionItem.loan_id });
-            console.debug('[auctions] get_loan result ok:', result.isOk(), auctionItem.loan_id);
             if (!result.isOk()) return null;
 
             const loan = result.unwrap();
-            console.debug('[auctions] loan:', loan);
-            console.debug('[auctions] isPoolAddress borrowed_from:', loan.borrowed_from, isPoolAddress(loan.borrowed_from));
-            console.debug('[auctions] isPoolAddress collateral_from:', loan.collateral_from, isPoolAddress(loan.collateral_from));
 
             if (!isPoolAddress(loan.borrowed_from) || !isPoolAddress(loan.collateral_from)) return null;
 
@@ -159,16 +149,13 @@ export const AuctionsProvider = ({ children }: PropsWithChildren) => {
               borrowerAddress: auctionItem.loan_id.borrower_address,
             };
           } catch (err) {
-            console.debug('[auctions] enrichment error for', auctionItem.loan_id, err);
             return null;
           }
         }),
       );
 
-      console.debug('[auctions] enriched:', enriched.length, 'non-null:', enriched.filter(Boolean).length);
       setAuctions(enriched.filter(Boolean) as AuctionWithDetails[]);
     } catch (err) {
-      console.error('Error fetching auctions:', err);
       setError('Failed to load auctions. Please try again.');
     } finally {
       setIsLoading(false);

@@ -8,7 +8,7 @@ import { usePools } from '@contexts/pool-context';
 import { useWallet } from '@contexts/wallet-context';
 import { stroopsToDecimalString } from '@lib/converters';
 import { formatAmount, formatCentAmount, toCents, toDollarsFormatted } from '@lib/formatting';
-import { PiArrowSquareOut, PiCaretDown } from 'react-icons/pi';
+import { PiArrowSquareOut, PiCaretDown, PiWarningCircleFill } from 'react-icons/pi';
 
 export interface AuctionCardProps {
   auction: AuctionWithDetails;
@@ -42,6 +42,8 @@ export const AuctionCard = ({ auction, currentLedger, onClaimClicked }: AuctionC
 
   const paymentUsd = borrowedPrice ? toCents(borrowedPrice, paymentNeeded) : null;
   const collateralUsd = collateralPrice ? toCents(collateralPrice, collateralAmount) : null;
+  const totalDebtUsd = borrowedPrice ? toCents(borrowedPrice, totalDebt) : null;
+  const isLikelyHealthyAgain = totalDebtUsd !== null && collateralUsd !== null && collateralUsd > totalDebtUsd;
 
   const plUsd = paymentUsd !== null && collateralUsd !== null ? collateralUsd - paymentUsd : null;
   const plPct =
@@ -151,6 +153,11 @@ export const AuctionCard = ({ auction, currentLedger, onClaimClicked }: AuctionC
           </div>
           <div className="flex items-center gap-2">
             {isExpired && <span className="badge badge-success badge-sm">Expired — free!</span>}
+            {!isExpired && isLikelyHealthyAgain && (
+              <span className="tooltip tooltip-left cursor-help text-warning" data-tip="Possibly recovered">
+                <PiWarningCircleFill size={20} />
+              </span>
+            )}
             {chevron}
           </div>
         </div>
@@ -194,16 +201,27 @@ export const AuctionCard = ({ auction, currentLedger, onClaimClicked }: AuctionC
         <div className="flex items-center gap-2">
           <Identicon address={borrowerAddress} size="sm" />
           <div>
-            <a
-              href={borrowerExplorerUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="font-mono text-sm underline inline-flex flex-row items-center gap-0.5 hover:text-grey transition cursor-pointer"
-            >
-              {shortBorrower}
-              <PiArrowSquareOut size={13} />
-            </a>
-            {isExpired && <div className="mt-1"><span className="badge badge-success badge-sm">Expired — free!</span></div>}
+            <div className="inline-flex items-center gap-1.5">
+              <a
+                href={borrowerExplorerUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="font-mono text-sm underline inline-flex flex-row items-center gap-0.5 hover:text-grey transition cursor-pointer"
+              >
+                {shortBorrower}
+                <PiArrowSquareOut size={13} />
+              </a>
+              {!isExpired && isLikelyHealthyAgain && (
+                <span className="tooltip tooltip-right cursor-help text-warning" data-tip="Possibly recovered">
+                  <PiWarningCircleFill size={18} />
+                </span>
+              )}
+            </div>
+            {isExpired && (
+              <div className="mt-1">
+                <span className="badge badge-success badge-sm">Expired — free!</span>
+              </div>
+            )}
           </div>
         </div>
 
