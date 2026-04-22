@@ -19,4 +19,6 @@ pub enum LoanManagerError {
     NotBadDebt = 13,
     InsufficientInsuranceCoverage = 14,
     BadDebtAuction = 15,
+    AuctionHasHealthyDebt = 16,
+    BadDebtClaimAmountTooLow = 17,
 }

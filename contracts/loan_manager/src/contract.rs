@@ -793,6 +793,22 @@ impl LoanManager {
         } = Self::add_interest(&e, loan_id)?;
 
         let auction = storage::read_bad_debt_auction(&e, loan_id.clone())?;
+        let borrow_pool_client = loan_pool::Client::new(&e, &borrowed_from);
+        let collateral_pool_client = loan_pool::Client::new(&e, &collateral_from);
+
+        let health_factor = Self::calculate_health_factor(
+            &e,
+            borrow_pool_client.get_currency().ticker,
+            borrowed_amount,
+            collateral_pool_client.get_currency().ticker,
+            collateral_pool_client.shares_to_tokens(&collateral_shares),
+            collateral_from,
+        )?;
+
+        if health_factor > collateral_pool_client.get_collateral_factor() {
+            storage::delete_bad_debt_auction(&e, auction);
+            return Err(LoanManagerError::AuctionHasHealthyDebt);
+        }
 
         const DECIMAL: i128 = 10_000_000;
         const AUCTION_DURATION: u32 = 17280; // roughly 24h in ledgers.
@@ -809,10 +825,8 @@ impl LoanManager {
         let amount_to_pay = borrowed_amount - time_based_reduction;
 
         if amount_to_pay > amount {
-            return Err(LoanManagerError::BadDebtAuction);
+            return Err(LoanManagerError::BadDebtClaimAmountTooLow);
         }
-
-        let borrow_pool_client = loan_pool::Client::new(&e, &borrowed_from);
 
         borrow_pool_client.claim_bad_debt_payment(
             &user,
@@ -821,8 +835,6 @@ impl LoanManager {
             &amount,
             &loan_id.borrower_address,
         );
-
-        let collateral_pool_client = loan_pool::Client::new(&e, &collateral_from);
 
         let collateral_tokens = collateral_pool_client.shares_to_tokens(&collateral_shares);
 

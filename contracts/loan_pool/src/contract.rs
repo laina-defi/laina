@@ -251,6 +251,7 @@ impl LoanPoolContract {
         storage::adjust_total_balance(&e, amount)?;
         storage::adjust_total_shares(&e, shares_issued)?;
 
+        Self::check_and_update_status(&e);
         Ok(shares_issued)
     }
 
@@ -731,6 +732,7 @@ impl LoanPoolContract {
 
         let net_interest = unpaid_interest - amount_to_admin;
         Self::boost_insurance_pool(&e, net_interest)?;
+        Self::check_and_update_status(&e);
         Ok(())
     }
 
