@@ -1,6 +1,8 @@
 use crate::error::LoanManagerError;
 use crate::oracle::{self, Asset};
-use crate::storage::{self, LaiConfig, LaiPoolState, LaiUserState, Loan, LoanId, NewLoan};
+use crate::storage::{
+    self, AuctionItem, LaiConfig, LaiPoolState, LaiUserState, Loan, LoanId, NewLoan,
+};
 use crate::storage::{LAI_BORROWER_BPS, LAI_INSURER_BPS, LAI_PRECISION, LAI_TOTAL_LEDGERS};
 
 use soroban_sdk::{contract, contractimpl, token, Address, BytesN, Env, Symbol, Vec};
@@ -732,19 +734,111 @@ impl LoanManager {
         Ok(())
     }
 
-    /// Write off bad debt for a loan: calls the loan pool to burn insurance coverage,
-    /// adjusts pool accounting, and deletes the loan record.
-    /// Admin only.
-    pub fn handle_bad_debt(e: Env, loan_id: LoanId) -> Result<(), LoanManagerError> {
-        let admin = storage::read_admin(&e)?;
-        admin.require_auth();
-
+    pub fn create_bad_debt_auction(
+        e: Env,
+        loan_id: LoanId,
+    ) -> Result<AuctionItem, LoanManagerError> {
         let loan = storage::read_loan(&e, &loan_id).ok_or(LoanManagerError::LoanNotFound)?;
 
+        let collateral_pool_client = loan_pool::Client::new(&e, &loan.collateral_from);
         let borrow_pool_client = loan_pool::Client::new(&e, &loan.borrowed_from);
-        borrow_pool_client.write_off_bad_debt(&loan.borrowed_amount);
+
+        let collateral_amount = collateral_pool_client.shares_to_tokens(&loan.collateral_shares);
+
+        let health_factor = Self::calculate_health_factor(
+            &e,
+            borrow_pool_client.get_currency().ticker,
+            loan.borrowed_amount,
+            collateral_pool_client.get_currency().ticker,
+            collateral_amount,
+            loan.collateral_from.clone(),
+        )?;
+
+        if health_factor >= collateral_pool_client.get_collateral_factor() {
+            return Err(LoanManagerError::NotBadDebt);
+        }
+
+        const AUCTION_DURATION: u32 = 17280; // roughly 24h in ledgers.
+
+        let start_ledger = e.ledger().sequence();
+        let end_ledger = start_ledger + AUCTION_DURATION;
+
+        let auction = AuctionItem {
+            loan_id,
+            start_ledger,
+            end_ledger,
+        };
+
+        storage::write_bad_debt_auction(&e, auction.clone());
+
+        Ok(auction)
+    }
+
+    pub fn claim_bad_debt_auction(
+        e: Env,
+        user: Address,
+        loan_id: LoanId,
+        amount: i128,
+    ) -> Result<(), LoanManagerError> {
+        user.require_auth();
+
+        let Loan {
+            loan_id,
+            borrowed_amount,
+            borrowed_from,
+            collateral_from,
+            collateral_shares,
+            unpaid_interest,
+            ..
+        } = Self::add_interest(&e, loan_id)?;
+
+        let auction = storage::read_bad_debt_auction(&e, loan_id.clone())?;
+
+        const DECIMAL: i128 = 10_000_000;
+        const AUCTION_DURATION: u32 = 17280; // roughly 24h in ledgers.
+
+        let ledgers_since_start = e.ledger().sequence() - auction.start_ledger;
+        // linear function f(x) = (1-(x/AUCTION_DURATION)) * borrowed_amount.
+        // Therefore, f(0) = borrowed_amount, f(AUCTION_DURATION) = 0.
+        let time_based_reduction = (ledgers_since_start as i128)
+            .checked_mul(borrowed_amount)
+            .ok_or(LoanManagerError::OverOrUnderFlow)?
+            .checked_div(AUCTION_DURATION as i128)
+            .ok_or(LoanManagerError::OverOrUnderFlow)?;
+
+        let amount_to_pay = borrowed_amount - time_based_reduction;
+
+        if amount_to_pay > amount {
+            return Err(LoanManagerError::BadDebtAuction);
+        }
+
+        let borrow_pool_client = loan_pool::Client::new(&e, &borrowed_from);
+
+        borrow_pool_client.claim_bad_debt_payment(
+            &user,
+            &amount_to_pay,
+            &unpaid_interest,
+            &amount,
+            &loan_id.borrower_address,
+        );
+
+        let collateral_pool_client = loan_pool::Client::new(&e, &collateral_from);
+
+        let collateral_tokens = collateral_pool_client.shares_to_tokens(&collateral_shares);
+
+        collateral_pool_client.liquidate_transfer_collateral(
+            &user,
+            &collateral_tokens,
+            &loan_id.borrower_address,
+        );
+
+        // If there is bad debt left without collateral, pay it from the insurance pools
+        if time_based_reduction > 0 {
+            borrow_pool_client.write_off_bad_debt(&loan_id.borrower_address, &time_based_reduction);
+        }
 
         storage::delete_loan(&e, &loan_id);
+        storage::delete_bad_debt_auction(&e, auction);
 
         Ok(())
     }
@@ -1392,7 +1486,7 @@ mod tests {
         let pool_state = PoolState {
             annual_interest_rate: 200887,
             available_balance_tokens: 2000,
-            total_liabilities_tokens: 0,
+            total_liabilities_tokens: 4,
             total_balance_shares: 1998,
             total_balance_tokens: 2002,
             pool_status: PoolStatus::Healthy,
@@ -2054,6 +2148,284 @@ mod tests {
             pool_eurc_addr,
             pool_eurc_client,
         }
+    }
+
+    mod mock_insurance_pool_bad_debt {
+        use soroban_sdk::{contract, contractimpl, contracttype, Env};
+
+        #[contracttype]
+        pub struct InsurancePoolState {
+            pub total_tokens: i128,
+            pub total_shares: i128,
+        }
+
+        #[contract]
+        pub struct MockInsurancePoolBadDebt;
+
+        #[contractimpl]
+        impl MockInsurancePoolBadDebt {
+            pub fn get_pool_state(_e: Env) -> InsurancePoolState {
+                InsurancePoolState {
+                    total_tokens: 1_000_000_000,
+                    total_shares: 0,
+                }
+            }
+
+            pub fn cover_bad_debt(_e: Env, _ltoken_amount: i128) {}
+        }
+    }
+
+    #[test]
+    fn create_bad_debt_auction() {
+        let e = Env::default();
+        e.mock_all_auths();
+
+        let TestEnv {
+            user,
+            manager_client,
+            pool_usdc_addr,
+            pool_xlm_addr,
+            xlm_asset_client,
+            reflector_addr,
+            ..
+        } = setup_test_env(&e);
+
+        // User needs extra XLM for 190 collateral (setup gives 1_000 already)
+        xlm_asset_client.mint(&user, &1_000);
+
+        // Register mock insurance pool and wire it to the USDC borrow pool
+        let mock_ins_pool_addr =
+            e.register(mock_insurance_pool_bad_debt::MockInsurancePoolBadDebt, ());
+        manager_client.set_insurance_pool(&pool_usdc_addr, &mock_ins_pool_addr);
+
+        // Borrow 100 USDC with 190 XLM collateral at default oracle prices (all = 1)
+        // HF = (1 * 190 * 8_000_000 / 10_000_000) * 10_000_000 / (1 * 100) = 15_200_000
+        let loan = manager_client.create_loan(&user, &100, &pool_usdc_addr, &190, &pool_xlm_addr);
+
+        // Drive USDC price to 2 → HF drops below collateral_factor (8_000_000)
+        // HF = (1 * 190 * 8_000_000 / 10_000_000) * 10_000_000 / (2 * 100) = 7_600_000
+        let oracle_client = oracle::Client::new(&e, &reflector_addr);
+        oracle_client.update_price(
+            &oracle::Asset::Other(Symbol::new(&e, "USDC")),
+            &oracle::PriceData {
+                price: 2,
+                timestamp: 1,
+            },
+        );
+
+        let auction = manager_client.create_bad_debt_auction(&loan.loan_id);
+
+        let auction_should_be = AuctionItem {
+            loan_id: loan.loan_id,
+            start_ledger: e.ledger().sequence(),
+            end_ledger: e.ledger().sequence() + 17280,
+        };
+
+        assert_eq!(auction, auction_should_be);
+    }
+
+    #[test]
+    fn create_bad_debt_auction_rejected_if_not_bad_debt() {
+        let e = Env::default();
+        e.mock_all_auths();
+
+        let TestEnv {
+            user,
+            manager_client,
+            pool_usdc_addr,
+            pool_xlm_addr,
+            xlm_asset_client,
+            ..
+        } = setup_test_env(&e);
+
+        xlm_asset_client.mint(&user, &1_000);
+
+        // Borrow 100 USDC with 190 XLM collateral → HF = 15_200_000 > 8_000_000 (not bad debt)
+        let loan = manager_client.create_loan(&user, &100, &pool_usdc_addr, &190, &pool_xlm_addr);
+
+        assert!(manager_client
+            .try_create_bad_debt_auction(&loan.loan_id)
+            .is_err());
+    }
+
+    #[test]
+    fn claim_bad_debt_auction_after_0_ledgers() {
+        let e = Env::default();
+        e.mock_all_auths();
+
+        let TestEnv {
+            user,
+            manager_client,
+            pool_usdc_addr,
+            pool_xlm_addr,
+            xlm_asset_client,
+            usdc_asset_client,
+            reflector_addr,
+            admin,
+            ..
+        } = setup_test_env(&e);
+
+        // User needs extra XLM for 190 collateral (setup gives 1_000 already)
+        xlm_asset_client.mint(&user, &1_000);
+
+        // Register mock insurance pool and wire it to the USDC borrow pool
+        let mock_ins_pool_addr =
+            e.register(mock_insurance_pool_bad_debt::MockInsurancePoolBadDebt, ());
+        manager_client.set_insurance_pool(&pool_usdc_addr, &mock_ins_pool_addr);
+
+        // Borrow 100 USDC with 190 XLM collateral at default oracle prices (all = 1)
+        // HF = (1 * 190 * 8_000_000 / 10_000_000) * 10_000_000 / (1 * 100) = 15_200_000
+        let loan = manager_client.create_loan(&user, &100, &pool_usdc_addr, &190, &pool_xlm_addr);
+
+        // Drive USDC price to 2 → HF drops below collateral_factor (8_000_000)
+        // HF = (1 * 190 * 8_000_000 / 10_000_000) * 10_000_000 / (2 * 100) = 7_600_000
+        let oracle_client = oracle::Client::new(&e, &reflector_addr);
+        oracle_client.update_price(
+            &oracle::Asset::Other(Symbol::new(&e, "USDC")),
+            &oracle::PriceData {
+                price: 2,
+                timestamp: 1,
+            },
+        );
+
+        manager_client.create_bad_debt_auction(&loan.loan_id);
+
+        manager_client.claim_bad_debt_auction(&admin, &loan.loan_id, &loan.borrowed_amount);
+
+        // admin should pay the whole debt and get all collateral as there is 0 ledgers since start
+        // of auction.
+
+        assert_eq!(usdc_asset_client.balance(&admin), 998_900); // admin has 999000 USDC before they pay
+                                                                // 100 USDC for the bad auction
+        assert_eq!(xlm_asset_client.balance(&admin), 190); // admin has 0 XLM before they get
+                                                           // the collateral of 190 XLM
+        assert!(manager_client.try_get_loan(&loan.loan_id).is_err());
+    }
+
+    #[test]
+    fn claim_bad_debt_auction_after_8640_ledgers() {
+        let e = Env::default();
+        e.mock_all_auths();
+        e.ledger().with_mut(|li| {
+            li.sequence_number = 100_000;
+            li.timestamp = 1;
+            li.min_persistent_entry_ttl = 10_000_000;
+            li.min_temp_entry_ttl = 1_000_000;
+            li.max_entry_ttl = 10_000_001;
+        });
+
+        let TestEnv {
+            user,
+            manager_client,
+            pool_usdc_addr,
+            pool_xlm_addr,
+            xlm_asset_client,
+            usdc_asset_client,
+            reflector_addr,
+            admin,
+            ..
+        } = setup_test_env(&e);
+
+        // User needs extra XLM for 190 collateral (setup gives 1_000 already)
+        xlm_asset_client.mint(&user, &1_000);
+
+        // Register mock insurance pool and wire it to the USDC borrow pool
+        let mock_ins_pool_addr =
+            e.register(mock_insurance_pool_bad_debt::MockInsurancePoolBadDebt, ());
+        manager_client.set_insurance_pool(&pool_usdc_addr, &mock_ins_pool_addr);
+
+        // Borrow 100 USDC with 190 XLM collateral at default oracle prices (all = 1)
+        // HF = (1 * 190 * 8_000_000 / 10_000_000) * 10_000_000 / (1 * 100) = 15_200_000
+        let loan = manager_client.create_loan(&user, &100, &pool_usdc_addr, &190, &pool_xlm_addr);
+
+        // Drive USDC price to 2 → HF drops below collateral_factor (8_000_000)
+        // HF = (1 * 190 * 8_000_000 / 10_000_000) * 10_000_000 / (2 * 100) = 7_600_000
+        let oracle_client = oracle::Client::new(&e, &reflector_addr);
+        oracle_client.update_price(
+            &oracle::Asset::Other(Symbol::new(&e, "USDC")),
+            &oracle::PriceData {
+                price: 2,
+                timestamp: 1,
+            },
+        );
+
+        manager_client.create_bad_debt_auction(&loan.loan_id);
+
+        // Advance 8640 ledgers so there should be need to pay only 50% of the borrowed_amount
+        e.ledger().with_mut(|li| {
+            li.sequence_number = 100_000 + 8640;
+        });
+
+        manager_client.claim_bad_debt_auction(&admin, &loan.loan_id, &loan.borrowed_amount);
+
+        assert_eq!(usdc_asset_client.balance(&admin), 998_950); // admin has 999000 USDC before they pay
+                                                                // 50 USDC for the bad auction
+        assert_eq!(xlm_asset_client.balance(&admin), 190); // admin has 0 XLM before they get
+                                                           // the collateral of 190 XLM
+        assert!(manager_client.try_get_loan(&loan.loan_id).is_err());
+    }
+
+    #[test]
+    fn claim_bad_debt_auction_after_17280_ledgers() {
+        let e = Env::default();
+        e.mock_all_auths();
+        e.ledger().with_mut(|li| {
+            li.sequence_number = 100_000;
+            li.timestamp = 1;
+            li.min_persistent_entry_ttl = 10_000_000;
+            li.min_temp_entry_ttl = 1_000_000;
+            li.max_entry_ttl = 10_000_001;
+        });
+
+        let TestEnv {
+            user,
+            manager_client,
+            pool_usdc_addr,
+            pool_xlm_addr,
+            xlm_asset_client,
+            usdc_asset_client,
+            reflector_addr,
+            admin,
+            ..
+        } = setup_test_env(&e);
+
+        // User needs extra XLM for 190 collateral (setup gives 1_000 already)
+        xlm_asset_client.mint(&user, &1_000);
+
+        // Register mock insurance pool and wire it to the USDC borrow pool
+        let mock_ins_pool_addr =
+            e.register(mock_insurance_pool_bad_debt::MockInsurancePoolBadDebt, ());
+        manager_client.set_insurance_pool(&pool_usdc_addr, &mock_ins_pool_addr);
+
+        // Borrow 100 USDC with 190 XLM collateral at default oracle prices (all = 1)
+        // HF = (1 * 190 * 8_000_000 / 10_000_000) * 10_000_000 / (1 * 100) = 15_200_000
+        let loan = manager_client.create_loan(&user, &100, &pool_usdc_addr, &190, &pool_xlm_addr);
+
+        // Drive USDC price to 2 → HF drops below collateral_factor (8_000_000)
+        // HF = (1 * 190 * 8_000_000 / 10_000_000) * 10_000_000 / (2 * 100) = 7_600_000
+        let oracle_client = oracle::Client::new(&e, &reflector_addr);
+        oracle_client.update_price(
+            &oracle::Asset::Other(Symbol::new(&e, "USDC")),
+            &oracle::PriceData {
+                price: 2,
+                timestamp: 1,
+            },
+        );
+
+        manager_client.create_bad_debt_auction(&loan.loan_id);
+
+        // Advance 17280 ledgers so there should be need to pay only 50% of the borrowed_amount
+        e.ledger().with_mut(|li| {
+            li.sequence_number = 100_000 + 17280;
+        });
+
+        manager_client.claim_bad_debt_auction(&admin, &loan.loan_id, &loan.borrowed_amount);
+
+        assert_eq!(usdc_asset_client.balance(&admin), 999_000); // admin has 999000 USDC before they pay
+                                                                // 0 USDC for the bad auction
+        assert_eq!(xlm_asset_client.balance(&admin), 190); // admin has 0 XLM before they get
+                                                           // the collateral of 190 XLM
+        assert!(manager_client.try_get_loan(&loan.loan_id).is_err());
     }
 
     fn setup_test_pool(

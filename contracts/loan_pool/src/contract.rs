@@ -365,6 +365,10 @@ impl LoanPoolContract {
         storage::read_collateral_factor(e)
     }
 
+    pub fn get_interest_rate_multiplier(e: &Env) -> Result<i128, LoanPoolError> {
+        storage::read_interest_rate_multiplier(e)
+    }
+
     /// Get user's positions. receivable_shares is sourced from the share token (single source of truth).
     pub fn get_user_positions(e: Env, user: Address) -> Positions {
         let stored = storage::read_stored_positions(&e, &user);
@@ -596,6 +600,7 @@ impl LoanPoolContract {
     ) -> Result<(), LoanPoolError> {
         let loan_manager_addr = storage::read_loan_manager_addr(&e)?;
         loan_manager_addr.require_auth();
+        user.require_auth();
 
         let pool_status = storage::read_pool_status(&e)?;
         if pool_status == PoolStatus::Frozen {
@@ -676,6 +681,59 @@ impl LoanPoolContract {
         Ok(shares_to_remove)
     }
 
+    pub fn claim_bad_debt_payment(
+        e: Env,
+        user: Address,
+        claim_amount: i128,
+        unpaid_interest: i128,
+        max_allowed_amount: i128,
+        loan_owner: Address,
+    ) -> Result<(), LoanPoolError> {
+        let loan_manager_addr = storage::read_loan_manager_addr(&e)?;
+        loan_manager_addr.require_auth();
+
+        let pool_status = storage::read_pool_status(&e)?;
+        if pool_status == PoolStatus::Frozen {
+            return Err(LoanPoolError::WrongStatus);
+        }
+
+        Self::add_interest_to_accrual(e.clone())?;
+
+        let amount_to_admin = if claim_amount < unpaid_interest {
+            claim_amount / 10
+        } else {
+            unpaid_interest / 10
+        };
+
+        let amount_to_user = max_allowed_amount
+            .checked_sub(claim_amount)
+            .ok_or(LoanPoolError::OverOrUnderFlow)?;
+
+        let client = token::Client::new(&e, &storage::read_currency(&e)?.token_address);
+        client.transfer(&user, e.current_contract_address(), &max_allowed_amount);
+        client.transfer(
+            &e.current_contract_address(),
+            &loan_manager_addr,
+            &amount_to_admin,
+        );
+        client.transfer(&e.current_contract_address(), &user, &amount_to_user);
+
+        let loan_owner_liabilities = storage::read_stored_positions(&e, &loan_owner).liabilities;
+        positions::decrease_positions(&e, loan_owner, loan_owner_liabilities, 0)?;
+        storage::adjust_total_liabilities(
+            &e,
+            loan_owner_liabilities
+                .checked_neg()
+                .ok_or(LoanPoolError::OverOrUnderFlow)?,
+        )?;
+        storage::adjust_available_balance(&e, claim_amount - amount_to_admin)?;
+        storage::adjust_total_balance(&e, unpaid_interest - amount_to_admin)?;
+
+        let net_interest = unpaid_interest - amount_to_admin;
+        Self::boost_insurance_pool(&e, net_interest)?;
+        Ok(())
+    }
+
     /// Set the insurance pool address. Only callable by the loan manager.
     pub fn set_insurance_pool(e: Env, insurance_pool_addr: Address) -> Result<(), LoanPoolError> {
         let loan_manager_addr = storage::read_loan_manager_addr(&e)?;
@@ -734,7 +792,11 @@ impl LoanPoolContract {
     /// Write off bad debt by burning equivalent lXLM from the insurance pool.
     /// This preserves the token-to-share ratio for regular depositors.
     /// Only callable by the loan manager.
-    pub fn write_off_bad_debt(e: Env, bad_debt_tokens: i128) -> Result<(), LoanPoolError> {
+    pub fn write_off_bad_debt(
+        e: Env,
+        borrower: Address,
+        bad_debt_tokens: i128,
+    ) -> Result<(), LoanPoolError> {
         let loan_manager_addr = storage::read_loan_manager_addr(&e)?;
         loan_manager_addr.require_auth();
 
@@ -747,15 +809,30 @@ impl LoanPoolContract {
         let total_shares = storage::read_total_shares(&e)?;
         let total_tokens = storage::read_total_balance(&e)?;
 
-        let lxlm_to_burn = bad_debt_tokens
+        let shares_to_burn = bad_debt_tokens
             .checked_mul(total_shares)
             .ok_or(LoanPoolError::OverOrUnderFlow)?
             .checked_div(total_tokens)
             .ok_or(LoanPoolError::OverOrUnderFlow)?;
 
-        let insurance_pool_addr = storage::read_insurance_pool_address(&e)?;
-        let insurance_client = insurance_pool::Client::new(&e, &insurance_pool_addr);
-        insurance_client.cover_bad_debt(&lxlm_to_burn);
+        if shares_to_burn > 0 {
+            let insurance_pool_addr = storage::read_insurance_pool_address(&e)?;
+            let insurance_client = insurance_pool::Client::new(&e, &insurance_pool_addr);
+            insurance_client
+                .try_cover_bad_debt(&shares_to_burn)
+                .map_err(|_| LoanPoolError::InsufficientInsuranceCoverage)?
+                .map_err(|_| LoanPoolError::InsufficientInsuranceCoverage)?;
+        }
+
+        let current_liabilities = storage::read_stored_positions(&e, &borrower).liabilities;
+        let liabilities_to_decrease = bad_debt_tokens.min(current_liabilities);
+        positions::decrease_positions(&e, borrower, liabilities_to_decrease, 0)?;
+        storage::adjust_total_liabilities(
+            &e,
+            liabilities_to_decrease
+                .checked_neg()
+                .ok_or(LoanPoolError::OverOrUnderFlow)?,
+        )?;
 
         storage::adjust_total_balance(
             &e,
@@ -765,7 +842,7 @@ impl LoanPoolContract {
         )?;
         storage::adjust_total_shares(
             &e,
-            lxlm_to_burn
+            shares_to_burn
                 .checked_neg()
                 .ok_or(LoanPoolError::OverOrUnderFlow)?,
         )?;

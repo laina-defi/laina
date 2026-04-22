@@ -16,4 +16,7 @@ pub enum LoanManagerError {
     InvalidLiquidation = 10,
     OracleNotFound = 11,
     InsurancePoolNotSet = 12,
+    NotBadDebt = 13,
+    InsufficientInsuranceCoverage = 14,
+    BadDebtAuction = 15,
 }

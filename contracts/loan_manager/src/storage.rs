@@ -24,6 +24,15 @@ pub enum LoanManagerDataKey {
     LaiBorrowerUserState(Address, Address), // (pool, user) → LaiUserState
     LaiInsurerUserState(Address, Address),  // (ins_pool, user) → LaiUserState
     LaiInsurancePoolForPool(Address),       // loan_pool → insurance_pool
+    BadDebtAuction(LoanId),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+#[contracttype]
+pub struct AuctionItem {
+    pub loan_id: LoanId,
+    pub start_ledger: u32,
+    pub end_ledger: u32,
 }
 
 #[derive(Clone)]
@@ -51,7 +60,7 @@ pub struct LaiUserState {
     pub position: i128, // user's last known position (shares for insurers, liabilities for borrowers)
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq)]
 #[contracttype]
 pub struct LoanId {
     pub borrower_address: Address,
@@ -71,7 +80,7 @@ pub struct NewLoan {
     pub last_accrual: i128,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq)]
 #[contracttype]
 pub struct Loan {
     pub loan_id: LoanId,
@@ -120,6 +129,18 @@ pub struct EventLoanDeleted {
     pub loan_id: LoanId,
 }
 
+#[contractevent(topics = ["bad_debt_auction_created"])]
+pub struct EventAuctionCreated {
+    #[topic]
+    pub auction: AuctionItem,
+}
+
+#[contractevent(topics = ["bad_debt_auction_deleted"])]
+pub struct EventAuctionDeleted {
+    #[topic]
+    pub auction: AuctionItem,
+}
+
 /* Ledger Thresholds */
 pub(crate) const DAY_IN_LEDGERS: u32 = 17280; // if ledger takes 5 seconds
 
@@ -138,6 +159,28 @@ pub fn write_admin(e: &Env, admin: &Address) {
 
 pub fn admin_exists(e: &Env) -> bool {
     e.storage().persistent().has(&LoanManagerDataKey::Admin)
+}
+
+pub fn write_bad_debt_auction(e: &Env, auction: AuctionItem) {
+    e.storage().persistent().set(
+        &LoanManagerDataKey::BadDebtAuction(auction.loan_id.clone()),
+        &auction,
+    );
+    EventAuctionCreated { auction }.publish(e);
+}
+
+pub fn read_bad_debt_auction(e: &Env, loan_id: LoanId) -> Result<AuctionItem, LoanManagerError> {
+    e.storage()
+        .persistent()
+        .get(&LoanManagerDataKey::BadDebtAuction(loan_id))
+        .ok_or(LoanManagerError::BadDebtAuction)
+}
+
+pub fn delete_bad_debt_auction(e: &Env, auction: AuctionItem) {
+    e.storage()
+        .persistent()
+        .remove(&LoanManagerDataKey::BadDebtAuction(auction.loan_id.clone()));
+    EventAuctionDeleted { auction }.publish(e);
 }
 
 pub fn read_admin(e: &Env) -> Result<Address, LoanManagerError> {

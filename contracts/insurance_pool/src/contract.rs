@@ -16,6 +16,7 @@ pub struct InsurancePoolState {
 #[contract]
 pub struct InsurancePool;
 
+#[allow(dead_code)]
 #[contractimpl]
 impl InsurancePool {
     /// Initialize the insurance pool with its paired loan pool, share token, and loan manager.
