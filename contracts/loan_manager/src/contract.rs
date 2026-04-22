@@ -807,52 +807,53 @@ impl LoanManager {
 
         if health_factor > collateral_pool_client.get_collateral_factor() {
             storage::delete_bad_debt_auction(&e, auction);
-            return Err(LoanManagerError::AuctionHasHealthyDebt);
+            Ok(())
+        } else {
+            const DECIMAL: i128 = 10_000_000;
+            const AUCTION_DURATION: u32 = 17280; // roughly 24h in ledgers.
+
+            let ledgers_since_start = e.ledger().sequence() - auction.start_ledger;
+            // linear function f(x) = (1-(x/AUCTION_DURATION)) * borrowed_amount.
+            // Therefore, f(0) = borrowed_amount, f(AUCTION_DURATION) = 0.
+            let time_based_reduction = (ledgers_since_start as i128)
+                .checked_mul(borrowed_amount)
+                .ok_or(LoanManagerError::OverOrUnderFlow)?
+                .checked_div(AUCTION_DURATION as i128)
+                .ok_or(LoanManagerError::OverOrUnderFlow)?;
+
+            let amount_to_pay = borrowed_amount - time_based_reduction;
+
+            if amount_to_pay > amount {
+                return Err(LoanManagerError::BadDebtClaimAmountTooLow);
+            }
+
+            borrow_pool_client.claim_bad_debt_payment(
+                &user,
+                &amount_to_pay,
+                &unpaid_interest,
+                &amount,
+                &loan_id.borrower_address,
+            );
+
+            let collateral_tokens = collateral_pool_client.shares_to_tokens(&collateral_shares);
+
+            collateral_pool_client.liquidate_transfer_collateral(
+                &user,
+                &collateral_tokens,
+                &loan_id.borrower_address,
+            );
+
+            // If there is bad debt left without collateral, pay it from the insurance pools
+            if time_based_reduction > 0 {
+                borrow_pool_client
+                    .write_off_bad_debt(&loan_id.borrower_address, &time_based_reduction);
+            }
+
+            storage::delete_loan(&e, &loan_id);
+            storage::delete_bad_debt_auction(&e, auction);
+
+            Ok(())
         }
-
-        const DECIMAL: i128 = 10_000_000;
-        const AUCTION_DURATION: u32 = 17280; // roughly 24h in ledgers.
-
-        let ledgers_since_start = e.ledger().sequence() - auction.start_ledger;
-        // linear function f(x) = (1-(x/AUCTION_DURATION)) * borrowed_amount.
-        // Therefore, f(0) = borrowed_amount, f(AUCTION_DURATION) = 0.
-        let time_based_reduction = (ledgers_since_start as i128)
-            .checked_mul(borrowed_amount)
-            .ok_or(LoanManagerError::OverOrUnderFlow)?
-            .checked_div(AUCTION_DURATION as i128)
-            .ok_or(LoanManagerError::OverOrUnderFlow)?;
-
-        let amount_to_pay = borrowed_amount - time_based_reduction;
-
-        if amount_to_pay > amount {
-            return Err(LoanManagerError::BadDebtClaimAmountTooLow);
-        }
-
-        borrow_pool_client.claim_bad_debt_payment(
-            &user,
-            &amount_to_pay,
-            &unpaid_interest,
-            &amount,
-            &loan_id.borrower_address,
-        );
-
-        let collateral_tokens = collateral_pool_client.shares_to_tokens(&collateral_shares);
-
-        collateral_pool_client.liquidate_transfer_collateral(
-            &user,
-            &collateral_tokens,
-            &loan_id.borrower_address,
-        );
-
-        // If there is bad debt left without collateral, pay it from the insurance pools
-        if time_based_reduction > 0 {
-            borrow_pool_client.write_off_bad_debt(&loan_id.borrower_address, &time_based_reduction);
-        }
-
-        storage::delete_loan(&e, &loan_id);
-        storage::delete_bad_debt_auction(&e, auction);
-
-        Ok(())
     }
 
     /// Initialize the LAI liquidity-mining distribution.

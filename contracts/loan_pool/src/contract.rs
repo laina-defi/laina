@@ -849,6 +849,7 @@ impl LoanPoolContract {
                 .ok_or(LoanPoolError::OverOrUnderFlow)?,
         )?;
 
+        Self::check_and_update_status(&e);
         Ok(())
     }
 }
