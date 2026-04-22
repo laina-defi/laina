@@ -4,7 +4,7 @@ import { config } from 'dotenv';
 config();
 import { mkdirSync } from 'fs';
 import crypto from 'crypto';
-import { CURRENCIES } from '../currencies';
+import { CURRENCIES_BY_TICKER } from '../currencies';
 import {
   loadAccount,
   fundAccount,
@@ -107,7 +107,7 @@ const deployLoanPools = () => {
 
   const pools = [
     {
-      tokenContractAddress: CURRENCIES[0].tokenContractAddress,
+      tokenContractAddress: CURRENCIES_BY_TICKER.XLM.tokenContractAddress,
       ticker: 'XLM',
       loanPoolName: 'pool_xlm',
       shareTokenName: 'Laina XLM',
@@ -116,7 +116,7 @@ const deployLoanPools = () => {
       insurancePoolFile: 'insurance_pool_xlm',
     },
     {
-      tokenContractAddress: CURRENCIES[1].tokenContractAddress,
+      tokenContractAddress: CURRENCIES_BY_TICKER.USDC.tokenContractAddress,
       ticker: 'USDC',
       loanPoolName: 'pool_usdc',
       shareTokenName: 'Laina USDC',
@@ -125,7 +125,7 @@ const deployLoanPools = () => {
       insurancePoolFile: 'insurance_pool_usdc',
     },
     {
-      tokenContractAddress: CURRENCIES[2].tokenContractAddress,
+      tokenContractAddress: CURRENCIES_BY_TICKER.EURC.tokenContractAddress,
       ticker: 'EURC',
       loanPoolName: 'pool_eurc',
       shareTokenName: 'Laina EURC',

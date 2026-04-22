@@ -78,7 +78,7 @@ export const InsuranceAsset = ({ currency, onManageClicked }: InsuranceAssetProp
       {/* ── Mobile card layout ── */}
       <div className="md:hidden py-4">
         <div className="flex items-center gap-3 mb-4">
-          <img src={icon} alt="" className="w-12 h-12 flex-none" />
+          <img src={icon} alt="" className="w-10 h-10 flex-none" />
           <div className="flex-1 min-w-0">
             <h2 className="font-semibold text-base tracking-tight truncate">{name}</h2>
             <p className="text-xs text-grey">

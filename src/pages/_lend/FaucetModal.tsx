@@ -21,7 +21,12 @@ const FAUCET_TOKENS = [
 ] as const;
 
 const hasTrustline = (balances: Horizon.HorizonApi.BalanceLine[], ticker: string, issuer: string) =>
-  balances.some((b) => b.asset_type !== 'native' && b.asset_code === ticker && b.asset_issuer === issuer);
+  balances.some(
+    (b) =>
+      (b.asset_type === 'credit_alphanum4' || b.asset_type === 'credit_alphanum12') &&
+      b.asset_code === ticker &&
+      b.asset_issuer === issuer,
+  );
 
 /** Build a classic tx that adds only the missing trustlines, or null if all exist. */
 const createTrustlinesTx = async (address: string) => {

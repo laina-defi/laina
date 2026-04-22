@@ -90,9 +90,7 @@ export const LendableAsset = ({ currency, onDepositClicked }: LendableAssetProps
         </div>
         <div>
           <p className="text-xs text-grey mb-0.5">Interest Rate Multiplier</p>
-          <p className="text-sm font-semibold">
-            {pool ? String(pool.interestRateMultiplier) : <Loading size="xs" />}
-          </p>
+          <p className="text-sm font-semibold">{pool ? String(pool.interestRateMultiplier) : <Loading size="xs" />}</p>
         </div>
         <div>
           <p className="text-xs text-grey mb-0.5">Pool Contract</p>

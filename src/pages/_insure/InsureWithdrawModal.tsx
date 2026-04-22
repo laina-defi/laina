@@ -97,7 +97,7 @@ export const InsureWithdrawModal = ({ modalId, onClose, currency }: InsureWithdr
         <Button onClick={closeModal} variant="ghost" className="mr-4">
           Cancel
         </Button>
-        <Button disabled={isWithdrawDisabled} onClick={() => sendTransaction(amount)}>
+        <Button disabled={isWithdrawDisabled} onClick={() => sendTransaction()}>
           Withdraw
         </Button>
       </div>
@@ -117,7 +117,7 @@ const useWithdrawTransaction = (currency: CurrencyBinding | null) => {
     setWithdrawError(null);
   };
 
-  const sendTransaction = async (stroops: bigint) => {
+  const sendTransaction = async () => {
     if (!wallet) {
       alert('Please connect your wallet first!');
       return;
@@ -129,9 +129,8 @@ const useWithdrawTransaction = (currency: CurrencyBinding | null) => {
 
     setIsWithdrawing(true);
 
-    const tx = await currency.contractClient.withdraw({
+    const tx = await currency.contractClient.execute_withdraw({
       user: wallet.address,
-      amount_in_tokens: stroops,
     });
 
     try {

@@ -29,8 +29,8 @@ export const BorrowableAsset = ({ currency, onBorrowClicked }: BorrowableAssetPr
   const isCollateral = !walletBalances
     ? false
     : Object.entries(walletBalances)
-      .filter(([t]) => t !== ticker)
-      .some(([, b]) => b.trustLine && !isBalanceZero(b.balanceLine.balance));
+        .filter(([t]) => t !== ticker)
+        .some(([, b]) => b.trustLine && !isBalanceZero(b.balanceLine.balance));
 
   const borrowDisabled = !wallet || !isCollateral || !pool || pool.availableBalanceTokens === 0n;
 
@@ -64,7 +64,7 @@ export const BorrowableAsset = ({ currency, onBorrowClicked }: BorrowableAssetPr
 
   const actionButton = borrowDisabled ? (
     <div className="tooltip w-full md:w-auto" data-tip={tooltip}>
-      <Button disabled={true} onClick={() => { }} className="w-full md:w-auto">
+      <Button disabled={true} onClick={() => {}} className="w-full md:w-auto">
         Borrow
       </Button>
     </div>
@@ -87,9 +87,7 @@ export const BorrowableAsset = ({ currency, onBorrowClicked }: BorrowableAssetPr
         </div>
         <div>
           <p className="text-xs text-grey mb-0.5">Interest Rate Multiplier</p>
-          <p className="text-sm font-semibold">
-            {pool ? String(pool.interestRateMultiplier) : <Loading size="xs" />}
-          </p>
+          <p className="text-sm font-semibold">{pool ? String(pool.interestRateMultiplier) : <Loading size="xs" />}</p>
         </div>
         <div>
           <p className="text-xs text-grey mb-0.5">Pool Contract</p>
@@ -110,10 +108,7 @@ export const BorrowableAsset = ({ currency, onBorrowClicked }: BorrowableAssetPr
       className="p-1 rounded flex items-center justify-center hover:bg-grey-lighter/50 transition-colors text-grey"
       aria-label={isExpanded ? 'Collapse details' : 'Expand details'}
     >
-      <span
-        className={`inline-block transition-transform duration-300 ${isExpanded ? 'rotate-180' : ''
-          }`}
-      >
+      <span className={`inline-block transition-transform duration-300 ${isExpanded ? 'rotate-180' : ''}`}>
         <PiCaretDown size={18} />
       </span>
     </button>
@@ -123,7 +118,7 @@ export const BorrowableAsset = ({ currency, onBorrowClicked }: BorrowableAssetPr
       {/* ── Mobile card layout ── */}
       <div className="md:hidden py-4">
         <div className="flex items-center gap-3 mb-4">
-          <img src={icon} alt="" className="w-12 h-12 flex-none" />
+          <img src={icon} alt="" className="w-10 h-10 flex-none" />
           <div className="flex-1 min-w-0">
             <h2 className="font-semibold text-base tracking-tight truncate">{name}</h2>
             <p className="text-xs text-grey">

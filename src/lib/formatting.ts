@@ -52,7 +52,7 @@ export const formatAPR = (apr: bigint): string => {
 };
 
 export const formatCollateralFactor = (factor: bigint): string =>
-  `${(Number(factor) / 10_000_000 * 100).toFixed(0)} %`;
+  `${((Number(factor) / 10_000_000) * 100).toFixed(0)} %`;
 
 // Deposit APY: depositors earn on the utilised portion, after 10% protocol fee, split 50/50.
 // APY = borrowRate × utilization × 0.9 × 0.5

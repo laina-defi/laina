@@ -49,12 +49,13 @@ const BorrowPage = () => {
             </div>
 
             {/* Desktop column headers */}
-            <div className="hidden md:grid md:grid-cols-[80px_1fr_90px_150px_150px_130px] px-1 pb-2 mt-6 border-b border-grey-light">
+            <div className="hidden md:grid md:grid-cols-[80px_1fr_90px_150px_150px_130px_40px] px-1 pb-2 mt-6 border-b border-grey-light">
               <div />
               <div className="text-sm font-semibold text-grey">Asset</div>
               <div className="text-sm font-semibold text-grey">Ticker</div>
               <div className="text-sm font-semibold text-grey">Available</div>
               <div className="text-sm font-semibold text-grey">Borrow APR</div>
+              <div />
               <div />
             </div>
 
