@@ -13,6 +13,7 @@ const links = [
   { to: '/lend', label: 'Lend' },
   { to: '/borrow', label: 'Borrow' },
   { to: '/insure', label: 'Insure' },
+  { to: '/auctions', label: 'Auctions' },
 ];
 
 const InsurePage = () => {

@@ -84,7 +84,7 @@ const LinkItem = ({ to, children }: PropsWithChildren<{ to: string }>) => {
     >
       {children}
       {selected && (
-        <span className="absolute bottom-1 left-4 right-4 h-0.5 bg-gradient-to-r from-cyan to-magenta rounded-full" />
+        <span className="absolute bottom-3 transition left-4 right-4 h-0.5 bg-gradient-to-r from-cyan to-magenta rounded-full" />
       )}
     </Link>
   );

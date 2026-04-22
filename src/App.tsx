@@ -3,10 +3,12 @@ import { Outlet, RouterProvider, createBrowserRouter } from 'react-router-dom';
 
 import Footer from '@components/Footer';
 import Nav from '@components/Nav';
+import { AuctionsProvider } from '@contexts/auctions-context';
 import { InsurancePoolProvider } from '@contexts/insurance-pool-context';
 import { LoansProvider } from '@contexts/loan-context';
 import { PoolProvider } from '@contexts/pool-context';
 import { WalletProvider } from '@contexts/wallet-context';
+import AuctionsPage from '@pages/_auctions/AuctionsPage';
 import BorrowPage from '@pages/_borrow/BorrowPage';
 import InsurePage from '@pages/_insure/InsurePage';
 import LandingPage from '@pages/_landing/LandingPage';
@@ -32,6 +34,7 @@ const router = createBrowserRouter([
       { path: 'lend', element: <LendPage /> },
       { path: 'borrow', element: <BorrowPage /> },
       { path: 'insure', element: <InsurePage /> },
+      { path: 'auctions', element: <AuctionsPage /> },
     ],
   },
 ]);
@@ -42,9 +45,11 @@ const App = () => {
       <WalletProvider>
         <PoolProvider>
           <InsurancePoolProvider>
-            <LoansProvider>
-              <RouterProvider router={router} />
-            </LoansProvider>
+            <AuctionsProvider>
+              <LoansProvider>
+                <RouterProvider router={router} />
+              </LoansProvider>
+            </AuctionsProvider>
           </InsurancePoolProvider>
         </PoolProvider>
       </WalletProvider>
