@@ -1,3 +1,4 @@
+use crate::checked_operations::CheckedOps;
 use crate::error::LoanManagerError;
 use crate::oracle::{self, Asset};
 use crate::storage::{
@@ -226,17 +227,11 @@ impl LoanManager {
 
         borrow_pool_client.add_interest_to_accrual();
         let current_accrual = borrow_pool_client.get_accrual();
-        let interest_since_update_multiplier = current_accrual
-            .checked_mul(DECIMAL)
-            .ok_or(LoanManagerError::OverOrUnderFlow)?
-            .checked_div(last_accrual)
-            .ok_or(LoanManagerError::OverOrUnderFlow)?;
+        let interest_since_update_multiplier = current_accrual.cmul(DECIMAL)?.cdiv(last_accrual)?;
 
         let new_borrowed_amount = borrowed_amount
-            .checked_mul(interest_since_update_multiplier)
-            .ok_or(LoanManagerError::OverOrUnderFlow)?
-            .checked_div(DECIMAL)
-            .ok_or(LoanManagerError::OverOrUnderFlow)?;
+            .cmul(interest_since_update_multiplier)?
+            .cdiv(DECIMAL)?;
 
         // Get current token value of collateral shares for health factor calculation
         let collateral_tokens = collateral_pool_client.shares_to_tokens(&collateral_shares);
@@ -250,12 +245,8 @@ impl LoanManager {
             collateral_from.clone(),
         )?;
 
-        let borrow_change = new_borrowed_amount
-            .checked_sub(borrowed_amount)
-            .ok_or(LoanManagerError::OverOrUnderFlow)?;
-        let new_unpaid_interest = unpaid_interest
-            .checked_add(borrow_change)
-            .ok_or(LoanManagerError::OverOrUnderFlow)?;
+        let borrow_change = new_borrowed_amount.csub(borrowed_amount)?;
+        let new_unpaid_interest = unpaid_interest.cadd(borrow_change)?;
 
         // Update the pool's positions to reflect the increased liabilities from interest
         if borrow_change > 0 {
@@ -303,28 +294,20 @@ impl LoanManager {
             .ok_or(LoanManagerError::NoLastPrice)?;
         let collateral_value = collateral_asset_price
             .price
-            .checked_mul(token_collateral_amount)
-            .ok_or(LoanManagerError::OverOrUnderFlow)?
-            .checked_mul(collateral_factor)
-            .ok_or(LoanManagerError::OverOrUnderFlow)?
-            .checked_div(DECIMAL_TO_INT_MULTIPLIER)
-            .ok_or(LoanManagerError::OverOrUnderFlow)?;
+            .cmul(token_collateral_amount)?
+            .cmul(collateral_factor)?
+            .cdiv(DECIMAL_TO_INT_MULTIPLIER)?;
 
         // get the price and calculate the value of the borrowed asset
         let borrowed_asset = Asset::Other(token_ticker);
         let asset_price = reflector_contract
             .lastprice(&borrowed_asset)
             .ok_or(LoanManagerError::NoLastPrice)?;
-        let borrowed_value = asset_price
-            .price
-            .checked_mul(token_amount)
-            .ok_or(LoanManagerError::OverOrUnderFlow)?;
+        let borrowed_value = asset_price.price.cmul(token_amount)?;
 
         let health_factor = collateral_value
-            .checked_mul(DECIMAL_TO_INT_MULTIPLIER)
-            .ok_or(LoanManagerError::OverOrUnderFlow)?
-            .checked_div(borrowed_value)
-            .ok_or(LoanManagerError::OverOrUnderFlow)?;
+            .cmul(DECIMAL_TO_INT_MULTIPLIER)?
+            .cdiv(borrowed_value)?;
         Ok(health_factor)
     }
 
@@ -454,16 +437,12 @@ impl LoanManager {
         borrow_pool_client.repay(&user, &amount, &unpaid_interest);
 
         let new_unpaid_interest = if amount < unpaid_interest {
-            unpaid_interest
-                .checked_sub(amount)
-                .ok_or(LoanManagerError::OverOrUnderFlow)?
+            unpaid_interest.csub(amount)?
         } else {
             0
         };
 
-        let new_borrowed_amount = borrowed_amount
-            .checked_sub(amount)
-            .ok_or(LoanManagerError::OverOrUnderFlow)?;
+        let new_borrowed_amount = borrowed_amount.csub(amount)?;
 
         let collateral_tokens = collateral_pool_client.shares_to_tokens(&collateral_shares);
         let new_health_factor = Self::calculate_health_factor(
@@ -580,19 +559,9 @@ impl LoanManager {
         )?;
         assert!(health_factor_before_liquidation < 10000000);
         // Assert that the liquidation is not more than 50% of loan
-        assert!(
-            amount
-                < (borrowed_amount
-                    .checked_div(2)
-                    .ok_or(LoanManagerError::OverOrUnderFlow)?)
-        );
+        assert!(amount < borrowed_amount.cdiv(2)?);
         // Assert that the liquidation is atleast 1% of loan
-        assert!(
-            amount
-                > (borrowed_amount
-                    .checked_div(100)
-                    .ok_or(LoanManagerError::OverOrUnderFlow)?)
-        );
+        assert!(amount > borrowed_amount.cdiv(100)?);
 
         let borrowed_price = Self::get_price(&e, borrowed_ticker.clone())?;
         let collateral_price = Self::get_price(&e, collateral_ticker.clone())?;
@@ -602,23 +571,15 @@ impl LoanManager {
         // bonus rate = (1-collateralfactor) / 2 = e.g. 2.5-10 %
         // As multiplier = bonus rate + 1
         let bonus = FIXED_POINT_ONE
-            .checked_sub(collateral_factor)
-            .ok_or(LoanManagerError::OverOrUnderFlow)?
-            .checked_div(2_i128)
-            .ok_or(LoanManagerError::OverOrUnderFlow)?
-            .checked_add(FIXED_POINT_ONE)
-            .ok_or(LoanManagerError::OverOrUnderFlow)?;
+            .csub(collateral_factor)?
+            .cdiv(2_i128)?
+            .cadd(FIXED_POINT_ONE)?;
 
-        let liquidation_value = amount
-            .checked_mul(borrowed_price)
-            .ok_or(LoanManagerError::OverOrUnderFlow)?;
+        let liquidation_value = amount.cmul(borrowed_price)?;
         let collateral_amount_bonus = liquidation_value
-            .checked_mul(bonus)
-            .ok_or(LoanManagerError::OverOrUnderFlow)?
-            .checked_div(collateral_price)
-            .ok_or(LoanManagerError::OverOrUnderFlow)?
-            .checked_div(10_000_000)
-            .ok_or(LoanManagerError::OverOrUnderFlow)?;
+            .cmul(bonus)?
+            .cdiv(collateral_price)?
+            .cdiv(10_000_000)?;
 
         // Checkpoint borrower LAI rewards before reducing their liability position.
         if storage::read_lai_config(&e).is_some() {
@@ -643,12 +604,8 @@ impl LoanManager {
             &loan_id.borrower_address,
         );
 
-        let new_borrowed_amount = borrowed_amount
-            .checked_sub(amount)
-            .ok_or(LoanManagerError::OverOrUnderFlow)?;
-        let new_collateral_shares = collateral_shares
-            .checked_sub(bonus_shares)
-            .ok_or(LoanManagerError::OverOrUnderFlow)?;
+        let new_borrowed_amount = borrowed_amount.csub(amount)?;
+        let new_collateral_shares = collateral_shares.csub(bonus_shares)?;
 
         let new_collateral_tokens = collateral_pool_client.shares_to_tokens(&new_collateral_shares);
         let new_health_factor = Self::calculate_health_factor(
@@ -692,10 +649,7 @@ impl LoanManager {
 
         let new_shares =
             collateral_pool_client.deposit_collateral(&loan_id.borrower_address, &amount);
-        loan.collateral_shares = loan
-            .collateral_shares
-            .checked_add(new_shares)
-            .ok_or(LoanManagerError::OverOrUnderFlow)?;
+        loan.collateral_shares = loan.collateral_shares.cadd(new_shares)?;
 
         let collateral_tokens = collateral_pool_client.shares_to_tokens(&loan.collateral_shares);
         loan.health_factor = Self::calculate_health_factor(
@@ -726,10 +680,7 @@ impl LoanManager {
         let borrow_pool_client = loan_pool::Client::new(&e, &loan.borrowed_from);
 
         let shares_to_remove = collateral_pool_client.tokens_to_shares(&amount);
-        let new_collateral_shares = loan
-            .collateral_shares
-            .checked_sub(shares_to_remove)
-            .ok_or(LoanManagerError::OverOrUnderFlow)?;
+        let new_collateral_shares = loan.collateral_shares.csub(shares_to_remove)?;
 
         let new_collateral_tokens = collateral_pool_client.shares_to_tokens(&new_collateral_shares);
         let new_health_factor = Self::calculate_health_factor(
@@ -870,10 +821,8 @@ impl LoanManager {
             // linear function f(x) = (1-(x/AUCTION_DURATION)) * borrowed_amount.
             // Therefore, f(0) = borrowed_amount, f(AUCTION_DURATION) = 0.
             let time_based_reduction = (ledgers_since_start as i128)
-                .checked_mul(borrowed_amount)
-                .ok_or(LoanManagerError::OverOrUnderFlow)?
-                .checked_div(AUCTION_DURATION as i128)
-                .ok_or(LoanManagerError::OverOrUnderFlow)?;
+                .cmul(borrowed_amount)?
+                .cdiv(AUCTION_DURATION as i128)?;
 
             let amount_to_pay = borrowed_amount - time_based_reduction;
 

@@ -9,17 +9,21 @@ pub trait CheckedOps: Sized {
 
 impl CheckedOps for i128 {
     fn cmul(self, rhs: Self) -> Result<Self, LoanManagerError> {
-        self.checked_mul(rhs).ok_or(LoanManagerError::OverOrUnderFlow)
+        self.checked_mul(rhs)
+            .ok_or(LoanManagerError::OverOrUnderFlow)
     }
 
     fn cdiv(self, rhs: Self) -> Result<Self, LoanManagerError> {
-        self.checked_div(rhs).ok_or(LoanManagerError::OverOrUnderFlow)
+        self.checked_div(rhs)
+            .ok_or(LoanManagerError::OverOrUnderFlow)
     }
 
     fn cadd(self, rhs: Self) -> Result<Self, LoanManagerError> {
-        self.checked_add(rhs).ok_or(LoanManagerError::OverOrUnderFlow)
+        self.checked_add(rhs)
+            .ok_or(LoanManagerError::OverOrUnderFlow)
     }
     fn csub(self, rhs: Self) -> Result<Self, LoanManagerError> {
-        self.checked_sub(rhs).ok_or(LoanManagerError::OverOrUnderFlow)
+        self.checked_sub(rhs)
+            .ok_or(LoanManagerError::OverOrUnderFlow)
     }
 }

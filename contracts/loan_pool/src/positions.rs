@@ -1,3 +1,4 @@
+use crate::checked_operations::CheckedOps;
 use crate::{error::LoanPoolError, storage};
 use soroban_sdk::{Address, Env};
 
@@ -14,12 +15,8 @@ pub fn increase_positions(
     storage::write_positions(
         e,
         addr,
-        liabilities_now
-            .checked_add(liabilities)
-            .ok_or(LoanPoolError::OverOrUnderFlow)?,
-        collateral_now
-            .checked_add(collateral)
-            .ok_or(LoanPoolError::OverOrUnderFlow)?,
+        liabilities_now.cadd(liabilities)?,
+        collateral_now.cadd(collateral)?,
     );
     Ok(())
 }
@@ -44,12 +41,8 @@ pub fn decrease_positions(
     storage::write_positions(
         e,
         addr,
-        liabilities_now
-            .checked_sub(liabilities)
-            .ok_or(LoanPoolError::OverOrUnderFlow)?,
-        collateral_now
-            .checked_sub(collateral)
-            .ok_or(LoanPoolError::OverOrUnderFlow)?,
+        liabilities_now.csub(liabilities)?,
+        collateral_now.csub(collateral)?,
     );
     Ok(())
 }

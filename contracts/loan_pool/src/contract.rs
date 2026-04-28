@@ -1,3 +1,4 @@
+use crate::checked_operations::CheckedOps;
 use crate::dto::PoolState;
 use crate::error::LoanPoolError;
 use crate::interest::{self, get_interest};
@@ -119,10 +120,8 @@ impl LoanPoolContract {
                 amount
             } else {
                 current_shares
-                    .checked_mul(amount)
-                    .ok_or(LoanPoolError::OverOrUnderFlow)?
-                    .checked_div(current_contract_balance)
-                    .ok_or(LoanPoolError::OverOrUnderFlow)?
+                    .cmul(amount)?
+                    .cdiv(current_contract_balance)?
             };
 
             let share_token_client =
@@ -166,10 +165,8 @@ impl LoanPoolContract {
         let total_balance_shares = Self::get_total_balance_shares(e.clone())?;
         let total_balance_tokens = Self::get_contract_balance(e.clone())?;
         let shares_to_decrease = amount
-            .checked_mul(total_balance_shares)
-            .ok_or(LoanPoolError::OverOrUnderFlow)?
-            .checked_div(total_balance_tokens)
-            .ok_or(LoanPoolError::OverOrUnderFlow)?;
+            .cmul(total_balance_shares)?
+            .cdiv(total_balance_tokens)?;
 
         // Check that user is not trying to move more than receivables (TODO: also include collateral?)
         if shares_to_decrease > receivable_shares {
@@ -264,11 +261,7 @@ impl LoanPoolContract {
         let shares_issued = if total_tokens == 0 {
             amount
         } else {
-            total_shares
-                .checked_mul(amount)
-                .ok_or(LoanPoolError::OverOrUnderFlow)?
-                .checked_div(total_tokens)
-                .ok_or(LoanPoolError::OverOrUnderFlow)?
+            total_shares.cmul(amount)?.cdiv(total_tokens)?
         };
 
         let token_address = &storage::read_currency(&e)?.token_address;
@@ -296,11 +289,7 @@ impl LoanPoolContract {
 
         let total_shares = storage::read_total_shares(&e)?;
         let total_tokens = storage::read_total_balance(&e)?;
-        let tokens = shares
-            .checked_mul(total_tokens)
-            .ok_or(LoanPoolError::OverOrUnderFlow)?
-            .checked_div(total_shares)
-            .ok_or(LoanPoolError::OverOrUnderFlow)?;
+        let tokens = shares.cmul(total_tokens)?.cdiv(total_shares)?;
 
         positions::decrease_positions(&e, user.clone(), 0, shares)?;
         storage::adjust_available_balance(
@@ -330,11 +319,7 @@ impl LoanPoolContract {
         if total_shares == 0 {
             return Ok(0);
         }
-        shares
-            .checked_mul(total_tokens)
-            .ok_or(LoanPoolError::OverOrUnderFlow)?
-            .checked_div(total_shares)
-            .ok_or(LoanPoolError::OverOrUnderFlow)
+        shares.cmul(total_tokens)?.cdiv(total_shares)
     }
 
     /// Convert a token amount to the equivalent number of shares at the current rate.
@@ -344,11 +329,7 @@ impl LoanPoolContract {
         if total_tokens == 0 {
             return Ok(tokens);
         }
-        tokens
-            .checked_mul(total_shares)
-            .ok_or(LoanPoolError::OverOrUnderFlow)?
-            .checked_div(total_tokens)
-            .ok_or(LoanPoolError::OverOrUnderFlow)
+        tokens.cmul(total_shares)?.cdiv(total_tokens)
     }
 
     pub fn add_interest_to_accrual(e: Env) -> Result<(), LoanPoolError> {
@@ -362,25 +343,14 @@ impl LoanPoolContract {
             .checked_sub(accrual_last_update)
             .ok_or(LoanPoolError::OverOrUnderFlow)?;
         let ledger_ratio: i128 = (i128::from(ledgers_since_update))
-            .checked_mul(DECIMAL)
-            .ok_or(LoanPoolError::OverOrUnderFlow)?
-            .checked_div(i128::from(SECONDS_IN_YEAR))
-            .ok_or(LoanPoolError::OverOrUnderFlow)?;
+            .cmul(DECIMAL)?
+            .cdiv(i128::from(SECONDS_IN_YEAR))?;
 
         let interest_rate: i128 = get_interest(e.clone())?;
-        let interest_amount_in_year: i128 = accrual
-            .checked_mul(interest_rate)
-            .ok_or(LoanPoolError::OverOrUnderFlow)?
-            .checked_div(DECIMAL)
-            .ok_or(LoanPoolError::OverOrUnderFlow)?;
-        let interest_since_update: i128 = interest_amount_in_year
-            .checked_mul(ledger_ratio)
-            .ok_or(LoanPoolError::OverOrUnderFlow)?
-            .checked_div(DECIMAL)
-            .ok_or(LoanPoolError::OverOrUnderFlow)?;
-        let new_accrual: i128 = accrual
-            .checked_add(interest_since_update)
-            .ok_or(LoanPoolError::OverOrUnderFlow)?;
+        let interest_amount_in_year: i128 = accrual.cmul(interest_rate)?.cdiv(DECIMAL)?;
+        let interest_since_update: i128 =
+            interest_amount_in_year.cmul(ledger_ratio)?.cdiv(DECIMAL)?;
+        let new_accrual: i128 = accrual.cadd(interest_since_update)?;
 
         storage::write_accrual_last_updated(&e, current_timestamp);
         storage::write_accrual(&e, new_accrual);
@@ -523,17 +493,13 @@ impl LoanPoolContract {
         } else {
             unpaid_interest
         };
-        let principal_paid = amount
-            .checked_sub(interest_paid)
-            .ok_or(LoanPoolError::OverOrUnderFlow)?;
+        let principal_paid = amount.csub(interest_paid)?;
 
         // Admin fee applies only to the interest portion (10%)
         let amount_to_admin = interest_paid / 10;
 
         // Net amount that stays in the pool contract
-        let amount_to_storage = amount
-            .checked_sub(amount_to_admin)
-            .ok_or(LoanPoolError::OverOrUnderFlow)?;
+        let amount_to_storage = amount.csub(amount_to_admin)?;
 
         let client = token::Client::new(&e, &storage::read_currency(&e)?.token_address);
         client.transfer(&user, e.current_contract_address(), &amount_to_storage);
@@ -591,9 +557,7 @@ impl LoanPoolContract {
             unpaid_interest / 10
         };
 
-        let amount_to_user = max_allowed_amount
-            .checked_sub(borrowed_amount)
-            .ok_or(LoanPoolError::OverOrUnderFlow)?;
+        let amount_to_user = max_allowed_amount.csub(borrowed_amount)?;
 
         let client = token::Client::new(&e, &storage::read_currency(&e)?.token_address);
         client.transfer(&user, e.current_contract_address(), &max_allowed_amount);
@@ -644,9 +608,7 @@ impl LoanPoolContract {
             unpaid_interest / 10
         };
 
-        let amount_to_storage = amount
-            .checked_sub(amount_to_admin)
-            .ok_or(LoanPoolError::OverOrUnderFlow)?;
+        let amount_to_storage = amount.csub(amount_to_admin)?;
 
         let client = token::Client::new(&e, &storage::read_currency(&e)?.token_address);
         client.transfer(&user, e.current_contract_address(), &amount_to_storage);
@@ -674,10 +636,8 @@ impl LoanPoolContract {
         let total_shares = storage::read_total_shares(&e)?;
         let total_tokens = storage::read_total_balance(&e)?;
         let shares_to_remove = amount_collateral_tokens
-            .checked_mul(total_shares)
-            .ok_or(LoanPoolError::OverOrUnderFlow)?
-            .checked_div(total_tokens)
-            .ok_or(LoanPoolError::OverOrUnderFlow)?;
+            .cmul(total_shares)?
+            .cdiv(total_tokens)?;
 
         positions::decrease_positions(&e, loan_owner, 0, shares_to_remove)?;
         storage::adjust_available_balance(
@@ -733,9 +693,7 @@ impl LoanPoolContract {
             unpaid_interest / 10
         };
 
-        let amount_to_user = max_allowed_amount
-            .checked_sub(claim_amount)
-            .ok_or(LoanPoolError::OverOrUnderFlow)?;
+        let amount_to_user = max_allowed_amount.csub(claim_amount)?;
 
         let client = token::Client::new(&e, &storage::read_currency(&e)?.token_address);
         client.transfer(&user, e.current_contract_address(), &max_allowed_amount);
@@ -799,11 +757,7 @@ impl LoanPoolContract {
         }
 
         // boost ≈ (net_interest / 2) × total_shares / total_balance
-        let boost_shares = (net_interest / 2)
-            .checked_mul(total_shares)
-            .ok_or(LoanPoolError::OverOrUnderFlow)?
-            .checked_div(total_balance)
-            .ok_or(LoanPoolError::OverOrUnderFlow)?;
+        let boost_shares = (net_interest / 2).cmul(total_shares)?.cdiv(total_balance)?;
 
         if boost_shares == 0 {
             return Ok(());
@@ -837,11 +791,7 @@ impl LoanPoolContract {
         let total_shares = storage::read_total_shares(&e)?;
         let total_tokens = storage::read_total_balance(&e)?;
 
-        let shares_to_burn = bad_debt_tokens
-            .checked_mul(total_shares)
-            .ok_or(LoanPoolError::OverOrUnderFlow)?
-            .checked_div(total_tokens)
-            .ok_or(LoanPoolError::OverOrUnderFlow)?;
+        let shares_to_burn = bad_debt_tokens.cmul(total_shares)?.cdiv(total_tokens)?;
 
         if shares_to_burn > 0 {
             let insurance_pool_addr = storage::read_insurance_pool_address(&e)?;
