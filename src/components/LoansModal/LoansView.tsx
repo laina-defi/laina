@@ -16,27 +16,36 @@ const LoansView = ({ onClose, onRepay, onAdjustCollateral }: LoansViewProps) => 
   const { loans } = useLoans();
   return (
     <>
-      <h3 className="text-xl font-bold tracking-tight mb-8">My Loans</h3>
+      <h3 className="text-xl font-bold tracking-tight mb-6">My Loans</h3>
       {isNil(loans) && <Loading />}
       {loans && loans.length === 0 && <p className="text-base">You have no loans.</p>}
       {loans && loans.length > 0 && (
-        <table className="table">
-          <thead className="text-base text-grey">
-            <tr>
-              <th>Loan</th>
-              <th>Borrowed</th>
-              <th>Collateral</th>
-              <th>Health</th>
-              <th>APR</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
+        <>
+          {/* Mobile card list */}
+          <div className="flex flex-col gap-3 md:hidden">
             {loans.map((loan) => (
-              <TableRow key={loan.loanId.nonce} loan={loan} onRepay={onRepay} onAdjustCollateral={onAdjustCollateral} />
+              <LoanCard key={loan.loanId.nonce} loan={loan} onRepay={onRepay} onAdjustCollateral={onAdjustCollateral} />
             ))}
-          </tbody>
-        </table>
+          </div>
+          {/* Desktop table */}
+          <table className="table hidden md:table">
+            <thead className="text-base text-grey">
+              <tr>
+                <th>Loan</th>
+                <th>Borrowed</th>
+                <th>Collateral</th>
+                <th>Health</th>
+                <th>APR</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {loans.map((loan) => (
+                <TableRow key={loan.loanId.nonce} loan={loan} onRepay={onRepay} onAdjustCollateral={onAdjustCollateral} />
+              ))}
+            </tbody>
+          </table>
+        </>
       )}
       <div className="modal-action">
         <Button variant="ghost" className="ml-auto" onClick={onClose}>
@@ -44,6 +53,60 @@ const LoansView = ({ onClose, onRepay, onAdjustCollateral }: LoansViewProps) => 
         </Button>
       </div>
     </>
+  );
+};
+
+interface LoanItemProps {
+  loan: Loan;
+  onRepay: (loan: Loan) => void;
+  onAdjustCollateral: (loan: Loan) => void;
+}
+
+const LoanCard = ({ loan, onRepay, onAdjustCollateral }: LoanItemProps) => {
+  const { borrowedAmount, unpaidInterest, collateralAmount, borrowedTicker, collateralTicker } = loan;
+  const { prices, pools } = usePools();
+
+  const loanTotal = borrowedAmount + unpaidInterest;
+  const loanPrice = prices?.[borrowedTicker];
+  const collateralPrice = prices?.[collateralTicker];
+  const pool = pools?.[borrowedTicker];
+
+  const loanAmountCents = loanPrice ? toCents(loanPrice, borrowedAmount) : undefined;
+  const collateralAmountCents = collateralPrice ? toCents(collateralPrice, collateralAmount) : undefined;
+  const healthFactor =
+    loanAmountCents && loanAmountCents > 0n
+      ? (Number(collateralAmountCents) * 0.8) / Number(loanAmountCents)
+      : 0;
+
+  return (
+    <div className="rounded border border-grey-light p-4">
+      <div className="flex items-center justify-between mb-3">
+        <span className="text-sm text-grey">Loan #{loan.loanId.nonce}</span>
+        <CompactHealthFactor value={healthFactor} />
+      </div>
+      <div className="grid grid-cols-2 gap-x-4 gap-y-2 mb-3 text-sm">
+        <div>
+          <p className="text-grey mb-0.5">Borrowed</p>
+          <p className="font-semibold">{formatAmount(loanTotal)} {borrowedTicker}</p>
+          {loanPrice && <p className="text-grey-dark text-xs">{toDollarsFormatted(loanPrice, loanTotal)}</p>}
+        </div>
+        <div>
+          <p className="text-grey mb-0.5">Collateral</p>
+          <p className="font-semibold">{formatAmount(collateralAmount)} {collateralTicker}</p>
+          {collateralPrice && <p className="text-grey-dark text-xs">{toDollarsFormatted(collateralPrice, collateralAmount)}</p>}
+        </div>
+        {pool && (
+          <div>
+            <p className="text-grey mb-0.5">APR</p>
+            <p className="font-semibold">{formatAPR(pool.annualInterestRate)}</p>
+          </div>
+        )}
+      </div>
+      <div className="flex gap-2">
+        <Button onClick={() => onRepay(loan)}>Repay</Button>
+        <Button variant="ghost" onClick={() => onAdjustCollateral(loan)}>Collateral</Button>
+      </div>
+    </div>
   );
 };
 
@@ -64,15 +127,12 @@ const TableRow = ({ loan, onRepay, onAdjustCollateral }: TableRowProps) => {
 
   const pool = pools?.[borrowedTicker];
 
-  const handleRepayClicked = () => onRepay(loan);
-  const handleAdjustCollateralClicked = () => onAdjustCollateral(loan);
-
   const loanAmountCents = loanPrice ? toCents(loanPrice, borrowedAmount) : undefined;
   const collateralAmountCents = collateralPrice ? toCents(collateralPrice, collateralAmount) : undefined;
 
   const healthFactor =
     loanAmountCents && loanAmountCents > 0n
-      ? (Number(collateralAmountCents) * 0.8) / Number(loanAmountCents) // 0.8 magic number collateral factor TODO: Add fetching from pools.
+      ? (Number(collateralAmountCents) * 0.8) / Number(loanAmountCents)
       : 0;
 
   return (
@@ -97,8 +157,8 @@ const TableRow = ({ loan, onRepay, onAdjustCollateral }: TableRowProps) => {
       </td>
       <td>{pool ? formatAPR(pool.annualInterestRate) : null}</td>
       <td className="flex flex-col gap-2">
-        <Button onClick={handleRepayClicked}>Repay</Button>
-        <Button variant="ghost" onClick={handleAdjustCollateralClicked}>
+        <Button onClick={() => onRepay(loan)}>Repay</Button>
+        <Button variant="ghost" onClick={() => onAdjustCollateral(loan)}>
           Collateral
         </Button>
       </td>

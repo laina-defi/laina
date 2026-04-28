@@ -17,7 +17,7 @@ export interface DialogProps {
 
 export const Dialog = ({ modalId, onClose, children, className = '' }: PropsWithChildren<DialogProps>) => (
   <dialog id={modalId} className="modal">
-    <div className={`modal-box p-10 flex flex-col w-auto max-w-screen-2xl ${className}`}>{children}</div>
+    <div className={`modal-box p-6 sm:p-10 flex flex-col w-11/12 max-w-3xl ${className}`}>{children}</div>
     {/* Invisible backdrop that closes the modal on click */}
     <form method="dialog" className="modal-backdrop">
       <button onClick={onClose} type="button">
@@ -35,7 +35,7 @@ export interface DialogContentProps {
 }
 
 export const LoadingDialogContent = ({ title = 'Loading', subtitle, buttonText = 'Close' }: DialogContentProps) => (
-  <div className="w-96 flex flex-col items-center">
+  <div className="w-full max-w-sm flex flex-col items-center">
     <Loading size="lg" className="mb-4" />
     <h3 className="font-bold text-xl mb-4">{title}</h3>
     {subtitle ? <p className="text-lg mb-8">{subtitle}</p> : null}
@@ -49,7 +49,7 @@ export const SuccessDialogContent = ({
   onClick,
   buttonText = 'Close',
 }: DialogContentProps) => (
-  <div className="w-96 flex flex-col items-center">
+  <div className="w-full max-w-sm flex flex-col items-center">
     <CheckMarkIcon className="text-green mb-4" size="2rem" />
     <h3 className="font-bold text-xl mb-4">{title}</h3>
     {subtitle ? <p className="text-lg mb-8">{subtitle}</p> : null}
@@ -61,7 +61,7 @@ export const ErrorDialogContent = ({ error, onClick }: { error: Error; onClick: 
   const parsedError = parseErrorMessage(error.message);
 
   return (
-    <div className="min-w-96 flex flex-col items-center">
+    <div className="w-full flex flex-col items-center">
       <h3 className="font-bold text-xl mb-4 w-full">
         <XMarkIcon className="text-red mb-1 mr-2 inline-block" size="2rem" />
         {parsedError.mainError}

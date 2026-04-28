@@ -17,7 +17,7 @@ export const Card = ({ bgColor = 'white', className = '', links, children }: Pro
     className={`rounded shadow border-2 ${bgColor === 'white' ? 'bg-white border-grey-light' : 'bg-black border-black'} ${className}`}
   >
     {links && (
-      <div className="px-6 md:px-12 py-2 border-b-2 border-grey-light flex flex-row mb-8">
+      <div className="px-6 md:px-12 py-2 border-b-2 border-grey-light flex flex-row mb-8 overflow-x-auto">
         {links.map(({ to, label }) => (
           <LinkItem to={to} key={to}>
             {label}

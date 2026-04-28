@@ -60,14 +60,14 @@ export const CryptoAmountSelector = ({
         <span>|</span>
         <span>|</span>
       </div>
-      <div className="flex flex-row items-center max-w-full">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 max-w-full">
         {isNil(tickerChangeOptions) ? (
-          <div className="input input-bordered flex items-center w-64">
+          <div className="input input-bordered flex items-center w-full sm:w-64">
             <span className="text-grey w-1/2">{ticker}</span>
             <NumberInput className="w-1/2" value={valueStr} max={maxStr} onChange={handleChange} />
           </div>
         ) : (
-          <div className="join w-64">
+          <div className="join w-full sm:w-64">
             <select
               className="select select-bordered w-1/2 join-item"
               value={ticker}
@@ -80,14 +80,14 @@ export const CryptoAmountSelector = ({
               ))}
             </select>
             <NumberInput
-              className="input input-bordered w-2/3 join-item"
+              className="input input-bordered flex-1 join-item"
               value={valueStr}
               max={maxStr}
               onChange={handleChange}
             />
           </div>
         )}
-        <span className="w-1/3 ml-2">{valueCents ? `≈ ${formatCentAmount(valueCents)}` : null}</span>
+        <span className="text-sm">{valueCents ? `≈ ${formatCentAmount(valueCents)}` : null}</span>
         <Button variant="outline" onClick={onSelectMaximum}>
           Select maximum
         </Button>

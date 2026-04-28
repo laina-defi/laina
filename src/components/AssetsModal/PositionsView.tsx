@@ -13,10 +13,18 @@ export interface PositionsViewProps {
 
 const PositionsView = ({ onClose, onWithdraw }: PositionsViewProps) => {
   const { positions } = useWallet();
+  const entries = Object.entries(positions).filter(([, { receivable_shares }]) => receivable_shares !== 0n);
   return (
-    <div className="md:w-[700px]">
+    <>
       <h3 className="text-xl font-bold tracking-tight mb-8">My Assets</h3>
-      <table className="table">
+      {/* Mobile card list */}
+      <div className="flex flex-col gap-3 md:hidden">
+        {entries.map(([ticker, { receivable_shares }]) => (
+          <AssetCard key={ticker} ticker={ticker as SupportedCurrency} receivableShares={receivable_shares} onWithdraw={onWithdraw} />
+        ))}
+      </div>
+      {/* Desktop table */}
+      <table className="table hidden md:table">
         <thead className="text-base text-grey">
           <tr>
             <th className="w-20" />
@@ -27,7 +35,7 @@ const PositionsView = ({ onClose, onWithdraw }: PositionsViewProps) => {
           </tr>
         </thead>
         <tbody>
-          {Object.entries(positions).map(([ticker, { receivable_shares }]) => (
+          {entries.map(([ticker, { receivable_shares }]) => (
             <TableRow
               key={ticker}
               ticker={ticker as SupportedCurrency}
@@ -42,6 +50,52 @@ const PositionsView = ({ onClose, onWithdraw }: PositionsViewProps) => {
           Close
         </Button>
       </div>
+    </>
+  );
+};
+
+interface AssetItemProps {
+  receivableShares: bigint;
+  ticker: SupportedCurrency;
+  onWithdraw: (ticker: SupportedCurrency) => void;
+}
+
+const AssetCard = ({ receivableShares, ticker, onWithdraw }: AssetItemProps) => {
+  const { prices, pools } = usePools();
+
+  const { icon, name } = CURRENCY_BINDINGS[ticker];
+  const price = prices?.[ticker];
+  const pool = pools?.[ticker];
+
+  if (!pool) return null;
+
+  const totalBalance = (receivableShares * pool.totalBalanceTokens) / pool.totalBalanceShares;
+
+  return (
+    <div className="rounded border border-grey-light p-4">
+      <div className="flex items-center gap-3 mb-3">
+        <div className="h-10 w-10 shrink-0">
+          <img src={icon} alt="" />
+        </div>
+        <div>
+          <p className="font-semibold leading-5">{name}</p>
+          <p className="text-sm text-grey">{ticker}</p>
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-x-4 gap-y-2 mb-3 text-sm">
+        <div>
+          <p className="text-grey mb-0.5">Balance</p>
+          <p className="font-semibold">{formatAmount(totalBalance)} {ticker}</p>
+          {!isNil(price) && <p className="text-grey-dark text-xs">{toDollarsFormatted(price, totalBalance)}</p>}
+        </div>
+        <div>
+          <p className="text-grey mb-0.5">APY</p>
+          <p className="font-semibold">
+            {formatDepositAPY(pool.annualInterestRate, pool.totalBalanceTokens, pool.availableBalanceTokens)}
+          </p>
+        </div>
+      </div>
+      <Button onClick={() => onWithdraw(ticker)}>Withdraw</Button>
     </div>
   );
 };
@@ -55,8 +109,6 @@ interface TableRowProps {
 const TableRow = ({ receivableShares, ticker, onWithdraw }: TableRowProps) => {
   const { prices, pools } = usePools();
 
-  if (receivableShares === 0n) return null;
-
   const { icon, name } = CURRENCY_BINDINGS[ticker];
   const price = prices?.[ticker];
   const pool = pools?.[ticker];
@@ -67,8 +119,6 @@ const TableRow = ({ receivableShares, ticker, onWithdraw }: TableRowProps) => {
   }
 
   const totalBalance = (receivableShares * pool.totalBalanceTokens) / pool.totalBalanceShares;
-
-  const handleWithdrawClick = () => onWithdraw(ticker);
 
   return (
     <tr key={ticker}>
@@ -91,7 +141,7 @@ const TableRow = ({ receivableShares, ticker, onWithdraw }: TableRowProps) => {
         {pool && formatDepositAPY(pool.annualInterestRate, pool.totalBalanceTokens, pool.availableBalanceTokens)}
       </td>
       <td>
-        <Button onClick={handleWithdrawClick}>Withdraw</Button>
+        <Button onClick={() => onWithdraw(ticker)}>Withdraw</Button>
       </td>
     </tr>
   );

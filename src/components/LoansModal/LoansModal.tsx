@@ -39,7 +39,7 @@ const LoansModal = ({ modalId, onClose }: LoansModalProps) => {
   };
 
   return (
-    <Dialog modalId={modalId} onClose={handleClose} className="min-w-96">
+    <Dialog modalId={modalId} onClose={handleClose} className="md:max-w-4xl">
       {activeView === 'list' && (
         <LoansView
           onClose={handleClose}

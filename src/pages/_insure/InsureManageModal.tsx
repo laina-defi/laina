@@ -182,7 +182,7 @@ export const InsureManageModal = ({ modalId, onClose, currency }: InsureManageMo
   const isQueueReady = queue ? nowSeconds >= Number(queue.queued_at_timestamp) + FOURTEEN_DAYS_IN_SECONDS : false;
 
   return (
-    <Dialog className="min-w-[760px]" modalId={modalId} onClose={closeModal}>
+    <Dialog modalId={modalId} onClose={closeModal}>
       <h3 className="font-bold text-xl mb-4">Manage {name} Insurance</h3>
 
       <div role="tablist" className="tabs tabs-bordered mb-6">
