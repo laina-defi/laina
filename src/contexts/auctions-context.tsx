@@ -98,20 +98,22 @@ export const AuctionsProvider = ({ children }: PropsWithChildren) => {
         }
       };
 
-      const createdAuctions = allEvents
-        .filter((e) => getEventName(e) === 'bad_debt_auction_created')
-        .map(parseAuction)
-        .filter(Boolean) as AuctionItem[];
+      // Sort events chronologically so the last event per loan wins.
+      // RPC event IDs are "{ledger}-{index}" — lexicographic sort gives correct order.
+      allEvents.sort((a, b) => a.id.localeCompare(b.id));
 
-      const deletedKeys = new Set(
-        allEvents
-          .filter((e) => getEventName(e) === 'bad_debt_auction_deleted')
-          .map(parseAuction)
-          .filter((a): a is AuctionItem => a !== null)
-          .map((a) => auctionKey(a.loan_id)),
-      );
+      // Walk events in order; the final state for each loan_id determines liveness.
+      const auctionStateMap = new Map<string, AuctionItem | null>();
+      for (const event of allEvents) {
+        const name = getEventName(event);
+        if (name !== 'bad_debt_auction_created' && name !== 'bad_debt_auction_deleted') continue;
+        const auction = parseAuction(event);
+        if (!auction) continue;
+        const key = auctionKey(auction.loan_id);
+        auctionStateMap.set(key, name === 'bad_debt_auction_created' ? auction : null);
+      }
 
-      const liveAuctions = createdAuctions.filter((a) => !deletedKeys.has(auctionKey(a.loan_id)));
+      const liveAuctions = [...auctionStateMap.values()].filter(Boolean) as AuctionItem[];
 
       const currentPools = poolsRef.current;
 
