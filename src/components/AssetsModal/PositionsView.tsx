@@ -20,7 +20,12 @@ const PositionsView = ({ onClose, onWithdraw }: PositionsViewProps) => {
       {/* Mobile card list */}
       <div className="flex flex-col gap-3 md:hidden">
         {entries.map(([ticker, { receivable_shares }]) => (
-          <AssetCard key={ticker} ticker={ticker as SupportedCurrency} receivableShares={receivable_shares} onWithdraw={onWithdraw} />
+          <AssetCard
+            key={ticker}
+            ticker={ticker as SupportedCurrency}
+            receivableShares={receivable_shares}
+            onWithdraw={onWithdraw}
+          />
         ))}
       </div>
       {/* Desktop table */}
@@ -85,7 +90,9 @@ const AssetCard = ({ receivableShares, ticker, onWithdraw }: AssetItemProps) => 
       <div className="grid grid-cols-2 gap-x-4 gap-y-2 mb-3 text-sm">
         <div>
           <p className="text-grey mb-0.5">Balance</p>
-          <p className="font-semibold">{formatAmount(totalBalance)} {ticker}</p>
+          <p className="font-semibold">
+            {formatAmount(totalBalance)} {ticker}
+          </p>
           {!isNil(price) && <p className="text-grey-dark text-xs">{toDollarsFormatted(price, totalBalance)}</p>}
         </div>
         <div>

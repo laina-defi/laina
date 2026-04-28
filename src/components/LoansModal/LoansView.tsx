@@ -41,7 +41,12 @@ const LoansView = ({ onClose, onRepay, onAdjustCollateral }: LoansViewProps) => 
             </thead>
             <tbody>
               {loans.map((loan) => (
-                <TableRow key={loan.loanId.nonce} loan={loan} onRepay={onRepay} onAdjustCollateral={onAdjustCollateral} />
+                <TableRow
+                  key={loan.loanId.nonce}
+                  loan={loan}
+                  onRepay={onRepay}
+                  onAdjustCollateral={onAdjustCollateral}
+                />
               ))}
             </tbody>
           </table>
@@ -74,9 +79,7 @@ const LoanCard = ({ loan, onRepay, onAdjustCollateral }: LoanItemProps) => {
   const loanAmountCents = loanPrice ? toCents(loanPrice, borrowedAmount) : undefined;
   const collateralAmountCents = collateralPrice ? toCents(collateralPrice, collateralAmount) : undefined;
   const healthFactor =
-    loanAmountCents && loanAmountCents > 0n
-      ? (Number(collateralAmountCents) * 0.8) / Number(loanAmountCents)
-      : 0;
+    loanAmountCents && loanAmountCents > 0n ? (Number(collateralAmountCents) * 0.8) / Number(loanAmountCents) : 0;
 
   return (
     <div className="rounded border border-grey-light p-4">
@@ -87,13 +90,19 @@ const LoanCard = ({ loan, onRepay, onAdjustCollateral }: LoanItemProps) => {
       <div className="grid grid-cols-2 gap-x-4 gap-y-2 mb-3 text-sm">
         <div>
           <p className="text-grey mb-0.5">Borrowed</p>
-          <p className="font-semibold">{formatAmount(loanTotal)} {borrowedTicker}</p>
+          <p className="font-semibold">
+            {formatAmount(loanTotal)} {borrowedTicker}
+          </p>
           {loanPrice && <p className="text-grey-dark text-xs">{toDollarsFormatted(loanPrice, loanTotal)}</p>}
         </div>
         <div>
           <p className="text-grey mb-0.5">Collateral</p>
-          <p className="font-semibold">{formatAmount(collateralAmount)} {collateralTicker}</p>
-          {collateralPrice && <p className="text-grey-dark text-xs">{toDollarsFormatted(collateralPrice, collateralAmount)}</p>}
+          <p className="font-semibold">
+            {formatAmount(collateralAmount)} {collateralTicker}
+          </p>
+          {collateralPrice && (
+            <p className="text-grey-dark text-xs">{toDollarsFormatted(collateralPrice, collateralAmount)}</p>
+          )}
         </div>
         {pool && (
           <div>
@@ -104,7 +113,9 @@ const LoanCard = ({ loan, onRepay, onAdjustCollateral }: LoanItemProps) => {
       </div>
       <div className="flex gap-2">
         <Button onClick={() => onRepay(loan)}>Repay</Button>
-        <Button variant="ghost" onClick={() => onAdjustCollateral(loan)}>Collateral</Button>
+        <Button variant="ghost" onClick={() => onAdjustCollateral(loan)}>
+          Collateral
+        </Button>
       </div>
     </div>
   );
@@ -131,9 +142,7 @@ const TableRow = ({ loan, onRepay, onAdjustCollateral }: TableRowProps) => {
   const collateralAmountCents = collateralPrice ? toCents(collateralPrice, collateralAmount) : undefined;
 
   const healthFactor =
-    loanAmountCents && loanAmountCents > 0n
-      ? (Number(collateralAmountCents) * 0.8) / Number(loanAmountCents)
-      : 0;
+    loanAmountCents && loanAmountCents > 0n ? (Number(collateralAmountCents) * 0.8) / Number(loanAmountCents) : 0;
 
   return (
     <tr key={loan.loanId.nonce} className="text-base">
