@@ -23,4 +23,8 @@ pub enum LoanPoolError {
     InsurancePoolAddress = 17,
     BadDebtWrite = 18,
     InsufficientInsuranceCoverage = 19,
+    BaseInterestRate = 20,
+    MaxInterestRate = 21,
+    InterestRateAtPanic = 22,
+    PanicRatesThreshold = 23,
 }

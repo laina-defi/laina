@@ -36,30 +36,60 @@ impl LoanPoolContract {
     ) {
         storage::write_loan_manager_addr(&e, loan_manager_addr);
         storage::write_currency(&e, currency);
-        storage::write_liquidation_threshold(&e, liquidation_threshold);
+        storage::write_collateral_factor(&e, liquidation_threshold);
         storage::write_total_shares(&e, 0);
         storage::write_total_balance(&e, 0);
         storage::write_available_balance(&e, 0);
         storage::write_accrual(&e, 10_000_000); // Default initial accrual value.
         storage::write_accrual_last_updated(&e, e.ledger().timestamp());
-        storage::change_interest_rate_multiplier(&e, 1); // Temporary parameter
+        storage::change_interest_rate_multiplier(&e, 100); // 100 = 1.00x (2 decimal fixed-point)
+        storage::write_base_interest_rate(&e, storage::DEFAULT_BASE_INTEREST_RATE);
+        storage::write_interest_rate_at_panic(&e, storage::DEFAULT_INTEREST_RATE_AT_PANIC);
+        storage::write_max_interest_rate(&e, storage::DEFAULT_MAX_INTEREST_RATE);
+        storage::write_panic_rates_threshold(&e, storage::DEFAULT_PANIC_RATES_THRESHOLD);
         storage::change_pool_status(&e, PoolStatus::Caution);
         storage::write_token_contract_address(&e, token_contract_address);
     }
 
     pub fn upgrade(e: Env, new_wasm_hash: BytesN<32>) -> Result<(), LoanPoolError> {
-        let loan_manager_addr = storage::read_loan_manager_addr(&e)?;
-        loan_manager_addr.require_auth();
-
+        storage::read_loan_manager_addr(&e)?.require_auth();
         e.deployer().update_current_contract_wasm(new_wasm_hash);
         Ok(())
     }
 
     pub fn change_interest_rate_multiplier(e: Env, multiplier: i128) -> Result<(), LoanPoolError> {
-        let loan_manager_addr = storage::read_loan_manager_addr(&e)?;
-        loan_manager_addr.require_auth();
-
+        storage::read_loan_manager_addr(&e)?.require_auth();
         storage::change_interest_rate_multiplier(&e, multiplier);
+        Ok(())
+    }
+
+    pub fn change_collateral_factor(e: Env, collateral_factor: i128) -> Result<(), LoanPoolError> {
+        storage::read_loan_manager_addr(&e)?.require_auth();
+        storage::write_collateral_factor(&e, collateral_factor);
+        Ok(())
+    }
+
+    pub fn set_base_interest_rate(e: Env, rate: i128) -> Result<(), LoanPoolError> {
+        storage::read_loan_manager_addr(&e)?.require_auth();
+        storage::write_base_interest_rate(&e, rate);
+        Ok(())
+    }
+
+    pub fn set_interest_rate_at_panic(e: Env, rate: i128) -> Result<(), LoanPoolError> {
+        storage::read_loan_manager_addr(&e)?.require_auth();
+        storage::write_interest_rate_at_panic(&e, rate);
+        Ok(())
+    }
+
+    pub fn set_max_interest_rate(e: Env, rate: i128) -> Result<(), LoanPoolError> {
+        storage::read_loan_manager_addr(&e)?.require_auth();
+        storage::write_max_interest_rate(&e, rate);
+        Ok(())
+    }
+
+    pub fn set_panic_rates_threshold(e: Env, threshold: i128) -> Result<(), LoanPoolError> {
+        storage::read_loan_manager_addr(&e)?.require_auth();
+        storage::write_panic_rates_threshold(&e, threshold);
         Ok(())
     }
 
@@ -188,8 +218,7 @@ impl LoanPoolContract {
 
     /// Borrow tokens from the pool
     pub fn borrow(e: Env, user: Address, amount: i128) -> Result<i128, LoanPoolError> {
-        let loan_manager_addr = storage::read_loan_manager_addr(&e)?;
-        loan_manager_addr.require_auth();
+        storage::read_loan_manager_addr(&e)?.require_auth();
         user.require_auth();
 
         let pool_status = storage::read_pool_status(&e)?;
@@ -323,7 +352,7 @@ impl LoanPoolContract {
     }
 
     pub fn add_interest_to_accrual(e: Env) -> Result<(), LoanPoolError> {
-        const DECIMAL: i128 = 10000000;
+        const DECIMAL: i128 = 10_000_000;
         const SECONDS_IN_YEAR: u64 = 31_556_926;
 
         let current_timestamp = e.ledger().timestamp();
@@ -465,8 +494,7 @@ impl LoanPoolContract {
     }
 
     pub fn increase_liabilities(e: Env, user: Address, amount: i128) -> Result<(), LoanPoolError> {
-        let loan_manager_addr = storage::read_loan_manager_addr(&e)?;
-        loan_manager_addr.require_auth();
+        storage::read_loan_manager_addr(&e)?.require_auth();
 
         positions::increase_positions(&e, user.clone(), amount, 0)?;
         storage::adjust_total_liabilities(&e, amount)?;
@@ -641,8 +669,7 @@ impl LoanPoolContract {
         amount_collateral_tokens: i128,
         loan_owner: Address,
     ) -> Result<i128, LoanPoolError> {
-        let loan_manager_addr = storage::read_loan_manager_addr(&e)?;
-        loan_manager_addr.require_auth();
+        storage::read_loan_manager_addr(&e)?.require_auth();
 
         let total_shares = storage::read_total_shares(&e)?;
         let total_tokens = storage::read_total_balance(&e)?;
@@ -799,8 +826,7 @@ impl LoanPoolContract {
         borrower: Address,
         bad_debt_tokens: i128,
     ) -> Result<(), LoanPoolError> {
-        let loan_manager_addr = storage::read_loan_manager_addr(&e)?;
-        loan_manager_addr.require_auth();
+        storage::read_loan_manager_addr(&e)?.require_auth();
 
         if bad_debt_tokens <= 0 {
             return Err(LoanPoolError::BadDebtWrite);

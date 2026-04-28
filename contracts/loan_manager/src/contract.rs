@@ -49,9 +49,7 @@ impl LoanManager {
             .with_current_contract(salt)
             .deploy_v2(wasm_hash, ());
 
-        let admin = storage::read_admin(&e)?;
-
-        admin.require_auth();
+        storage::read_admin(&e)?.require_auth();
 
         storage::append_pool_address(&e, deployed_address.clone());
 
@@ -95,8 +93,7 @@ impl LoanManager {
         new_manager_wasm_hash: BytesN<32>,
         new_pool_wasm_hash: BytesN<32>,
     ) -> Result<(), LoanManagerError> {
-        let admin = storage::read_admin(&e)?;
-        admin.require_auth();
+        storage::read_admin(&e)?.require_auth();
 
         storage::read_pool_addresses(&e).iter().for_each(|pool| {
             let pool_client = loan_pool::Client::new(&e, &pool);
@@ -356,6 +353,66 @@ impl LoanManager {
             .lastprice(&asset)
             .ok_or(LoanManagerError::NoLastPrice)?;
         Ok(asset_pricedata.price)
+    }
+
+    pub fn change_collateral_factor(
+        e: Env,
+        collateral_factor: i128,
+        pool: Address,
+    ) -> Result<(), LoanManagerError> {
+        storage::read_admin(&e)?.require_auth();
+        loan_pool::Client::new(&e, &pool).change_collateral_factor(&collateral_factor);
+        Ok(())
+    }
+
+    pub fn change_interest_rate_multiplier(
+        e: Env,
+        multiplier: i128,
+        pool: Address,
+    ) -> Result<(), LoanManagerError> {
+        storage::read_admin(&e)?.require_auth();
+        loan_pool::Client::new(&e, &pool).change_interest_rate_multiplier(&multiplier);
+        Ok(())
+    }
+
+    pub fn set_base_interest_rate(
+        e: Env,
+        base_interest_rate: i128,
+        pool: Address,
+    ) -> Result<(), LoanManagerError> {
+        storage::read_admin(&e)?.require_auth();
+        loan_pool::Client::new(&e, &pool).set_base_interest_rate(&base_interest_rate);
+        Ok(())
+    }
+
+    pub fn set_interest_rate_at_panic(
+        e: Env,
+        interest_rate_at_panic: i128,
+        pool: Address,
+    ) -> Result<(), LoanManagerError> {
+        storage::read_admin(&e)?.require_auth();
+        loan_pool::Client::new(&e, &pool).set_interest_rate_at_panic(&interest_rate_at_panic);
+        Ok(())
+    }
+
+    pub fn set_max_interest_rate(
+        e: Env,
+        max_interest_rate: i128,
+        pool: Address,
+    ) -> Result<(), LoanManagerError> {
+        storage::read_admin(&e)?.require_auth();
+        loan_pool::Client::new(&e, &pool).set_max_interest_rate(&max_interest_rate);
+        Ok(())
+    }
+
+    pub fn set_panic_rates_threshold(
+        e: Env,
+        panic_rates_threshold: i128,
+        pool: Address,
+    ) -> Result<(), LoanManagerError> {
+        storage::read_admin(&e)?.require_auth();
+        loan_pool::Client::new(&e, &pool).set_panic_rates_threshold(&panic_rates_threshold);
+        Ok(())
     }
 
     pub fn repay(e: &Env, loan_id: LoanId, amount: i128) -> Result<(i128, i128), LoanManagerError> {
@@ -706,16 +763,12 @@ impl LoanManager {
         pool_addr: Address,
         insurance_pool_addr: Address,
     ) -> Result<(), LoanManagerError> {
-        let admin = storage::read_admin(&e)?;
-        admin.require_auth();
+        storage::read_admin(&e)?.require_auth();
 
-        let pool_client = loan_pool::Client::new(&e, &pool_addr);
-        pool_client.set_insurance_pool(&insurance_pool_addr);
+        loan_pool::Client::new(&e, &pool_addr).set_insurance_pool(&insurance_pool_addr);
 
-        // Store the loan_pool → insurance_pool mapping for LAI distribution
         storage::write_lai_insurance_pool_for_pool(&e, &pool_addr, &insurance_pool_addr);
 
-        // Initialize insurer pool state if LAI distribution is active
         if let Some(config) = storage::read_lai_config(&e) {
             if storage::read_lai_insurer_pool_state(&e, &insurance_pool_addr).is_none() {
                 let start = e.ledger().sequence().max(config.start_ledger);
@@ -741,13 +794,14 @@ impl LoanManager {
         let loan = storage::read_loan(&e, &loan_id).ok_or(LoanManagerError::LoanNotFound)?;
 
         let collateral_pool_client = loan_pool::Client::new(&e, &loan.collateral_from);
-        let borrow_pool_client = loan_pool::Client::new(&e, &loan.borrowed_from);
 
         let collateral_amount = collateral_pool_client.shares_to_tokens(&loan.collateral_shares);
 
         let health_factor = Self::calculate_health_factor(
             &e,
-            borrow_pool_client.get_currency().ticker,
+            loan_pool::Client::new(&e, &loan.borrowed_from)
+                .get_currency()
+                .ticker,
             loan.borrowed_amount,
             collateral_pool_client.get_currency().ticker,
             collateral_amount,
@@ -864,8 +918,7 @@ impl LoanManager {
         token: Address,
         start_ledger: u32,
     ) -> Result<(), LoanManagerError> {
-        let admin = storage::read_admin(&e)?;
-        admin.require_auth();
+        storage::read_admin(&e)?.require_auth();
 
         const TOTAL_AMOUNT: i128 = 50_000_000 * 10_000_000; // 50M with 7 decimals
         let end_ledger = start_ledger + LAI_TOTAL_LEDGERS;
