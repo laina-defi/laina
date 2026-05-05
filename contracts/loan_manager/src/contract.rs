@@ -953,12 +953,13 @@ impl LoanManager {
 
         let mut total_pending: i128 = 0;
         let pool_addresses = storage::read_pool_addresses(&e);
+        let user_loans = storage::read_user_loans(&e, &user);
 
         for pool in pool_addresses.iter() {
             // --- Borrower side ---
             if let Some(mut pool_state) = storage::read_lai_borrower_pool_state(&e, &pool) {
                 // Compute current liabilities from loan records
-                let user_liabilities: i128 = storage::read_user_loans(&e, &user)
+                let user_liabilities: i128 = user_loans
                     .iter()
                     .filter(|l| l.borrowed_from == pool)
                     .map(|l| l.borrowed_amount)
