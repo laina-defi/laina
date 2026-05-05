@@ -38,7 +38,7 @@ const LandingPage = () => (
       </div>
     </section>
     <section className="flex flex-row flex-wrap my-10 md:mb-24">
-      <Award image={SCFLogo.src} title="Stellar Community Fund" subtitle="Kickstart Award" />
+      <Award image={SCFLogo.src} title="Stellar Community Fund" subtitle="Kickstart Award & Build Award" />
       <Award image={ReflectorLogo.src} title="Reflector Dev Contest" subtitle="Best Oracle-based Smart Contract" />
     </section>
     <section className="flex flex-row flex-wrap my-10">
