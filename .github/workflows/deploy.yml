@@ -36,6 +36,10 @@ jobs:
           CONTRACT_ID_POOL_WETH: ${{ secrets.CONTRACT_ID_POOL_WETH }}
           CONTRACT_ID_POOL_USDC: ${{ secrets.CONTRACT_ID_POOL_USDC }}
           CONTRACT_ID_POOL_EURC: ${{ secrets.CONTRACT_ID_POOL_EURC }}
+          CONTRACT_ID_FAUCET: ${{ secrets.CONTRACT_ID_FAUCET }}
+          CONTRACT_ID_INSURANCE_POOL_XLM: ${{ secrets.CONTRACT_ID_INSURANCE_POOL_XLM }}
+          CONTRACT_ID_INSURANCE_POOL_USDC: ${{ secrets.CONTRACT_ID_INSURANCE_POOL_USDC }}
+          CONTRACT_ID_INSURANCE_POOL_EURC: ${{ secrets.CONTRACT_ID_INSURANCE_POOL_EURC }}
         run: |
           npm ci
           npm run upgrade
