@@ -53,6 +53,7 @@ jobs:
           PUBLIC_CONTRACT_ADDRESS_EURC: ${{ secrets.PUBLIC_CONTRACT_ADDRESS_EURC }}
           PUBLIC_ISSUER_ADDRESS_USDC: ${{ secrets.PUBLIC_ISSUER_ADDRESS_USDC }}
           PUBLIC_ISSUER_ADDRESS_EURC: ${{ secrets.PUBLIC_ISSUER_ADDRESS_EURC }}
+          PUBLIC_ISSUER_ADDRESS_LAI: ${{ secrets.PUBLIC_ISSUER_ADDRESS_LAI }}
         uses: withastro/action@v2
 
   deploy:
