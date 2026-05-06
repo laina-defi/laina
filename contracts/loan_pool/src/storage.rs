@@ -228,6 +228,12 @@ pub fn read_loan_manager_addr(e: &Env) -> Result<Address, LoanPoolError> {
         .ok_or(LoanPoolError::LoanManager)
 }
 
+pub fn loan_manager_addr_exists(e: &Env) -> bool {
+    e.storage()
+        .persistent()
+        .has(&PoolDataKey::LoanManagerAddress)
+}
+
 pub fn write_currency(e: &Env, currency: Currency) {
     let key = PoolDataKey::Currency;
     e.storage().persistent().set(&key, &currency);

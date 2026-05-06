@@ -34,7 +34,10 @@ impl LoanPoolContract {
         currency: Currency,
         liquidation_threshold: i128,
         token_contract_address: Address,
-    ) {
+    ) -> Result<(), LoanPoolError> {
+        if storage::loan_manager_addr_exists(&e) {
+            return Err(LoanPoolError::AlreadyInitialized);
+        }
         storage::write_loan_manager_addr(&e, loan_manager_addr);
         storage::write_currency(&e, currency);
         storage::write_collateral_factor(&e, liquidation_threshold);
@@ -50,6 +53,7 @@ impl LoanPoolContract {
         storage::write_panic_rates_threshold(&e, storage::DEFAULT_PANIC_RATES_THRESHOLD);
         storage::change_pool_status(&e, PoolStatus::Caution);
         storage::write_token_contract_address(&e, token_contract_address);
+        Ok(())
     }
 
     pub fn upgrade(e: Env, new_wasm_hash: BytesN<32>) -> Result<(), LoanPoolError> {
