@@ -1,7 +1,7 @@
-export const HEALTH_FACTOR_AUTO_THRESHOLD = 1.4;
-export const HEALTH_FACTOR_MIN_THRESHOLD = 1.25;
-export const HEALTH_FACTOR_GOOD_THRESHOLD = 1.35;
-export const HEALTH_FACTOR_EXCELLENT_THRESHOLD = 1.45;
+export const HEALTH_FACTOR_AUTO_THRESHOLD = 1.25;
+export const HEALTH_FACTOR_MIN_THRESHOLD = 1.0;
+export const HEALTH_FACTOR_GOOD_THRESHOLD = 1.2;
+export const HEALTH_FACTOR_EXCELLENT_THRESHOLD = 1.4;
 
 export const HealthFactor = ({ value }: { value: number }) => {
   if (value < HEALTH_FACTOR_MIN_THRESHOLD) {

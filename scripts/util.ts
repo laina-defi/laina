@@ -2,6 +2,20 @@ import { execSync } from 'child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'fs';
 import path from 'path';
 
+/** Update or append a key=value pair in .env */
+export const writeEnvVar = (key: string, value: string, envPath = '.env') => {
+  let content = '';
+  try {
+    content = readFileSync(envPath, 'utf8');
+  } catch {
+    /* file may not exist yet */
+  }
+  const line = `${key}=${value}`;
+  const re = new RegExp(`^${key}=.*`, 'm');
+  content = re.test(content) ? content.replace(re, line) : `${content}\n${line}`;
+  writeFileSync(envPath, content.trimStart());
+};
+
 // Load environment variables starting with PUBLIC_ into the environment,
 // so we don't need to specify duplicate variables in .env
 for (const key in process.env) {
@@ -25,7 +39,8 @@ const network = process.env.SOROBAN_NETWORK;
 export const GENESIS_ACCOUNT = GENESIS_ACCOUNTS[network as keyof typeof GENESIS_ACCOUNTS] ?? GENESIS_ACCOUNTS.testnet;
 
 export const loadAccount = () => {
-  // This takes the secret key from SOROBAN_SECRET_KEY env-variable, so make sure you have that set.
+  // Remove first so re-runs don't fail on "key already exists".
+  exe(`stellar keys rm ${process.env.SOROBAN_ACCOUNT} 2>/dev/null || true`);
   exe(`stellar keys add ${process.env.SOROBAN_ACCOUNT}`);
 };
 
@@ -48,7 +63,9 @@ export const installContracts = (mockOracle: boolean = false) => {
 
   install('loan_manager');
   install('loan_pool');
-  // Optionally install mock oracle so it can be deployed with the init flag
+  install('insurance_pool');
+  install('token');
+  install('faucet');
   if (mockOracle) {
     install('reflector_oracle_mock');
   }
@@ -85,6 +102,10 @@ export const createContractBindings = () => {
   bind('pool_xlm', process.env.CONTRACT_ID_POOL_XLM);
   bind('pool_usdc', process.env.CONTRACT_ID_POOL_USDC);
   bind('pool_eurc', process.env.CONTRACT_ID_POOL_EURC);
+  bind('faucet', process.env.CONTRACT_ID_FAUCET);
+  bind('insurance_pool_xlm', process.env.CONTRACT_ID_INSURANCE_POOL_XLM);
+  bind('insurance_pool_eurc', process.env.CONTRACT_ID_INSURANCE_POOL_EURC);
+  bind('insurance_pool_usdc', process.env.CONTRACT_ID_INSURANCE_POOL_USDC);
 };
 
 const bind = (contractName: string, address: string | undefined) => {
@@ -96,7 +117,16 @@ const bind = (contractName: string, address: string | undefined) => {
 };
 
 export const createContractImports = () => {
-  const CONTRACTS = ['loan_manager', 'pool_xlm', 'pool_usdc', 'pool_eurc'];
+  const CONTRACTS = [
+    'loan_manager',
+    'pool_xlm',
+    'pool_usdc',
+    'pool_eurc',
+    'faucet',
+    'insurance_pool_xlm',
+    'insurance_pool_usdc',
+    'insurance_pool_eurc',
+  ];
   CONTRACTS.forEach(importContract);
 };
 
@@ -120,6 +150,20 @@ const importContract = (contractName: string) => {
   const outputPath = `${outputDir}/${contractName}.ts`;
   writeFileSync(outputPath, importContent);
   console.log(`Created import for ${contractName}`);
+};
+
+export const withRetry = async <T>(fn: () => Promise<T>, retries = 4, baseDelayMs = 3000): Promise<T> => {
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      return await fn();
+    } catch (err: unknown) {
+      if (attempt === retries) throw err;
+      const msg = err instanceof Error ? err.message : String(err);
+      console.log(`Horizon error (attempt ${attempt}/${retries}): ${msg} — retrying in ${baseDelayMs * attempt}ms`);
+      await new Promise((r) => setTimeout(r, baseDelayMs * attempt));
+    }
+  }
+  throw new Error('unreachable');
 };
 
 export const logDeploymentInfo = () => {

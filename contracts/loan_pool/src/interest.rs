@@ -1,72 +1,56 @@
-use crate::{error::LoanPoolError, storage};
+use crate::checked_operations::CheckedOps;
+use crate::{
+    error::LoanPoolError,
+    storage::{self, InterestDto, DECIMAL},
+};
 use soroban_sdk::Env;
 
 #[allow(dead_code)]
-// These are mockup numbers that should be set to each pool based on the token.
-pub const BASE_INTEREST_RATE: i128 = 200_000; // 2%
-pub const INTEREST_RATE_AT_PANIC: i128 = 1_000_000; // 10%
-pub const MAX_INTEREST_RATE: i128 = 3_000_000; // 30%
-pub const PANIC_BASE_RATE: i128 = -17_000_000;
-
 pub fn get_interest(e: Env) -> Result<i128, LoanPoolError> {
-    let interest_rate_multiplier = storage::read_interest_rate_multiplier(&e)?;
-    const PANIC_RATES_THRESHOLD: i128 = 90_000_000;
+    let InterestDto {
+        base_interest_rate,
+        interest_rate_at_panic,
+        max_interest_rate,
+        panic_rates_threshold,
+        interest_multiplier,
+        ..
+    } = storage::read_interest_dto(&e)?;
     let available = storage::read_available_balance(&e)?;
     let total = storage::read_total_balance(&e)?;
 
+    const MAX_UTILIZATION: i128 = 100_000_000;
+    const MULTIPLIER_DECIMAL: i128 = 100;
+
     if total > 0 {
-        let slope_before_panic = (INTEREST_RATE_AT_PANIC
-            .checked_sub(BASE_INTEREST_RATE)
-            .ok_or(LoanPoolError::OverOrUnderFlow)?)
-        .checked_mul(10_000_000)
-        .ok_or(LoanPoolError::OverOrUnderFlow)?
-        .checked_div(PANIC_RATES_THRESHOLD)
-        .ok_or(LoanPoolError::OverOrUnderFlow)?;
+        let slope_before_panic = (interest_rate_at_panic.csub(base_interest_rate)?)
+            .cmul(DECIMAL)?
+            .cdiv(panic_rates_threshold)?;
 
-        let slope_after_panic = (MAX_INTEREST_RATE
-            .checked_sub(INTEREST_RATE_AT_PANIC)
-            .ok_or(LoanPoolError::OverOrUnderFlow)?)
-        .checked_mul(10_000_000)
-        .ok_or(LoanPoolError::OverOrUnderFlow)?
-        .checked_div(
-            100_000_000_i128
-                .checked_sub(PANIC_RATES_THRESHOLD)
-                .ok_or(LoanPoolError::OverOrUnderFlow)?,
-        )
-        .ok_or(LoanPoolError::OverOrUnderFlow)?;
+        let slope_after_panic = (max_interest_rate.csub(interest_rate_at_panic)?)
+            .cmul(DECIMAL)?
+            .cdiv(MAX_UTILIZATION.csub(panic_rates_threshold)?)?;
 
-        let ratio_of_balances = ((total
-            .checked_sub(available)
-            .ok_or(LoanPoolError::OverOrUnderFlow)?)
-        .checked_mul(100_000_000)
-        .ok_or(LoanPoolError::OverOrUnderFlow)?)
-        .checked_div(total)
-        .ok_or(LoanPoolError::OverOrUnderFlow)?;
+        let panic_base_rate =
+            max_interest_rate.csub(slope_after_panic.cmul(MAX_UTILIZATION)?.cdiv(DECIMAL)?)?;
 
-        if ratio_of_balances < PANIC_RATES_THRESHOLD {
-            Ok((slope_before_panic
-                .checked_mul(ratio_of_balances)
-                .ok_or(LoanPoolError::OverOrUnderFlow)?)
-            .checked_div(10_000_000)
-            .ok_or(LoanPoolError::OverOrUnderFlow)?
-            .checked_add(BASE_INTEREST_RATE)
-            .ok_or(LoanPoolError::OverOrUnderFlow)?
-            .checked_mul(interest_rate_multiplier)
-            .ok_or(LoanPoolError::OverOrUnderFlow)?)
+        let ratio_of_balances = ((total.csub(available)?).cmul(MAX_UTILIZATION)?).cdiv(total)?;
+
+        if ratio_of_balances < panic_rates_threshold {
+            Ok((slope_before_panic.cmul(ratio_of_balances)?)
+                .cdiv(DECIMAL)?
+                .cadd(base_interest_rate)?
+                .cmul(interest_multiplier)?
+                .cdiv(MULTIPLIER_DECIMAL)?)
         } else {
-            Ok((slope_after_panic
-                .checked_mul(ratio_of_balances)
-                .ok_or(LoanPoolError::OverOrUnderFlow)?)
-            .checked_div(10_000_000)
-            .ok_or(LoanPoolError::OverOrUnderFlow)?
-            .checked_add(PANIC_BASE_RATE)
-            .ok_or(LoanPoolError::OverOrUnderFlow)?
-            .checked_mul(interest_rate_multiplier)
-            .ok_or(LoanPoolError::OverOrUnderFlow)?)
+            Ok((slope_after_panic.cmul(ratio_of_balances)?)
+                .cdiv(DECIMAL)?
+                .cadd(panic_base_rate)?
+                .cmul(interest_multiplier)?
+                .cdiv(MULTIPLIER_DECIMAL)?)
         }
     } else {
-        Ok(BASE_INTEREST_RATE
-            .checked_mul(interest_rate_multiplier)
-            .ok_or(LoanPoolError::OverOrUnderFlow)?)
+        Ok(base_interest_rate
+            .cmul(interest_multiplier)?
+            .cdiv(MULTIPLIER_DECIMAL)?)
     }
 }

@@ -1,6 +1,10 @@
+use crate::checked_operations::CheckedOps;
 use crate::error::LoanManagerError;
 use crate::oracle::{self, Asset};
-use crate::storage::{self, Loan, LoanId, NewLoan};
+use crate::storage::{
+    self, AuctionItem, LaiConfig, LaiPoolState, LaiUserState, Loan, LoanId, NewLoan,
+};
+use crate::storage::{LAI_BORROWER_BPS, LAI_INSURER_BPS, LAI_PRECISION, LAI_TOTAL_LEDGERS};
 
 use soroban_sdk::{contract, contractimpl, token, Address, BytesN, Env, Symbol, Vec};
 
@@ -38,6 +42,7 @@ impl LoanManager {
         token_address: Address,
         ticker: Symbol,
         liquidation_threshold: i128,
+        pool_token_address: Address,
     ) -> Result<Address, LoanManagerError> {
         // Deploy the contract using the uploaded Wasm with given hash.
         let deployed_address: Address = e
@@ -45,9 +50,7 @@ impl LoanManager {
             .with_current_contract(salt)
             .deploy_v2(wasm_hash, ());
 
-        let admin = storage::read_admin(&e)?;
-
-        admin.require_auth();
+        storage::read_admin(&e)?.require_auth();
 
         storage::append_pool_address(&e, deployed_address.clone());
 
@@ -61,7 +64,26 @@ impl LoanManager {
             &e.current_contract_address(),
             &currency,
             &liquidation_threshold,
+            &pool_token_address,
         );
+
+        // If LAI distribution is active, flush existing pool accumulators with old rate
+        // before changing num_pools, then initialize state for the new pool.
+        if let Some(config) = storage::read_lai_config(&e) {
+            Self::flush_all_pool_accumulators(&e, &config);
+            let new_num_pools = storage::read_lai_num_pools(&e) + 1;
+            storage::write_lai_num_pools(&e, new_num_pools);
+            let start = e.ledger().sequence().max(config.start_ledger);
+            storage::write_lai_borrower_pool_state(
+                &e,
+                &deployed_address,
+                &LaiPoolState {
+                    acc_per_share: 0,
+                    last_ledger: start,
+                    last_known_total: 0,
+                },
+            );
+        }
 
         Ok(deployed_address)
     }
@@ -72,8 +94,7 @@ impl LoanManager {
         new_manager_wasm_hash: BytesN<32>,
         new_pool_wasm_hash: BytesN<32>,
     ) -> Result<(), LoanManagerError> {
-        let admin = storage::read_admin(&e)?;
-        admin.require_auth();
+        storage::read_admin(&e)?.require_auth();
 
         storage::read_pool_addresses(&e).iter().for_each(|pool| {
             let pool_client = loan_pool::Client::new(&e, &pool);
@@ -133,7 +154,6 @@ impl LoanManager {
             collateral_from.clone(),
         )?;
 
-        // Health factor has to be over 1.2 for the loan to be initialized.
         // Health factor is defined as so: 1.0 = 10000000_i128
         const HEALTH_FACTOR_THRESHOLD: i128 = 10000000;
         assert!(
@@ -141,8 +161,28 @@ impl LoanManager {
             "Health factor must be over {HEALTH_FACTOR_THRESHOLD} to create a new loan!"
         );
 
-        // Deposit collateral
-        let collateral_amount = collateral_pool_client.deposit_collateral(&user, &collateral);
+        // Deposit collateral — returns shares issued
+        let collateral_shares = collateral_pool_client.deposit_collateral(&user, &collateral);
+
+        // Checkpoint borrower LAI rewards before changing their liability position.
+        // For a new loan from this pool, old_liabilities = sum of existing loans from same pool.
+        if storage::read_lai_config(&e).is_some() {
+            let borrow_pool_state = borrow_pool_client.get_pool_state();
+            let total_liabilities = borrow_pool_state.total_liabilities_tokens;
+            let old_liabilities: i128 = storage::read_user_loans(&e, &user)
+                .iter()
+                .filter(|l| l.borrowed_from == borrowed_from)
+                .map(|l| l.borrowed_amount)
+                .sum();
+            Self::checkpoint_borrower_internal(
+                &e,
+                &borrowed_from,
+                &user,
+                old_liabilities,
+                old_liabilities + borrowed,
+                total_liabilities,
+            );
+        }
 
         // Borrow the funds
         let borrowed_amount = borrow_pool_client.borrow(&user, &borrowed);
@@ -153,7 +193,7 @@ impl LoanManager {
             borrower_address: user.clone(),
             borrowed_amount,
             borrowed_from,
-            collateral_amount,
+            collateral_shares,
             collateral_from,
             health_factor,
             unpaid_interest,
@@ -169,7 +209,7 @@ impl LoanManager {
     pub fn add_interest(e: &Env, loan_id: LoanId) -> Result<Loan, LoanManagerError> {
         let Loan {
             borrowed_from,
-            collateral_amount,
+            collateral_shares,
             borrowed_amount,
             collateral_from,
             unpaid_interest,
@@ -187,33 +227,26 @@ impl LoanManager {
 
         borrow_pool_client.add_interest_to_accrual();
         let current_accrual = borrow_pool_client.get_accrual();
-        let interest_since_update_multiplier = current_accrual
-            .checked_mul(DECIMAL)
-            .ok_or(LoanManagerError::OverOrUnderFlow)?
-            .checked_div(last_accrual)
-            .ok_or(LoanManagerError::OverOrUnderFlow)?;
+        let interest_since_update_multiplier = current_accrual.cmul(DECIMAL)?.cdiv(last_accrual)?;
 
         let new_borrowed_amount = borrowed_amount
-            .checked_mul(interest_since_update_multiplier)
-            .ok_or(LoanManagerError::OverOrUnderFlow)?
-            .checked_div(DECIMAL)
-            .ok_or(LoanManagerError::OverOrUnderFlow)?;
+            .cmul(interest_since_update_multiplier)?
+            .cdiv(DECIMAL)?;
+
+        // Get current token value of collateral shares for health factor calculation
+        let collateral_tokens = collateral_pool_client.shares_to_tokens(&collateral_shares);
 
         let new_health_factor = Self::calculate_health_factor(
             e,
             token_ticker,
             new_borrowed_amount,
             token_collateral_ticker,
-            collateral_amount,
+            collateral_tokens,
             collateral_from.clone(),
         )?;
 
-        let borrow_change = new_borrowed_amount
-            .checked_sub(borrowed_amount)
-            .ok_or(LoanManagerError::OverOrUnderFlow)?;
-        let new_unpaid_interest = unpaid_interest
-            .checked_add(borrow_change)
-            .ok_or(LoanManagerError::OverOrUnderFlow)?;
+        let borrow_change = new_borrowed_amount.csub(borrowed_amount)?;
+        let new_unpaid_interest = unpaid_interest.cadd(borrow_change)?;
 
         // Update the pool's positions to reflect the increased liabilities from interest
         if borrow_change > 0 {
@@ -223,7 +256,7 @@ impl LoanManager {
         let updated_loan = Loan {
             loan_id: loan_id.clone(),
             borrowed_from,
-            collateral_amount,
+            collateral_shares,
             borrowed_amount: new_borrowed_amount,
             collateral_from,
             health_factor: new_health_factor,
@@ -254,32 +287,27 @@ impl LoanManager {
         let collateral_pool_client = loan_pool::Client::new(e, &token_collateral_address);
         let collateral_factor = collateral_pool_client.get_collateral_factor();
 
-        let amount_of_data_points = 12; // 12 * 5 min = 1h average
+        // twap endpoint has been removed so
+        // TODO: add own price averaging using the prices endpoint
         let collateral_asset_price = reflector_contract
-            .twap(&collateral_asset, &amount_of_data_points)
+            .lastprice(&collateral_asset)
             .ok_or(LoanManagerError::NoLastPrice)?;
         let collateral_value = collateral_asset_price
-            .checked_mul(token_collateral_amount)
-            .ok_or(LoanManagerError::OverOrUnderFlow)?
-            .checked_mul(collateral_factor)
-            .ok_or(LoanManagerError::OverOrUnderFlow)?
-            .checked_div(DECIMAL_TO_INT_MULTIPLIER)
-            .ok_or(LoanManagerError::OverOrUnderFlow)?;
+            .price
+            .cmul(token_collateral_amount)?
+            .cmul(collateral_factor)?
+            .cdiv(DECIMAL_TO_INT_MULTIPLIER)?;
 
         // get the price and calculate the value of the borrowed asset
         let borrowed_asset = Asset::Other(token_ticker);
         let asset_price = reflector_contract
-            .twap(&borrowed_asset, &amount_of_data_points)
+            .lastprice(&borrowed_asset)
             .ok_or(LoanManagerError::NoLastPrice)?;
-        let borrowed_value = asset_price
-            .checked_mul(token_amount)
-            .ok_or(LoanManagerError::OverOrUnderFlow)?;
+        let borrowed_value = asset_price.price.cmul(token_amount)?;
 
         let health_factor = collateral_value
-            .checked_mul(DECIMAL_TO_INT_MULTIPLIER)
-            .ok_or(LoanManagerError::OverOrUnderFlow)?
-            .checked_div(borrowed_value)
-            .ok_or(LoanManagerError::OverOrUnderFlow)?;
+            .cmul(DECIMAL_TO_INT_MULTIPLIER)?
+            .cdiv(borrowed_value)?;
         Ok(health_factor)
     }
 
@@ -310,6 +338,66 @@ impl LoanManager {
         Ok(asset_pricedata.price)
     }
 
+    pub fn change_collateral_factor(
+        e: Env,
+        collateral_factor: i128,
+        pool: Address,
+    ) -> Result<(), LoanManagerError> {
+        storage::read_admin(&e)?.require_auth();
+        loan_pool::Client::new(&e, &pool).change_collateral_factor(&collateral_factor);
+        Ok(())
+    }
+
+    pub fn change_interest_rate_multiplier(
+        e: Env,
+        multiplier: i128,
+        pool: Address,
+    ) -> Result<(), LoanManagerError> {
+        storage::read_admin(&e)?.require_auth();
+        loan_pool::Client::new(&e, &pool).change_interest_rate_multiplier(&multiplier);
+        Ok(())
+    }
+
+    pub fn set_base_interest_rate(
+        e: Env,
+        base_interest_rate: i128,
+        pool: Address,
+    ) -> Result<(), LoanManagerError> {
+        storage::read_admin(&e)?.require_auth();
+        loan_pool::Client::new(&e, &pool).set_base_interest_rate(&base_interest_rate);
+        Ok(())
+    }
+
+    pub fn set_interest_rate_at_panic(
+        e: Env,
+        interest_rate_at_panic: i128,
+        pool: Address,
+    ) -> Result<(), LoanManagerError> {
+        storage::read_admin(&e)?.require_auth();
+        loan_pool::Client::new(&e, &pool).set_interest_rate_at_panic(&interest_rate_at_panic);
+        Ok(())
+    }
+
+    pub fn set_max_interest_rate(
+        e: Env,
+        max_interest_rate: i128,
+        pool: Address,
+    ) -> Result<(), LoanManagerError> {
+        storage::read_admin(&e)?.require_auth();
+        loan_pool::Client::new(&e, &pool).set_max_interest_rate(&max_interest_rate);
+        Ok(())
+    }
+
+    pub fn set_panic_rates_threshold(
+        e: Env,
+        panic_rates_threshold: i128,
+        pool: Address,
+    ) -> Result<(), LoanManagerError> {
+        storage::read_admin(&e)?.require_auth();
+        loan_pool::Client::new(&e, &pool).set_panic_rates_threshold(&panic_rates_threshold);
+        Ok(())
+    }
+
     pub fn repay(e: &Env, loan_id: LoanId, amount: i128) -> Result<(i128, i128), LoanManagerError> {
         let user = loan_id.borrower_address.clone();
         user.require_auth();
@@ -317,7 +405,7 @@ impl LoanManager {
         let Loan {
             borrowed_amount,
             borrowed_from,
-            collateral_amount,
+            collateral_shares,
             collateral_from,
             unpaid_interest,
             last_accrual,
@@ -331,26 +419,38 @@ impl LoanManager {
 
         let collateral_pool_client = loan_pool::Client::new(e, &collateral_from);
         let borrow_pool_client = loan_pool::Client::new(e, &borrowed_from);
+
+        // Checkpoint borrower LAI rewards before changing their liability position.
+        if storage::read_lai_config(e).is_some() {
+            let borrow_pool_state = borrow_pool_client.get_pool_state();
+            let total_liabilities = borrow_pool_state.total_liabilities_tokens;
+            Self::checkpoint_borrower_internal(
+                e,
+                &borrowed_from,
+                &user,
+                borrowed_amount,
+                borrowed_amount - amount,
+                total_liabilities,
+            );
+        }
+
         borrow_pool_client.repay(&user, &amount, &unpaid_interest);
 
         let new_unpaid_interest = if amount < unpaid_interest {
-            unpaid_interest
-                .checked_sub(amount)
-                .ok_or(LoanManagerError::OverOrUnderFlow)?
+            unpaid_interest.csub(amount)?
         } else {
             0
         };
 
-        let new_borrowed_amount = borrowed_amount
-            .checked_sub(amount)
-            .ok_or(LoanManagerError::OverOrUnderFlow)?;
+        let new_borrowed_amount = borrowed_amount.csub(amount)?;
 
+        let collateral_tokens = collateral_pool_client.shares_to_tokens(&collateral_shares);
         let new_health_factor = Self::calculate_health_factor(
             e,
             borrow_pool_client.get_currency().ticker,
             new_borrowed_amount,
             collateral_pool_client.get_currency().ticker,
-            collateral_amount,
+            collateral_tokens,
             collateral_from.clone(),
         )?;
 
@@ -361,7 +461,7 @@ impl LoanManager {
                 loan_id: loan_id.clone(),
                 borrowed_amount: new_borrowed_amount,
                 borrowed_from,
-                collateral_amount,
+                collateral_shares,
                 collateral_from,
                 health_factor: new_health_factor,
                 unpaid_interest: new_unpaid_interest,
@@ -383,13 +483,28 @@ impl LoanManager {
         let Loan {
             borrowed_amount,
             borrowed_from,
-            collateral_amount,
+            collateral_shares,
             collateral_from,
             unpaid_interest,
             ..
         } = Self::add_interest(e, loan_id.clone())?;
 
         let borrow_pool_client = loan_pool::Client::new(e, &borrowed_from);
+
+        // Checkpoint borrower LAI rewards before closing position (new liabilities = 0).
+        if storage::read_lai_config(e).is_some() {
+            let borrow_pool_state = borrow_pool_client.get_pool_state();
+            let total_liabilities = borrow_pool_state.total_liabilities_tokens;
+            Self::checkpoint_borrower_internal(
+                e,
+                &borrowed_from,
+                &user,
+                borrowed_amount,
+                0,
+                total_liabilities,
+            );
+        }
+
         borrow_pool_client.repay_and_close(
             &user,
             &borrowed_amount,
@@ -397,8 +512,9 @@ impl LoanManager {
             &unpaid_interest,
         );
 
+        // Withdraw collateral shares — user receives full token value including earned interest
         let collateral_pool_client = loan_pool::Client::new(e, &collateral_from);
-        collateral_pool_client.withdraw_collateral(&user, &collateral_amount);
+        collateral_pool_client.withdraw_collateral(&user, &collateral_shares);
 
         storage::delete_loan(e, &loan_id);
         Ok(borrowed_amount)
@@ -417,7 +533,7 @@ impl LoanManager {
             borrowed_amount,
             borrowed_from,
             collateral_from,
-            collateral_amount,
+            collateral_shares,
             unpaid_interest,
             last_accrual,
             ..
@@ -429,30 +545,23 @@ impl LoanManager {
         let borrowed_ticker = borrow_pool_client.get_currency().ticker;
         let collateral_ticker = collateral_pool_client.get_currency().ticker;
 
+        // Get current token value of collateral shares
+        let collateral_tokens = collateral_pool_client.shares_to_tokens(&collateral_shares);
+
         // Check that loan is for sure liquidatable at this moment.
         let health_factor_before_liquidation = Self::calculate_health_factor(
             &e,
             borrowed_ticker.clone(),
             borrowed_amount,
             collateral_ticker.clone(),
-            collateral_amount,
+            collateral_tokens,
             collateral_from.clone(),
         )?;
         assert!(health_factor_before_liquidation < 10000000);
         // Assert that the liquidation is not more than 50% of loan
-        assert!(
-            amount
-                < (borrowed_amount
-                    .checked_div(2)
-                    .ok_or(LoanManagerError::OverOrUnderFlow)?)
-        );
+        assert!(amount < borrowed_amount.cdiv(2)?);
         // Assert that the liquidation is atleast 1% of loan
-        assert!(
-            amount
-                > (borrowed_amount
-                    .checked_div(100)
-                    .ok_or(LoanManagerError::OverOrUnderFlow)?)
-        );
+        assert!(amount > borrowed_amount.cdiv(100)?);
 
         let borrowed_price = Self::get_price(&e, borrowed_ticker.clone())?;
         let collateral_price = Self::get_price(&e, collateral_ticker.clone())?;
@@ -462,45 +571,49 @@ impl LoanManager {
         // bonus rate = (1-collateralfactor) / 2 = e.g. 2.5-10 %
         // As multiplier = bonus rate + 1
         let bonus = FIXED_POINT_ONE
-            .checked_sub(collateral_factor)
-            .ok_or(LoanManagerError::OverOrUnderFlow)?
-            .checked_div(2_i128)
-            .ok_or(LoanManagerError::OverOrUnderFlow)?
-            .checked_add(FIXED_POINT_ONE)
-            .ok_or(LoanManagerError::OverOrUnderFlow)?;
+            .csub(collateral_factor)?
+            .cdiv(2_i128)?
+            .cadd(FIXED_POINT_ONE)?;
 
-        let liquidation_value = amount
-            .checked_mul(borrowed_price)
-            .ok_or(LoanManagerError::OverOrUnderFlow)?;
+        let liquidation_value = amount.cmul(borrowed_price)?;
         let collateral_amount_bonus = liquidation_value
-            .checked_mul(bonus)
-            .ok_or(LoanManagerError::OverOrUnderFlow)?
-            .checked_div(collateral_price)
-            .ok_or(LoanManagerError::OverOrUnderFlow)?
-            .checked_div(10_000_000)
-            .ok_or(LoanManagerError::OverOrUnderFlow)?;
+            .cmul(bonus)?
+            .cdiv(collateral_price)?
+            .cdiv(10_000_000)?;
+
+        // Checkpoint borrower LAI rewards before reducing their liability position.
+        if storage::read_lai_config(&e).is_some() {
+            let borrow_pool_state = borrow_pool_client.get_pool_state();
+            let total_liabilities = borrow_pool_state.total_liabilities_tokens;
+            Self::checkpoint_borrower_internal(
+                &e,
+                &borrowed_from,
+                &loan_id.borrower_address,
+                borrowed_amount,
+                borrowed_amount - amount,
+                total_liabilities,
+            );
+        }
 
         borrow_pool_client.liquidate(&user, &amount, &unpaid_interest, &loan_id.borrower_address);
 
-        collateral_pool_client.liquidate_transfer_collateral(
+        // liquidate_transfer_collateral takes tokens, converts to shares internally, returns shares removed
+        let bonus_shares = collateral_pool_client.liquidate_transfer_collateral(
             &user,
             &collateral_amount_bonus,
             &loan_id.borrower_address,
         );
 
-        let new_borrowed_amount = borrowed_amount
-            .checked_sub(amount)
-            .ok_or(LoanManagerError::OverOrUnderFlow)?;
-        let new_collateral_amount = collateral_amount
-            .checked_sub(collateral_amount_bonus)
-            .ok_or(LoanManagerError::OverOrUnderFlow)?;
+        let new_borrowed_amount = borrowed_amount.csub(amount)?;
+        let new_collateral_shares = collateral_shares.csub(bonus_shares)?;
 
+        let new_collateral_tokens = collateral_pool_client.shares_to_tokens(&new_collateral_shares);
         let new_health_factor = Self::calculate_health_factor(
             &e,
             borrowed_ticker,
             new_borrowed_amount,
             collateral_ticker,
-            new_collateral_amount,
+            new_collateral_tokens,
             collateral_from.clone(),
         )?;
 
@@ -513,7 +626,7 @@ impl LoanManager {
             borrowed_amount: new_borrowed_amount,
             borrowed_from,
             collateral_from,
-            collateral_amount: new_collateral_amount,
+            collateral_shares: new_collateral_shares,
             health_factor: new_health_factor,
             unpaid_interest, // Temp
             last_accrual,
@@ -523,11 +636,558 @@ impl LoanManager {
 
         Ok(new_loan)
     }
+
+    /// Add more collateral to an existing loan, improving its health factor.
+    /// `amount` is the token amount to deposit as additional collateral.
+    pub fn add_collateral(e: Env, loan_id: LoanId, amount: i128) -> Result<Loan, LoanManagerError> {
+        loan_id.borrower_address.require_auth();
+
+        let mut loan = Self::add_interest(&e, loan_id.clone())?;
+
+        let collateral_pool_client = loan_pool::Client::new(&e, &loan.collateral_from);
+        let borrow_pool_client = loan_pool::Client::new(&e, &loan.borrowed_from);
+
+        let new_shares =
+            collateral_pool_client.deposit_collateral(&loan_id.borrower_address, &amount);
+        loan.collateral_shares = loan.collateral_shares.cadd(new_shares)?;
+
+        let collateral_tokens = collateral_pool_client.shares_to_tokens(&loan.collateral_shares);
+        loan.health_factor = Self::calculate_health_factor(
+            &e,
+            borrow_pool_client.get_currency().ticker,
+            loan.borrowed_amount,
+            collateral_pool_client.get_currency().ticker,
+            collateral_tokens,
+            loan.collateral_from.clone(),
+        )?;
+
+        storage::write_loan(&e, &loan_id, &loan);
+        Ok(loan)
+    }
+
+    /// Remove collateral from an existing loan, decreasing its health factor.
+    /// `amount` is the token amount to withdraw. Fails if health factor would drop below 1.0.
+    pub fn remove_collateral(
+        e: Env,
+        loan_id: LoanId,
+        amount: i128,
+    ) -> Result<Loan, LoanManagerError> {
+        loan_id.borrower_address.require_auth();
+
+        let mut loan = Self::add_interest(&e, loan_id.clone())?;
+
+        let collateral_pool_client = loan_pool::Client::new(&e, &loan.collateral_from);
+        let borrow_pool_client = loan_pool::Client::new(&e, &loan.borrowed_from);
+
+        let shares_to_remove = collateral_pool_client.tokens_to_shares(&amount);
+        let new_collateral_shares = loan.collateral_shares.csub(shares_to_remove)?;
+
+        let new_collateral_tokens = collateral_pool_client.shares_to_tokens(&new_collateral_shares);
+        let new_health_factor = Self::calculate_health_factor(
+            &e,
+            borrow_pool_client.get_currency().ticker,
+            loan.borrowed_amount,
+            collateral_pool_client.get_currency().ticker,
+            new_collateral_tokens,
+            loan.collateral_from.clone(),
+        )?;
+
+        const HEALTH_FACTOR_THRESHOLD: i128 = 10_000_000;
+        assert!(
+            new_health_factor > HEALTH_FACTOR_THRESHOLD,
+            "Removing collateral would make the loan liquidatable!"
+        );
+
+        collateral_pool_client.withdraw_collateral(&loan_id.borrower_address, &shares_to_remove);
+
+        loan.collateral_shares = new_collateral_shares;
+        loan.health_factor = new_health_factor;
+
+        storage::write_loan(&e, &loan_id, &loan);
+        Ok(loan)
+    }
+
+    /// Set the insurance pool address for a given loan pool.
+    /// Admin only. Delegates to the loan pool's `set_insurance_pool`.
+    pub fn set_insurance_pool(
+        e: Env,
+        pool_addr: Address,
+        insurance_pool_addr: Address,
+    ) -> Result<(), LoanManagerError> {
+        storage::read_admin(&e)?.require_auth();
+
+        loan_pool::Client::new(&e, &pool_addr).set_insurance_pool(&insurance_pool_addr);
+
+        storage::write_lai_insurance_pool_for_pool(&e, &pool_addr, &insurance_pool_addr);
+
+        if let Some(config) = storage::read_lai_config(&e) {
+            if storage::read_lai_insurer_pool_state(&e, &insurance_pool_addr).is_none() {
+                let start = e.ledger().sequence().max(config.start_ledger);
+                storage::write_lai_insurer_pool_state(
+                    &e,
+                    &insurance_pool_addr,
+                    &LaiPoolState {
+                        acc_per_share: 0,
+                        last_ledger: start,
+                        last_known_total: 0,
+                    },
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn create_bad_debt_auction(
+        e: Env,
+        loan_id: LoanId,
+    ) -> Result<AuctionItem, LoanManagerError> {
+        let loan = storage::read_loan(&e, &loan_id).ok_or(LoanManagerError::LoanNotFound)?;
+
+        let collateral_pool_client = loan_pool::Client::new(&e, &loan.collateral_from);
+
+        let collateral_amount = collateral_pool_client.shares_to_tokens(&loan.collateral_shares);
+
+        let health_factor = Self::calculate_health_factor(
+            &e,
+            loan_pool::Client::new(&e, &loan.borrowed_from)
+                .get_currency()
+                .ticker,
+            loan.borrowed_amount,
+            collateral_pool_client.get_currency().ticker,
+            collateral_amount,
+            loan.collateral_from.clone(),
+        )?;
+
+        if health_factor >= collateral_pool_client.get_collateral_factor() {
+            return Err(LoanManagerError::NotBadDebt);
+        }
+
+        const AUCTION_DURATION: u32 = 17280; // roughly 24h in ledgers.
+
+        let start_ledger = e.ledger().sequence();
+        let end_ledger = start_ledger + AUCTION_DURATION;
+
+        let auction = AuctionItem {
+            loan_id,
+            start_ledger,
+            end_ledger,
+        };
+
+        storage::write_bad_debt_auction(&e, auction.clone());
+
+        Ok(auction)
+    }
+
+    pub fn claim_bad_debt_auction(
+        e: Env,
+        user: Address,
+        loan_id: LoanId,
+        amount: i128,
+    ) -> Result<(), LoanManagerError> {
+        user.require_auth();
+
+        let Loan {
+            loan_id,
+            borrowed_amount,
+            borrowed_from,
+            collateral_from,
+            collateral_shares,
+            unpaid_interest,
+            ..
+        } = Self::add_interest(&e, loan_id)?;
+
+        let auction = storage::read_bad_debt_auction(&e, loan_id.clone())?;
+        let borrow_pool_client = loan_pool::Client::new(&e, &borrowed_from);
+        let collateral_pool_client = loan_pool::Client::new(&e, &collateral_from);
+
+        let health_factor = Self::calculate_health_factor(
+            &e,
+            borrow_pool_client.get_currency().ticker,
+            borrowed_amount,
+            collateral_pool_client.get_currency().ticker,
+            collateral_pool_client.shares_to_tokens(&collateral_shares),
+            collateral_from,
+        )?;
+
+        if health_factor > collateral_pool_client.get_collateral_factor() {
+            storage::delete_bad_debt_auction(&e, auction);
+            Ok(())
+        } else {
+            const DECIMAL: i128 = 10_000_000;
+            const AUCTION_DURATION: u32 = 17280; // roughly 24h in ledgers.
+
+            let ledgers_since_start = e.ledger().sequence() - auction.start_ledger;
+            // linear function f(x) = (1-(x/AUCTION_DURATION)) * borrowed_amount.
+            // Therefore, f(0) = borrowed_amount, f(AUCTION_DURATION) = 0.
+            let time_based_reduction = (ledgers_since_start as i128)
+                .cmul(borrowed_amount)?
+                .cdiv(AUCTION_DURATION as i128)?;
+
+            let amount_to_pay = borrowed_amount - time_based_reduction;
+
+            if amount_to_pay > amount {
+                return Err(LoanManagerError::BadDebtClaimAmountTooLow);
+            }
+
+            borrow_pool_client.claim_bad_debt_payment(
+                &user,
+                &amount_to_pay,
+                &unpaid_interest,
+                &amount,
+                &loan_id.borrower_address,
+            );
+
+            let collateral_tokens = collateral_pool_client.shares_to_tokens(&collateral_shares);
+
+            collateral_pool_client.liquidate_transfer_collateral(
+                &user,
+                &collateral_tokens,
+                &loan_id.borrower_address,
+            );
+
+            // If there is bad debt left without collateral, pay it from the insurance pools
+            if time_based_reduction > 0 {
+                borrow_pool_client
+                    .write_off_bad_debt(&loan_id.borrower_address, &time_based_reduction);
+            }
+
+            storage::delete_loan(&e, &loan_id);
+            storage::delete_bad_debt_auction(&e, auction);
+
+            Ok(())
+        }
+    }
+
+    /// Initialize the LAI liquidity-mining distribution.
+    /// Transfers 50M LAI must already be in this contract's balance before calling.
+    /// Admin only.
+    pub fn initialize_lai_distribution(
+        e: Env,
+        token: Address,
+        start_ledger: u32,
+    ) -> Result<(), LoanManagerError> {
+        storage::read_admin(&e)?.require_auth();
+
+        const TOTAL_AMOUNT: i128 = 50_000_000 * 10_000_000; // 50M with 7 decimals
+        let end_ledger = start_ledger + LAI_TOTAL_LEDGERS;
+
+        let config = LaiConfig {
+            token,
+            start_ledger,
+            end_ledger,
+            total_amount: TOTAL_AMOUNT,
+        };
+        storage::write_lai_config(&e, &config);
+
+        // Initialize pool states for all already-registered pools
+        let pool_addresses = storage::read_pool_addresses(&e);
+        let num_pools = pool_addresses.len() as u32;
+        storage::write_lai_num_pools(&e, num_pools);
+
+        for pool in pool_addresses.iter() {
+            storage::write_lai_borrower_pool_state(
+                &e,
+                &pool,
+                &LaiPoolState {
+                    acc_per_share: 0,
+                    last_ledger: start_ledger,
+                    last_known_total: 0,
+                },
+            );
+            if let Some(ins_pool) = storage::read_lai_insurance_pool_for_pool(&e, &pool) {
+                storage::write_lai_insurer_pool_state(
+                    &e,
+                    &ins_pool,
+                    &LaiPoolState {
+                        acc_per_share: 0,
+                        last_ledger: start_ledger,
+                        last_known_total: 0,
+                    },
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Called by insurance_pool contracts when a user's share position changes.
+    /// Caller must be a registered insurance pool.
+    pub fn checkpoint_insurer_reward(
+        e: Env,
+        insurance_pool: Address,
+        user: Address,
+        old_shares: i128,
+        new_shares: i128,
+        total_shares: i128,
+    ) -> Result<(), LoanManagerError> {
+        insurance_pool.require_auth();
+
+        let config = match storage::read_lai_config(&e) {
+            Some(c) => c,
+            None => return Ok(()), // LAI not initialized — ignore silently
+        };
+
+        Self::checkpoint_insurer_internal(
+            &e,
+            &config,
+            &insurance_pool,
+            &user,
+            old_shares,
+            new_shares,
+            total_shares,
+        );
+
+        Ok(())
+    }
+
+    /// Claim all accumulated LAI rewards for a user (both borrower and insurer sides).
+    /// Returns the total amount of LAI transferred.
+    pub fn claim_lai_rewards(e: Env, user: Address) -> Result<i128, LoanManagerError> {
+        user.require_auth();
+
+        let config = match storage::read_lai_config(&e) {
+            Some(c) => c,
+            None => return Ok(0),
+        };
+
+        let mut total_pending: i128 = 0;
+        let pool_addresses = storage::read_pool_addresses(&e);
+        let user_loans = storage::read_user_loans(&e, &user);
+
+        for pool in pool_addresses.iter() {
+            // --- Borrower side ---
+            if let Some(mut pool_state) = storage::read_lai_borrower_pool_state(&e, &pool) {
+                // Compute current liabilities from loan records
+                let user_liabilities: i128 = user_loans
+                    .iter()
+                    .filter(|l| l.borrowed_from == pool)
+                    .map(|l| l.borrowed_amount)
+                    .sum();
+
+                // Advance accumulator using last known total
+                Self::advance_accumulator(&e, &config, &mut pool_state, LAI_BORROWER_BPS);
+
+                let user_state = storage::read_lai_borrower_user_state(&e, &pool, &user);
+                let earned = user_liabilities
+                    .checked_mul(pool_state.acc_per_share)
+                    .unwrap_or(0)
+                    / LAI_PRECISION
+                    - user_state.reward_debt;
+                let earned = earned.max(0);
+
+                storage::write_lai_borrower_pool_state(&e, &pool, &pool_state);
+                storage::write_lai_borrower_user_state(
+                    &e,
+                    &pool,
+                    &user,
+                    &LaiUserState {
+                        reward_debt: user_liabilities
+                            .checked_mul(pool_state.acc_per_share)
+                            .unwrap_or(0)
+                            / LAI_PRECISION,
+                        pending: 0,
+                        position: user_liabilities,
+                    },
+                );
+                total_pending += user_state.pending + earned;
+            }
+
+            // --- Insurer side ---
+            if let Some(ins_pool) = storage::read_lai_insurance_pool_for_pool(&e, &pool) {
+                if let Some(mut ins_state) = storage::read_lai_insurer_pool_state(&e, &ins_pool) {
+                    let user_ins_state = storage::read_lai_insurer_user_state(&e, &ins_pool, &user);
+                    let user_shares = user_ins_state.position;
+
+                    Self::advance_accumulator(&e, &config, &mut ins_state, LAI_INSURER_BPS);
+
+                    let earned = user_shares
+                        .checked_mul(ins_state.acc_per_share)
+                        .unwrap_or(0)
+                        / LAI_PRECISION
+                        - user_ins_state.reward_debt;
+                    let earned = earned.max(0);
+
+                    storage::write_lai_insurer_pool_state(&e, &ins_pool, &ins_state);
+                    storage::write_lai_insurer_user_state(
+                        &e,
+                        &ins_pool,
+                        &user,
+                        &LaiUserState {
+                            reward_debt: user_shares
+                                .checked_mul(ins_state.acc_per_share)
+                                .unwrap_or(0)
+                                / LAI_PRECISION,
+                            pending: 0,
+                            position: user_shares,
+                        },
+                    );
+                    total_pending += user_ins_state.pending + earned;
+                }
+            }
+        }
+
+        if total_pending > 0 {
+            let lai_client = token::Client::new(&e, &config.token);
+            lai_client.transfer(&e.current_contract_address(), &user, &total_pending);
+        }
+
+        Ok(total_pending)
+    }
+
+    // ── Internal LAI helpers ──────────────────────────────────────────────────
+
+    /// Advance `pool_state.acc_per_share` from `last_ledger` to current ledger (capped at end_ledger).
+    /// Uses `last_known_total` stored in pool_state. Mutates pool_state in place; caller must write it back.
+    fn advance_accumulator(
+        e: &Env,
+        config: &LaiConfig,
+        pool_state: &mut LaiPoolState,
+        side_bps: i128,
+    ) {
+        let num_pools = storage::read_lai_num_pools(e) as i128;
+        if num_pools == 0 {
+            return;
+        }
+
+        let current_ledger = e.ledger().sequence().min(config.end_ledger);
+        if current_ledger <= pool_state.last_ledger {
+            pool_state.last_ledger = current_ledger;
+            return;
+        }
+
+        let elapsed = (current_ledger - pool_state.last_ledger) as i128;
+        // emission for this side (insurer or borrower) per pool per ledger
+        let emission_per_ledger =
+            config.total_amount / num_pools / LAI_TOTAL_LEDGERS as i128 * side_bps / 10_000;
+
+        if pool_state.last_known_total > 0 {
+            let new_rewards = emission_per_ledger * elapsed;
+            pool_state.acc_per_share += new_rewards * LAI_PRECISION / pool_state.last_known_total;
+        }
+        // If last_known_total == 0: emissions are lost (no users in pool), accumulator stays unchanged.
+
+        pool_state.last_ledger = current_ledger;
+    }
+
+    /// Checkpoint a user's borrower reward for a given pool.
+    fn checkpoint_borrower_internal(
+        e: &Env,
+        pool: &Address,
+        user: &Address,
+        old_liabilities: i128,
+        new_liabilities: i128,
+        total_liabilities: i128,
+    ) {
+        let config = match storage::read_lai_config(e) {
+            Some(c) => c,
+            None => return,
+        };
+        let mut pool_state = match storage::read_lai_borrower_pool_state(e, pool) {
+            Some(s) => s,
+            None => return,
+        };
+
+        // Advance accumulator using the OLD total (correct: rewards during elapsed ledgers
+        // were earned by whoever held positions then, not the post-event total).
+        pool_state.last_known_total = total_liabilities;
+        Self::advance_accumulator(e, &config, &mut pool_state, LAI_BORROWER_BPS);
+        // Update to the POST-event total so the next checkpoint advances correctly.
+        // Without this, last_known_total stays at the old value (0 for first borrower),
+        // causing advance_accumulator to skip every future call.
+        pool_state.last_known_total = total_liabilities + (new_liabilities - old_liabilities);
+
+        let user_state = storage::read_lai_borrower_user_state(e, pool, user);
+        let earned = old_liabilities
+            .checked_mul(pool_state.acc_per_share)
+            .unwrap_or(0)
+            / LAI_PRECISION
+            - user_state.reward_debt;
+        let earned = earned.max(0);
+
+        storage::write_lai_borrower_pool_state(e, pool, &pool_state);
+        storage::write_lai_borrower_user_state(
+            e,
+            pool,
+            user,
+            &LaiUserState {
+                reward_debt: new_liabilities
+                    .checked_mul(pool_state.acc_per_share)
+                    .unwrap_or(0)
+                    / LAI_PRECISION,
+                pending: user_state.pending + earned,
+                position: new_liabilities,
+            },
+        );
+    }
+
+    /// Checkpoint a user's insurer reward for a given insurance pool.
+    fn checkpoint_insurer_internal(
+        e: &Env,
+        config: &LaiConfig,
+        ins_pool: &Address,
+        user: &Address,
+        old_shares: i128,
+        new_shares: i128,
+        total_shares: i128,
+    ) {
+        let mut pool_state = match storage::read_lai_insurer_pool_state(e, ins_pool) {
+            Some(s) => s,
+            None => return,
+        };
+
+        // Advance using the OLD total, then update to the POST-event total.
+        // Same fix as checkpoint_borrower_internal: without updating after advance,
+        // last_known_total stays 0 for the first depositor and rewards are lost forever.
+        pool_state.last_known_total = total_shares;
+        Self::advance_accumulator(e, config, &mut pool_state, LAI_INSURER_BPS);
+        pool_state.last_known_total = total_shares + (new_shares - old_shares);
+
+        let user_state = storage::read_lai_insurer_user_state(e, ins_pool, user);
+        let earned = old_shares
+            .checked_mul(pool_state.acc_per_share)
+            .unwrap_or(0)
+            / LAI_PRECISION
+            - user_state.reward_debt;
+        let earned = earned.max(0);
+
+        storage::write_lai_insurer_pool_state(e, ins_pool, &pool_state);
+        storage::write_lai_insurer_user_state(
+            e,
+            ins_pool,
+            user,
+            &LaiUserState {
+                reward_debt: new_shares
+                    .checked_mul(pool_state.acc_per_share)
+                    .unwrap_or(0)
+                    / LAI_PRECISION,
+                pending: user_state.pending + earned,
+                position: new_shares,
+            },
+        );
+    }
+
+    /// Flush all existing pool accumulators with the current emission rate.
+    /// Must be called before LaiNumPools changes (e.g. on deploy_pool).
+    fn flush_all_pool_accumulators(e: &Env, config: &LaiConfig) {
+        for pool in storage::read_pool_addresses(e).iter() {
+            if let Some(mut pool_state) = storage::read_lai_borrower_pool_state(e, &pool) {
+                Self::advance_accumulator(e, config, &mut pool_state, LAI_BORROWER_BPS);
+                storage::write_lai_borrower_pool_state(e, &pool, &pool_state);
+            }
+            if let Some(ins_pool) = storage::read_lai_insurance_pool_for_pool(e, &pool) {
+                if let Some(mut ins_state) = storage::read_lai_insurer_pool_state(e, &ins_pool) {
+                    Self::advance_accumulator(e, config, &mut ins_state, LAI_INSURER_BPS);
+                    storage::write_lai_insurer_pool_state(e, &ins_pool, &ins_state);
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::contract::loan_pool::{PoolState, Positions};
+    use crate::contract::loan_pool::{PoolState, PoolStatus, Positions};
 
     use super::*;
     use loan_pool::Currency;
@@ -539,6 +1199,10 @@ mod tests {
     };
     mod loan_manager {
         soroban_sdk::contractimport!(file = "../../target/wasm32v1-none/release/loan_manager.wasm");
+    }
+
+    mod share_token_wasm {
+        soroban_sdk::contractimport!(file = "../../target/wasm32v1-none/release/token.wasm");
     }
 
     #[test]
@@ -626,6 +1290,7 @@ mod tests {
             .address();
         let pool_addr = e.register(loan_pool::WASM, ());
         let pool_client = loan_pool::Client::new(&e, &pool_addr);
+        let dummy_share_token = Address::generate(&e);
         pool_client.initialize(
             &manager_addr,
             &Currency {
@@ -633,6 +1298,7 @@ mod tests {
                 token_address,
             },
             &8_000_000,
+            &dummy_share_token,
         );
 
         // ACT
@@ -661,6 +1327,7 @@ mod tests {
             .address();
         let pool_addr = e.register(loan_pool::WASM, ());
         let pool_client = loan_pool::Client::new(&e, &pool_addr);
+        let dummy_share_token = Address::generate(&e);
         pool_client.initialize(
             &manager_addr,
             &Currency {
@@ -668,6 +1335,7 @@ mod tests {
                 token_address,
             },
             &8_000_000,
+            &dummy_share_token,
         );
 
         // ACT
@@ -706,6 +1374,7 @@ mod tests {
 
         xlm_asset_client.mint(&admin, &9_001);
         pool_xlm_client.deposit(&admin, &9_001);
+        pool_xlm_client.update_status(&9_001);
         usdc_asset_client.mint(&user, &100_000);
 
         // Create a loan.
@@ -727,7 +1396,7 @@ mod tests {
         let user_loan = manager_client.get_loan(&loan.loan_id);
 
         assert_eq!(user_loan.borrowed_amount, 1_000);
-        assert_eq!(user_loan.collateral_amount, 100_000);
+        assert_eq!(user_loan.collateral_shares, 100_000);
 
         manager_client.repay(&loan.loan_id, &100);
         e.ledger().with_mut(|li| {
@@ -737,7 +1406,7 @@ mod tests {
         let user_loan = manager_client.get_loan(&loan.loan_id);
 
         assert_eq!(user_loan.borrowed_amount, 929);
-        assert_eq!(user_loan.collateral_amount, 100_000);
+        assert_eq!(user_loan.collateral_shares, 100_000);
         assert_eq!(xlm_token_client.balance(&manager_addr), 2);
 
         manager_client
@@ -794,7 +1463,7 @@ mod tests {
         loan = manager_client.get_loan(&loan.loan_id);
 
         assert_eq!(loan.borrowed_amount, 100);
-        assert_eq!(loan.collateral_amount, 500);
+        assert_eq!(loan.collateral_shares, 500);
 
         manager_client.repay(&loan.loan_id, &50);
         loan = manager_client.get_loan(&loan.loan_id);
@@ -812,7 +1481,7 @@ mod tests {
         pool_usdc_client.deposit(&new_user, &1000);
         assert_eq!(2002, pool_usdc_client.get_contract_balance());
         let positions_new_user = Positions {
-            collateral: 0,
+            collateral_shares: 0,
             liabilities: 0,
             receivable_shares: 998,
         };
@@ -822,7 +1491,7 @@ mod tests {
         );
 
         let test_positions_admin = Positions {
-            collateral: 0,
+            collateral_shares: 0,
             liabilities: 0,
             receivable_shares: 1000,
         };
@@ -833,8 +1502,10 @@ mod tests {
         let pool_state = PoolState {
             annual_interest_rate: 200887,
             available_balance_tokens: 2000,
+            total_liabilities_tokens: 4,
             total_balance_shares: 1998,
             total_balance_tokens: 2002,
+            pool_status: PoolStatus::Healthy,
         };
         assert_eq!(pool_state, pool_usdc_client.get_pool_state());
 
@@ -874,13 +1545,13 @@ mod tests {
 
         let loan_usdc = loans.get(0).unwrap();
         assert_eq!(loan_usdc.borrowed_amount, 10);
-        assert_eq!(loan_usdc.collateral_amount, 100);
+        assert_eq!(loan_usdc.collateral_shares, 100);
         assert_eq!(loan_usdc.borrowed_from, pool_usdc_addr);
         assert_eq!(loan_usdc.collateral_from, pool_xlm_addr);
 
         let loan_eurc = loans.get(1).unwrap();
         assert_eq!(loan_eurc.borrowed_amount, 30);
-        assert_eq!(loan_eurc.collateral_amount, 300);
+        assert_eq!(loan_eurc.collateral_shares, 300);
         assert_eq!(loan_eurc.borrowed_from, pool_eurc_addr);
         assert_eq!(loan_eurc.collateral_from, pool_xlm_addr);
     }
@@ -934,7 +1605,7 @@ mod tests {
 
         assert_eq!(loan.borrowed_amount, 102);
         assert_eq!(loan.health_factor, 78_431_372);
-        assert_eq!(loan.collateral_amount, 1000);
+        assert_eq!(loan.collateral_shares, 1000);
     }
 
     #[test]
@@ -988,12 +1659,12 @@ mod tests {
 
         loan_usdc = manager_client.get_loan(&loan_usdc.loan_id);
         assert_eq!(loan_usdc.borrowed_amount, 100);
-        assert_eq!(loan_usdc.collateral_amount, 500);
+        assert_eq!(loan_usdc.collateral_shares, 500);
 
         manager_client.repay(&loan_usdc.loan_id, &50);
         loan_usdc = manager_client.get_loan(&loan_usdc.loan_id);
         assert_eq!(loan_usdc.borrowed_amount, 52);
-        assert_eq!(loan_usdc.collateral_amount, 500);
+        assert_eq!(loan_usdc.collateral_shares, 500);
 
         assert_eq!((52, 2), manager_client.repay(&loan_usdc.loan_id, &50));
         assert_eq!(1000, pool_usdc_client.get_available_balance());
@@ -1002,7 +1673,7 @@ mod tests {
 
         loan_eurc = manager_client.get_loan(&loan_eurc.loan_id);
         assert_eq!(loan_eurc.borrowed_amount, 100);
-        assert_eq!(loan_eurc.collateral_amount, 500);
+        assert_eq!(loan_eurc.collateral_shares, 500);
         assert_eq!(900, pool_eurc_client.get_available_balance());
         assert_eq!(1000, pool_eurc_client.get_contract_balance());
         assert_eq!(1000, pool_eurc_client.get_total_balance_shares());
@@ -1111,7 +1782,7 @@ mod tests {
         usdc_loan = manager_client.get_loan(&usdc_loan.loan_id);
 
         assert_eq!(usdc_loan.borrowed_amount, 100);
-        assert_eq!(usdc_loan.collateral_amount, 300);
+        assert_eq!(usdc_loan.collateral_shares, 300);
 
         // mint the user some money so they can repay.
         usdc_asset_client.mint(&user, &45);
@@ -1131,7 +1802,7 @@ mod tests {
         assert_eq!(loans.len(), 1);
         let eurc_loan = loans.get(0).unwrap();
         assert_eq!(eurc_loan.borrowed_amount, 100);
-        assert_eq!(eurc_loan.collateral_amount, 300);
+        assert_eq!(eurc_loan.collateral_shares, 300);
     }
 
     #[test]
@@ -1222,7 +1893,7 @@ mod tests {
 
         assert_eq!(usdc_loan.borrowed_amount, 10_760);
         assert_eq!(usdc_loan.health_factor, 9_297_397);
-        assert_eq!(usdc_loan.collateral_amount, 12_505);
+        assert_eq!(usdc_loan.collateral_shares, 12_505);
 
         e.ledger().with_mut(|li| {
             li.sequence_number = 100_000 + 1_000;
@@ -1235,12 +1906,12 @@ mod tests {
         usdc_loan = manager_client.get_loan(&usdc_loan.loan_id);
         assert_eq!(usdc_loan.borrowed_amount, 5_760);
         assert_eq!(usdc_loan.health_factor, 9_729_166);
-        assert_eq!(usdc_loan.collateral_amount, 7_005);
+        assert_eq!(usdc_loan.collateral_shares, 7_005);
 
         eurc_loan = manager_client.get_loan(&eurc_loan.loan_id);
         assert_eq!(eurc_loan.borrowed_amount, 10_760);
         assert_eq!(eurc_loan.health_factor, 9_297_397);
-        assert_eq!(eurc_loan.collateral_amount, 12_505);
+        assert_eq!(eurc_loan.collateral_shares, 12_505);
     }
 
     #[test]
@@ -1281,6 +1952,110 @@ mod tests {
         assert_eq!(loan1.borrowed_amount, 100);
         assert_eq!(loan2.borrowed_amount, 200);
         assert_eq!(loan3.borrowed_amount, 300);
+    }
+
+    #[test]
+    fn lai_borrower_earns_rewards_after_first_borrow() {
+        let e = Env::default();
+        e.mock_all_auths_allowing_non_root_auth();
+        e.ledger().with_mut(|li| {
+            li.sequence_number = 100_000;
+            li.timestamp = 1;
+            li.min_persistent_entry_ttl = 10_000_000;
+            li.min_temp_entry_ttl = 1_000_000;
+            li.max_entry_ttl = 10_000_001;
+        });
+
+        let TestEnv {
+            user,
+            manager_addr,
+            manager_client,
+            pool_xlm_addr,
+            pool_usdc_addr,
+            ..
+        } = setup_test_env(&e);
+
+        // Register LAI token and fund the loan manager with 50M LAI
+        let lai_admin = Address::generate(&e);
+        let lai_addr = e.register_stellar_asset_contract_v2(lai_admin).address();
+        let lai_asset_client = StellarAssetClient::new(&e, &lai_addr);
+        let lai_token_client = TokenClient::new(&e, &lai_addr);
+        lai_asset_client.mint(&manager_addr, &(50_000_000i128 * 10_000_000i128));
+
+        // Initialize LAI distribution starting at current ledger
+        manager_client.initialize_lai_distribution(&lai_addr, &100_000u32);
+
+        // First ever borrow: total_liabilities == 0 before this call.
+        // BUG: checkpoint_borrower_internal sets last_known_total = 0 (the old total)
+        // and never updates it to the post-borrow total, so advance_accumulator always
+        // skips reward accumulation, leaving this borrower with 0 LAI forever.
+        manager_client.create_loan(&user, &100, &pool_usdc_addr, &1_000, &pool_xlm_addr);
+
+        // Advance ~100k ledgers so rewards should have accumulated
+        e.ledger().with_mut(|li| {
+            li.sequence_number = 200_000;
+        });
+
+        let rewards = manager_client.claim_lai_rewards(&user);
+        assert!(
+            rewards > 0,
+            "First borrower should earn LAI after 100k ledgers, got {rewards}"
+        );
+        assert_eq!(lai_token_client.balance(&user), rewards);
+    }
+
+    #[test]
+    fn lai_insurer_earns_rewards_after_first_deposit() {
+        let e = Env::default();
+        e.mock_all_auths_allowing_non_root_auth();
+        e.ledger().with_mut(|li| {
+            li.sequence_number = 100_000;
+            li.timestamp = 1;
+            li.min_persistent_entry_ttl = 10_000_000;
+            li.min_temp_entry_ttl = 1_000_000;
+            li.max_entry_ttl = 10_000_001;
+        });
+
+        let TestEnv {
+            user,
+            manager_addr,
+            manager_client,
+            pool_usdc_addr,
+            ..
+        } = setup_test_env(&e);
+
+        // Register LAI token and fund the loan manager with 50M LAI
+        let lai_admin = Address::generate(&e);
+        let lai_addr = e.register_stellar_asset_contract_v2(lai_admin).address();
+        let lai_asset_client = StellarAssetClient::new(&e, &lai_addr);
+        let lai_token_client = TokenClient::new(&e, &lai_addr);
+        lai_asset_client.mint(&manager_addr, &(50_000_000i128 * 10_000_000i128));
+
+        // Initialize LAI distribution starting at current ledger
+        manager_client.initialize_lai_distribution(&lai_addr, &100_000u32);
+
+        // Register an insurance pool for the USDC pool
+        let ins_pool_addr = Address::generate(&e);
+        manager_client.set_insurance_pool(&pool_usdc_addr, &ins_pool_addr);
+
+        // First ever insurer: total_shares == 0 before this deposit.
+        // BUG: checkpoint_insurer_internal sets last_known_total = 0 (the old total)
+        // and never updates it to the post-deposit total, so advance_accumulator always
+        // skips reward accumulation, leaving this insurer with 0 LAI forever.
+        // Simulate a user depositing 500 shares (old=0, new=500, total=0)
+        manager_client.checkpoint_insurer_reward(&ins_pool_addr, &user, &0i128, &500i128, &0i128);
+
+        // Advance ~100k ledgers so rewards should have accumulated
+        e.ledger().with_mut(|li| {
+            li.sequence_number = 200_000;
+        });
+
+        let rewards = manager_client.claim_lai_rewards(&user);
+        assert!(
+            rewards > 0,
+            "First insurer should earn LAI after 100k ledgers, got {rewards}"
+        );
+        assert_eq!(lai_token_client.balance(&user), rewards);
     }
 
     /* Test setup helpers */
@@ -1365,6 +2140,11 @@ mod tests {
         pool_usdc_client.deposit(&admin, &1_000);
         pool_eurc_client.deposit(&admin, &1_000);
 
+        // No insurance pool is set up in the test environment, so transition the pools to
+        // Healthy manually by supplying a token count that satisfies the ≥10% threshold.
+        pool_usdc_client.update_status(&1_000);
+        pool_eurc_client.update_status(&1_000);
+
         TestEnv {
             admin,
             user,
@@ -1386,22 +2166,322 @@ mod tests {
         }
     }
 
+    mod mock_insurance_pool_bad_debt {
+        use soroban_sdk::{contract, contractimpl, contracttype, Env};
+
+        #[contracttype]
+        pub struct InsurancePoolState {
+            pub total_tokens: i128,
+            pub total_shares: i128,
+        }
+
+        #[contract]
+        pub struct MockInsurancePoolBadDebt;
+
+        #[contractimpl]
+        impl MockInsurancePoolBadDebt {
+            pub fn get_pool_state(_e: Env) -> InsurancePoolState {
+                InsurancePoolState {
+                    total_tokens: 1_000_000_000,
+                    total_shares: 0,
+                }
+            }
+
+            pub fn cover_bad_debt(_e: Env, _ltoken_amount: i128) {}
+        }
+    }
+
+    #[test]
+    fn create_bad_debt_auction() {
+        let e = Env::default();
+        e.mock_all_auths();
+
+        let TestEnv {
+            user,
+            manager_client,
+            pool_usdc_addr,
+            pool_xlm_addr,
+            xlm_asset_client,
+            reflector_addr,
+            ..
+        } = setup_test_env(&e);
+
+        // User needs extra XLM for 190 collateral (setup gives 1_000 already)
+        xlm_asset_client.mint(&user, &1_000);
+
+        // Register mock insurance pool and wire it to the USDC borrow pool
+        let mock_ins_pool_addr =
+            e.register(mock_insurance_pool_bad_debt::MockInsurancePoolBadDebt, ());
+        manager_client.set_insurance_pool(&pool_usdc_addr, &mock_ins_pool_addr);
+
+        // Borrow 100 USDC with 190 XLM collateral at default oracle prices (all = 1)
+        // HF = (1 * 190 * 8_000_000 / 10_000_000) * 10_000_000 / (1 * 100) = 15_200_000
+        let loan = manager_client.create_loan(&user, &100, &pool_usdc_addr, &190, &pool_xlm_addr);
+
+        // Drive USDC price to 2 → HF drops below collateral_factor (8_000_000)
+        // HF = (1 * 190 * 8_000_000 / 10_000_000) * 10_000_000 / (2 * 100) = 7_600_000
+        let oracle_client = oracle::Client::new(&e, &reflector_addr);
+        oracle_client.update_price(
+            &oracle::Asset::Other(Symbol::new(&e, "USDC")),
+            &oracle::PriceData {
+                price: 2,
+                timestamp: 1,
+            },
+        );
+
+        let auction = manager_client.create_bad_debt_auction(&loan.loan_id);
+
+        let auction_should_be = AuctionItem {
+            loan_id: loan.loan_id,
+            start_ledger: e.ledger().sequence(),
+            end_ledger: e.ledger().sequence() + 17280,
+        };
+
+        assert_eq!(auction, auction_should_be);
+    }
+
+    #[test]
+    fn create_bad_debt_auction_rejected_if_not_bad_debt() {
+        let e = Env::default();
+        e.mock_all_auths();
+
+        let TestEnv {
+            user,
+            manager_client,
+            pool_usdc_addr,
+            pool_xlm_addr,
+            xlm_asset_client,
+            ..
+        } = setup_test_env(&e);
+
+        xlm_asset_client.mint(&user, &1_000);
+
+        // Borrow 100 USDC with 190 XLM collateral → HF = 15_200_000 > 8_000_000 (not bad debt)
+        let loan = manager_client.create_loan(&user, &100, &pool_usdc_addr, &190, &pool_xlm_addr);
+
+        assert!(manager_client
+            .try_create_bad_debt_auction(&loan.loan_id)
+            .is_err());
+    }
+
+    #[test]
+    fn claim_bad_debt_auction_after_0_ledgers() {
+        let e = Env::default();
+        e.mock_all_auths();
+
+        let TestEnv {
+            user,
+            manager_client,
+            pool_usdc_addr,
+            pool_xlm_addr,
+            xlm_asset_client,
+            usdc_asset_client,
+            reflector_addr,
+            admin,
+            ..
+        } = setup_test_env(&e);
+
+        // User needs extra XLM for 190 collateral (setup gives 1_000 already)
+        xlm_asset_client.mint(&user, &1_000);
+
+        // Register mock insurance pool and wire it to the USDC borrow pool
+        let mock_ins_pool_addr =
+            e.register(mock_insurance_pool_bad_debt::MockInsurancePoolBadDebt, ());
+        manager_client.set_insurance_pool(&pool_usdc_addr, &mock_ins_pool_addr);
+
+        // Borrow 100 USDC with 190 XLM collateral at default oracle prices (all = 1)
+        // HF = (1 * 190 * 8_000_000 / 10_000_000) * 10_000_000 / (1 * 100) = 15_200_000
+        let loan = manager_client.create_loan(&user, &100, &pool_usdc_addr, &190, &pool_xlm_addr);
+
+        // Drive USDC price to 2 → HF drops below collateral_factor (8_000_000)
+        // HF = (1 * 190 * 8_000_000 / 10_000_000) * 10_000_000 / (2 * 100) = 7_600_000
+        let oracle_client = oracle::Client::new(&e, &reflector_addr);
+        oracle_client.update_price(
+            &oracle::Asset::Other(Symbol::new(&e, "USDC")),
+            &oracle::PriceData {
+                price: 2,
+                timestamp: 1,
+            },
+        );
+
+        manager_client.create_bad_debt_auction(&loan.loan_id);
+
+        manager_client.claim_bad_debt_auction(&admin, &loan.loan_id, &loan.borrowed_amount);
+
+        // admin should pay the whole debt and get all collateral as there is 0 ledgers since start
+        // of auction.
+
+        assert_eq!(usdc_asset_client.balance(&admin), 998_900); // admin has 999000 USDC before they pay
+                                                                // 100 USDC for the bad auction
+        assert_eq!(xlm_asset_client.balance(&admin), 190); // admin has 0 XLM before they get
+                                                           // the collateral of 190 XLM
+        assert!(manager_client.try_get_loan(&loan.loan_id).is_err());
+    }
+
+    #[test]
+    fn claim_bad_debt_auction_after_8640_ledgers() {
+        let e = Env::default();
+        e.mock_all_auths();
+        e.ledger().with_mut(|li| {
+            li.sequence_number = 100_000;
+            li.timestamp = 1;
+            li.min_persistent_entry_ttl = 10_000_000;
+            li.min_temp_entry_ttl = 1_000_000;
+            li.max_entry_ttl = 10_000_001;
+        });
+
+        let TestEnv {
+            user,
+            manager_client,
+            pool_usdc_addr,
+            pool_xlm_addr,
+            xlm_asset_client,
+            usdc_asset_client,
+            reflector_addr,
+            admin,
+            ..
+        } = setup_test_env(&e);
+
+        // User needs extra XLM for 190 collateral (setup gives 1_000 already)
+        xlm_asset_client.mint(&user, &1_000);
+
+        // Register mock insurance pool and wire it to the USDC borrow pool
+        let mock_ins_pool_addr =
+            e.register(mock_insurance_pool_bad_debt::MockInsurancePoolBadDebt, ());
+        manager_client.set_insurance_pool(&pool_usdc_addr, &mock_ins_pool_addr);
+
+        // Borrow 100 USDC with 190 XLM collateral at default oracle prices (all = 1)
+        // HF = (1 * 190 * 8_000_000 / 10_000_000) * 10_000_000 / (1 * 100) = 15_200_000
+        let loan = manager_client.create_loan(&user, &100, &pool_usdc_addr, &190, &pool_xlm_addr);
+
+        // Drive USDC price to 2 → HF drops below collateral_factor (8_000_000)
+        // HF = (1 * 190 * 8_000_000 / 10_000_000) * 10_000_000 / (2 * 100) = 7_600_000
+        let oracle_client = oracle::Client::new(&e, &reflector_addr);
+        oracle_client.update_price(
+            &oracle::Asset::Other(Symbol::new(&e, "USDC")),
+            &oracle::PriceData {
+                price: 2,
+                timestamp: 1,
+            },
+        );
+
+        manager_client.create_bad_debt_auction(&loan.loan_id);
+
+        // Advance 8640 ledgers so there should be need to pay only 50% of the borrowed_amount
+        e.ledger().with_mut(|li| {
+            li.sequence_number = 100_000 + 8640;
+        });
+
+        manager_client.claim_bad_debt_auction(&admin, &loan.loan_id, &loan.borrowed_amount);
+
+        assert_eq!(usdc_asset_client.balance(&admin), 998_950); // admin has 999000 USDC before they pay
+                                                                // 50 USDC for the bad auction
+        assert_eq!(xlm_asset_client.balance(&admin), 190); // admin has 0 XLM before they get
+                                                           // the collateral of 190 XLM
+        assert!(manager_client.try_get_loan(&loan.loan_id).is_err());
+    }
+
+    #[test]
+    fn claim_bad_debt_auction_after_17280_ledgers() {
+        let e = Env::default();
+        e.mock_all_auths();
+        e.ledger().with_mut(|li| {
+            li.sequence_number = 100_000;
+            li.timestamp = 1;
+            li.min_persistent_entry_ttl = 10_000_000;
+            li.min_temp_entry_ttl = 1_000_000;
+            li.max_entry_ttl = 10_000_001;
+        });
+
+        let TestEnv {
+            user,
+            manager_client,
+            pool_usdc_addr,
+            pool_xlm_addr,
+            xlm_asset_client,
+            usdc_asset_client,
+            reflector_addr,
+            admin,
+            ..
+        } = setup_test_env(&e);
+
+        // User needs extra XLM for 190 collateral (setup gives 1_000 already)
+        xlm_asset_client.mint(&user, &1_000);
+
+        // Register mock insurance pool and wire it to the USDC borrow pool
+        let mock_ins_pool_addr =
+            e.register(mock_insurance_pool_bad_debt::MockInsurancePoolBadDebt, ());
+        manager_client.set_insurance_pool(&pool_usdc_addr, &mock_ins_pool_addr);
+
+        // Borrow 100 USDC with 190 XLM collateral at default oracle prices (all = 1)
+        // HF = (1 * 190 * 8_000_000 / 10_000_000) * 10_000_000 / (1 * 100) = 15_200_000
+        let loan = manager_client.create_loan(&user, &100, &pool_usdc_addr, &190, &pool_xlm_addr);
+
+        // Drive USDC price to 2 → HF drops below collateral_factor (8_000_000)
+        // HF = (1 * 190 * 8_000_000 / 10_000_000) * 10_000_000 / (2 * 100) = 7_600_000
+        let oracle_client = oracle::Client::new(&e, &reflector_addr);
+        oracle_client.update_price(
+            &oracle::Asset::Other(Symbol::new(&e, "USDC")),
+            &oracle::PriceData {
+                price: 2,
+                timestamp: 1,
+            },
+        );
+
+        manager_client.create_bad_debt_auction(&loan.loan_id);
+
+        // Advance 17280 ledgers so there should be need to pay only 50% of the borrowed_amount
+        e.ledger().with_mut(|li| {
+            li.sequence_number = 100_000 + 17280;
+        });
+
+        manager_client.claim_bad_debt_auction(&admin, &loan.loan_id, &loan.borrowed_amount);
+
+        assert_eq!(usdc_asset_client.balance(&admin), 999_000); // admin has 999000 USDC before they pay
+                                                                // 0 USDC for the bad auction
+        assert_eq!(xlm_asset_client.balance(&admin), 190); // admin has 0 XLM before they get
+                                                           // the collateral of 190 XLM
+        assert!(manager_client.try_get_loan(&loan.loan_id).is_err());
+    }
+
     fn setup_test_pool(
         e: &Env,
         manager_client: &LoanManagerClient,
         ticker: &Symbol,
         token_address: &Address,
     ) -> Address {
+        use soroban_sdk::String;
+
         const LIQUIDATION_THRESHOLD: i128 = 8_000_000; // 80%
         let wasm_hash = e.deployer().upload_contract_wasm(loan_pool::WASM);
         let xdr_bytes = token_address.clone().to_xdr(e);
         let salt = e.crypto().sha256(&xdr_bytes).to_bytes();
+
+        // Precompute pool address so we can set it as admin of the share token
+        let manager_addr = manager_client.address.clone();
+        let pool_addr = e
+            .deployer()
+            .with_address(manager_addr, salt.clone())
+            .deployed_address();
+
+        // Register share token with pool as admin (pool must be able to mint/burn)
+        let share_token_addr = e.register(
+            share_token_wasm::WASM,
+            (
+                &pool_addr,
+                &7u32,
+                &String::from_str(e, "lToken"),
+                &String::from_str(e, "lT"),
+            ),
+        );
+
         manager_client.deploy_pool(
             &wasm_hash,
             &salt,
             token_address,
             ticker,
             &LIQUIDATION_THRESHOLD,
+            &share_token_addr,
         )
     }
 }

@@ -2,6 +2,12 @@ use soroban_sdk::{contractevent, contracttype, symbol_short, vec, Address, Env, 
 
 use crate::error::LoanManagerError;
 
+/* LAI distribution constants */
+pub const LAI_PRECISION: i128 = 1_000_000_000_000; // 1e12, prevents acc_per_share rounding to 0
+pub const LAI_TOTAL_LEDGERS: u32 = 31_536_000; // 5 years × 365 days × 86400s / 5s per ledger
+pub const LAI_INSURER_BPS: i128 = 7000; // 70% to insurers
+pub const LAI_BORROWER_BPS: i128 = 3000; // 30% to borrowers
+
 /* Storage Types */
 #[derive(Clone)]
 #[contracttype]
@@ -11,9 +17,50 @@ pub enum LoanManagerDataKey {
     PoolAddresses,
     Loan(LoanId),
     LastUpdated,
+    LaiConfig,
+    LaiNumPools,
+    LaiBorrowerPoolState(Address),          // loan_pool → LaiPoolState
+    LaiInsurerPoolState(Address),           // insurance_pool → LaiPoolState
+    LaiBorrowerUserState(Address, Address), // (pool, user) → LaiUserState
+    LaiInsurerUserState(Address, Address),  // (ins_pool, user) → LaiUserState
+    LaiInsurancePoolForPool(Address),       // loan_pool → insurance_pool
+    BadDebtAuction(LoanId),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+#[contracttype]
+pub struct AuctionItem {
+    pub loan_id: LoanId,
+    pub start_ledger: u32,
+    pub end_ledger: u32,
 }
 
 #[derive(Clone)]
+#[contracttype]
+pub struct LaiConfig {
+    pub token: Address,
+    pub start_ledger: u32,
+    pub end_ledger: u32,
+    pub total_amount: i128,
+}
+
+#[derive(Clone)]
+#[contracttype]
+pub struct LaiPoolState {
+    pub acc_per_share: i128, // accumulated LAI per share unit × LAI_PRECISION
+    pub last_ledger: u32,
+    pub last_known_total: i128, // total shares/liabilities at last update (used in claim to advance acc without cross-contract calls)
+}
+
+#[derive(Clone)]
+#[contracttype]
+pub struct LaiUserState {
+    pub reward_debt: i128, // position × acc_per_share at last checkpoint
+    pub pending: i128,     // claimable LAI (stroops)
+    pub position: i128, // user's last known position (shares for insurers, liabilities for borrowers)
+}
+
+#[derive(Clone, Debug, PartialEq)]
 #[contracttype]
 pub struct LoanId {
     pub borrower_address: Address,
@@ -26,20 +73,20 @@ pub struct NewLoan {
     pub borrower_address: Address,
     pub borrowed_amount: i128,
     pub borrowed_from: Address,
-    pub collateral_amount: i128,
+    pub collateral_shares: i128,
     pub collateral_from: Address,
     pub health_factor: i128,
     pub unpaid_interest: i128,
     pub last_accrual: i128,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq)]
 #[contracttype]
 pub struct Loan {
     pub loan_id: LoanId,
     pub borrowed_amount: i128,
     pub borrowed_from: Address,
-    pub collateral_amount: i128,
+    pub collateral_shares: i128,
     pub collateral_from: Address,
     pub health_factor: i128,
     pub unpaid_interest: i128,
@@ -82,6 +129,18 @@ pub struct EventLoanDeleted {
     pub loan_id: LoanId,
 }
 
+#[contractevent(topics = ["bad_debt_auction_created"])]
+pub struct EventAuctionCreated {
+    #[topic]
+    pub auction: AuctionItem,
+}
+
+#[contractevent(topics = ["bad_debt_auction_deleted"])]
+pub struct EventAuctionDeleted {
+    #[topic]
+    pub auction: AuctionItem,
+}
+
 /* Ledger Thresholds */
 pub(crate) const DAY_IN_LEDGERS: u32 = 17280; // if ledger takes 5 seconds
 
@@ -100,6 +159,28 @@ pub fn write_admin(e: &Env, admin: &Address) {
 
 pub fn admin_exists(e: &Env) -> bool {
     e.storage().persistent().has(&LoanManagerDataKey::Admin)
+}
+
+pub fn write_bad_debt_auction(e: &Env, auction: AuctionItem) {
+    e.storage().persistent().set(
+        &LoanManagerDataKey::BadDebtAuction(auction.loan_id.clone()),
+        &auction,
+    );
+    EventAuctionCreated { auction }.publish(e);
+}
+
+pub fn read_bad_debt_auction(e: &Env, loan_id: LoanId) -> Result<AuctionItem, LoanManagerError> {
+    e.storage()
+        .persistent()
+        .get(&LoanManagerDataKey::BadDebtAuction(loan_id))
+        .ok_or(LoanManagerError::BadDebtAuction)
+}
+
+pub fn delete_bad_debt_auction(e: &Env, auction: AuctionItem) {
+    e.storage()
+        .persistent()
+        .remove(&LoanManagerDataKey::BadDebtAuction(auction.loan_id.clone()));
+    EventAuctionDeleted { auction }.publish(e);
 }
 
 pub fn read_admin(e: &Env) -> Result<Address, LoanManagerError> {
@@ -157,7 +238,7 @@ pub fn create_loan(e: &Env, user: Address, new_loan: NewLoan) -> Loan {
         loan_id: loan_id.clone(),
         borrowed_amount: new_loan.borrowed_amount,
         borrowed_from: new_loan.borrowed_from,
-        collateral_amount: new_loan.collateral_amount,
+        collateral_shares: new_loan.collateral_shares,
         collateral_from: new_loan.collateral_from,
         health_factor: new_loan.health_factor,
         unpaid_interest: new_loan.unpaid_interest,
@@ -266,5 +347,170 @@ pub fn remove_user_loan_id(e: &Env, user: &Address, loan_id: u64) {
         e.storage().persistent().remove(&key);
     } else {
         e.storage().persistent().set(&key, &new_nonces);
+    }
+}
+
+/* LAI distribution storage helpers */
+
+pub fn write_lai_config(e: &Env, config: &LaiConfig) {
+    let key = LoanManagerDataKey::LaiConfig;
+    e.storage().persistent().set(&key, config);
+    e.storage()
+        .persistent()
+        .extend_ttl(&key, POSITIONS_LIFETIME_THRESHOLD, POSITIONS_BUMP_AMOUNT);
+}
+
+pub fn read_lai_config(e: &Env) -> Option<LaiConfig> {
+    let key = LoanManagerDataKey::LaiConfig;
+    if let Some(config) = e.storage().persistent().get(&key) {
+        e.storage().persistent().extend_ttl(
+            &key,
+            POSITIONS_LIFETIME_THRESHOLD,
+            POSITIONS_BUMP_AMOUNT,
+        );
+        Some(config)
+    } else {
+        None
+    }
+}
+
+pub fn write_lai_num_pools(e: &Env, num_pools: u32) {
+    let key = LoanManagerDataKey::LaiNumPools;
+    e.storage().persistent().set(&key, &num_pools);
+    e.storage()
+        .persistent()
+        .extend_ttl(&key, POSITIONS_LIFETIME_THRESHOLD, POSITIONS_BUMP_AMOUNT);
+}
+
+pub fn read_lai_num_pools(e: &Env) -> u32 {
+    let key = LoanManagerDataKey::LaiNumPools;
+    e.storage().persistent().get(&key).unwrap_or(0)
+}
+
+pub fn write_lai_borrower_pool_state(e: &Env, pool: &Address, state: &LaiPoolState) {
+    let key = LoanManagerDataKey::LaiBorrowerPoolState(pool.clone());
+    e.storage().persistent().set(&key, state);
+    e.storage()
+        .persistent()
+        .extend_ttl(&key, POSITIONS_LIFETIME_THRESHOLD, POSITIONS_BUMP_AMOUNT);
+}
+
+pub fn read_lai_borrower_pool_state(e: &Env, pool: &Address) -> Option<LaiPoolState> {
+    let key = LoanManagerDataKey::LaiBorrowerPoolState(pool.clone());
+    if let Some(state) = e.storage().persistent().get(&key) {
+        e.storage().persistent().extend_ttl(
+            &key,
+            POSITIONS_LIFETIME_THRESHOLD,
+            POSITIONS_BUMP_AMOUNT,
+        );
+        Some(state)
+    } else {
+        None
+    }
+}
+
+pub fn write_lai_insurer_pool_state(e: &Env, ins_pool: &Address, state: &LaiPoolState) {
+    let key = LoanManagerDataKey::LaiInsurerPoolState(ins_pool.clone());
+    e.storage().persistent().set(&key, state);
+    e.storage()
+        .persistent()
+        .extend_ttl(&key, POSITIONS_LIFETIME_THRESHOLD, POSITIONS_BUMP_AMOUNT);
+}
+
+pub fn read_lai_insurer_pool_state(e: &Env, ins_pool: &Address) -> Option<LaiPoolState> {
+    let key = LoanManagerDataKey::LaiInsurerPoolState(ins_pool.clone());
+    if let Some(state) = e.storage().persistent().get(&key) {
+        e.storage().persistent().extend_ttl(
+            &key,
+            POSITIONS_LIFETIME_THRESHOLD,
+            POSITIONS_BUMP_AMOUNT,
+        );
+        Some(state)
+    } else {
+        None
+    }
+}
+
+pub fn write_lai_borrower_user_state(
+    e: &Env,
+    pool: &Address,
+    user: &Address,
+    state: &LaiUserState,
+) {
+    let key = LoanManagerDataKey::LaiBorrowerUserState(pool.clone(), user.clone());
+    e.storage().persistent().set(&key, state);
+    e.storage()
+        .persistent()
+        .extend_ttl(&key, POSITIONS_LIFETIME_THRESHOLD, POSITIONS_BUMP_AMOUNT);
+}
+
+pub fn read_lai_borrower_user_state(e: &Env, pool: &Address, user: &Address) -> LaiUserState {
+    let key = LoanManagerDataKey::LaiBorrowerUserState(pool.clone(), user.clone());
+    if let Some(state) = e.storage().persistent().get(&key) {
+        e.storage().persistent().extend_ttl(
+            &key,
+            POSITIONS_LIFETIME_THRESHOLD,
+            POSITIONS_BUMP_AMOUNT,
+        );
+        state
+    } else {
+        LaiUserState {
+            reward_debt: 0,
+            pending: 0,
+            position: 0,
+        }
+    }
+}
+
+pub fn write_lai_insurer_user_state(
+    e: &Env,
+    ins_pool: &Address,
+    user: &Address,
+    state: &LaiUserState,
+) {
+    let key = LoanManagerDataKey::LaiInsurerUserState(ins_pool.clone(), user.clone());
+    e.storage().persistent().set(&key, state);
+    e.storage()
+        .persistent()
+        .extend_ttl(&key, POSITIONS_LIFETIME_THRESHOLD, POSITIONS_BUMP_AMOUNT);
+}
+
+pub fn read_lai_insurer_user_state(e: &Env, ins_pool: &Address, user: &Address) -> LaiUserState {
+    let key = LoanManagerDataKey::LaiInsurerUserState(ins_pool.clone(), user.clone());
+    if let Some(state) = e.storage().persistent().get(&key) {
+        e.storage().persistent().extend_ttl(
+            &key,
+            POSITIONS_LIFETIME_THRESHOLD,
+            POSITIONS_BUMP_AMOUNT,
+        );
+        state
+    } else {
+        LaiUserState {
+            reward_debt: 0,
+            pending: 0,
+            position: 0,
+        }
+    }
+}
+
+pub fn write_lai_insurance_pool_for_pool(e: &Env, pool: &Address, ins_pool: &Address) {
+    let key = LoanManagerDataKey::LaiInsurancePoolForPool(pool.clone());
+    e.storage().persistent().set(&key, ins_pool);
+    e.storage()
+        .persistent()
+        .extend_ttl(&key, POSITIONS_LIFETIME_THRESHOLD, POSITIONS_BUMP_AMOUNT);
+}
+
+pub fn read_lai_insurance_pool_for_pool(e: &Env, pool: &Address) -> Option<Address> {
+    let key = LoanManagerDataKey::LaiInsurancePoolForPool(pool.clone());
+    if let Some(ins_pool) = e.storage().persistent().get(&key) {
+        e.storage().persistent().extend_ttl(
+            &key,
+            POSITIONS_LIFETIME_THRESHOLD,
+            POSITIONS_BUMP_AMOUNT,
+        );
+        Some(ins_pool)
+    } else {
+        None
     }
 }

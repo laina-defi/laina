@@ -15,4 +15,10 @@ pub enum LoanManagerError {
     InvalidCollateralToken = 9,
     InvalidLiquidation = 10,
     OracleNotFound = 11,
+    InsurancePoolNotSet = 12,
+    NotBadDebt = 13,
+    InsufficientInsuranceCoverage = 14,
+    BadDebtAuction = 15,
+    AuctionHasHealthyDebt = 16,
+    BadDebtClaimAmountTooLow = 17,
 }

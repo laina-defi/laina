@@ -23,8 +23,19 @@ export default {
       info: '#0048ff',
       green: '#0fdd13',
       success: '#0fdd13',
+      cyan: {
+        DEFAULT: '#00D9FF',
+        dark: '#00a8cc',
+        light: '#e0f9ff',
+      },
+      magenta: {
+        DEFAULT: '#FF0099',
+        dark: '#cc007a',
+        light: '#ffe0f5',
+      },
     },
     fontSize: {
+      xs: ['12px', '16px'],
       sm: ['14px', '20px'],
       base: ['18px', '24px'],
       lg: ['20px', '28px'],

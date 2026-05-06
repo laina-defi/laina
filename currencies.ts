@@ -74,3 +74,9 @@ export const CURRENCY_EURC: Currency = {
 } as const;
 
 export const CURRENCIES: Currency[] = [CURRENCY_XLM, CURRENCY_USDC, CURRENCY_EURC] as const;
+
+export const CURRENCIES_BY_TICKER: Record<SupportedCurrency, Currency> = {
+  XLM: CURRENCY_XLM,
+  USDC: CURRENCY_USDC,
+  EURC: CURRENCY_EURC,
+};

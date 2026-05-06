@@ -51,6 +51,81 @@ export const formatAPR = (apr: bigint): string => {
   return `${(Number(apr) / 100_000).toFixed(2)} %`;
 };
 
-export const formatAPY = (apr: bigint): string => {
-  return `${((0.9 * Number(apr)) / 100_000).toFixed(2)} %`;
+export const formatCollateralFactor = (factor: bigint): string =>
+  `${((Number(factor) / 10_000_000) * 100).toFixed(0)} %`;
+
+// Deposit APY: depositors earn on the utilised portion, after 10% protocol fee, split 50/50.
+// APY = borrowRate × utilization × 0.9 × 0.5
+export const calcDepositAPY = (
+  annualInterestRate: bigint,
+  totalBalanceTokens: bigint,
+  availableBalanceTokens: bigint,
+): number => {
+  if (totalBalanceTokens === 0n) return 0;
+  const utilization = Number(totalBalanceTokens - availableBalanceTokens) / Number(totalBalanceTokens);
+  return (Number(annualInterestRate) / 100_000) * utilization * 0.9 * 0.5;
+};
+
+export const formatDepositAPY = (
+  annualInterestRate: bigint,
+  totalBalanceTokens: bigint,
+  availableBalanceTokens: bigint,
+): string => {
+  return `${calcDepositAPY(annualInterestRate, totalBalanceTokens, availableBalanceTokens).toFixed(2)} %`;
+};
+
+// TODO: LAI price is hard-coded at $0.01 — replace with a real price feed when available
+const LAI_PRICE_USD = 0.01;
+// 50M LAI distributed over 5 years at $0.01/LAI = $100K/yr across all pools
+const LAI_YEARLY_USD = (50_000_000 * LAI_PRICE_USD) / 5;
+const LAI_NUM_POOLS = 3; // XLM, USDC, EURC
+
+// LAI APR earned by borrowers in a single pool, as a percentage.
+// Borrowers receive 30% of annual LAI emissions, split equally across pools.
+// APR = (LAI USD value per year for this pool side) / (total borrowed USD value)
+export const calcBorrowerLaiAPR = (
+  totalBalanceTokens: bigint,
+  availableBalanceTokens: bigint,
+  tokenPrice: bigint,
+): number => {
+  const borrowed = totalBalanceTokens - availableBalanceTokens;
+  if (borrowed <= 0n || tokenPrice === 0n) return 0;
+  const laiPoolYearlyUSD = (LAI_YEARLY_USD * 0.3) / LAI_NUM_POOLS;
+  const borrowedUSD = Number(toCents(tokenPrice, borrowed)) / 100;
+  if (borrowedUSD === 0) return 0;
+  return (laiPoolYearlyUSD / borrowedUSD) * 100;
+};
+
+// LAI APR earned by insurers in a single pool, as a percentage.
+// Insurers receive 70% of annual LAI emissions, split equally across pools.
+// APR = (LAI USD value per year for this pool side) / (total insurer deposit USD value)
+export const calcInsurerLaiAPR = (totalInsuranceTokens: bigint, tokenPrice: bigint): number => {
+  if (totalInsuranceTokens === 0n || tokenPrice === 0n) return 0;
+  const laiPoolYearlyUSD = (LAI_YEARLY_USD * 0.7) / LAI_NUM_POOLS;
+  const insurerUSD = Number(toCents(tokenPrice, totalInsuranceTokens)) / 100;
+  if (insurerUSD === 0) return 0;
+  return (laiPoolYearlyUSD / insurerUSD) * 100;
+};
+
+// Insurance APY: insurers earn the same absolute interest as depositors, but their pool is
+// typically much smaller, so APY = borrowRate × borrowed × 0.9 × 0.5 / insurancePoolTotal
+export const calcInsuranceAPY = (
+  annualInterestRate: bigint,
+  totalLendingBalance: bigint,
+  availableLendingBalance: bigint,
+  totalInsuranceTokens: bigint,
+): number => {
+  if (totalInsuranceTokens === 0n) return 0;
+  const borrowed = totalLendingBalance - availableLendingBalance;
+  if (borrowed <= 0n) return 0;
+  return (Number(annualInterestRate) / 100_000) * (Number(borrowed) / Number(totalInsuranceTokens)) * 0.9 * 0.5;
+};
+
+export const formatInsuranceAPY = (
+  annualInterestRate: bigint,
+  totalLendingBalance: bigint,
+  availableLendingBalance: bigint,
+  totalInsuranceTokens: bigint,
+): string => {
+  return `${calcInsuranceAPY(annualInterestRate, totalLendingBalance, availableLendingBalance, totalInsuranceTokens).toFixed(2)} %`;
 };

@@ -1,3 +1,4 @@
+import { usePools } from '@contexts/pool-context';
 import { useWallet } from '@contexts/wallet-context';
 import { contractClient as loanManagerClient } from '@contracts/loan_manager';
 import type { SupportedCurrency } from 'currencies';
@@ -8,7 +9,9 @@ export type Loan = {
   loanId: LoanId;
   borrowedAmount: bigint;
   borrowedTicker: SupportedCurrency;
+  /** Current token value of collateral (shares converted at current pool rate, earns interest) */
   collateralAmount: bigint;
+  collateralShares: bigint;
   collateralTicker: SupportedCurrency;
   healthFactor: bigint;
   unpaidInterest: bigint;
@@ -32,30 +35,46 @@ const Context = createContext<LoansContext>({
 export const LoansProvider = ({ children }: PropsWithChildren) => {
   const [loans, setLoans] = useState<Loan[] | null>(null);
   const { wallet } = useWallet();
+  const { pools } = usePools();
 
-  // TODO: add support for having more than 1 loan
   const refetchLoans = useCallback(async () => {
-    setLoans(null);
     if (!wallet) {
+      setLoans(null);
       return;
     }
     try {
       const { result } = await loanManagerClient.get_loans({ user: wallet.address });
-      const loans = result.map((loan) => ({
-        loanId: loan.loan_id,
-        borrowedAmount: loan.borrowed_amount,
-        borrowedTicker: CURRENCY_BINDINGS_BY_ADDRESS[loan.borrowed_from as PoolAddress].ticker,
-        collateralAmount: loan.collateral_amount,
-        collateralTicker: CURRENCY_BINDINGS_BY_ADDRESS[loan.collateral_from as PoolAddress].ticker,
-        healthFactor: loan.health_factor,
-        unpaidInterest: loan.unpaid_interest,
-      }));
-      setLoans(loans);
+      const mappedLoans = result.map((loan) => {
+        const collateralTicker = CURRENCY_BINDINGS_BY_ADDRESS[loan.collateral_from as PoolAddress].ticker;
+        const collateralShares = loan.collateral_shares;
+
+        // Convert collateral shares to token value using current pool state
+        let collateralAmount = collateralShares;
+        if (pools) {
+          const collateralPool = pools[collateralTicker];
+          if (collateralPool && collateralPool.totalBalanceShares > 0n) {
+            collateralAmount =
+              (collateralShares * collateralPool.totalBalanceTokens) / collateralPool.totalBalanceShares;
+          }
+        }
+
+        return {
+          loanId: loan.loan_id,
+          borrowedAmount: loan.borrowed_amount,
+          borrowedTicker: CURRENCY_BINDINGS_BY_ADDRESS[loan.borrowed_from as PoolAddress].ticker,
+          collateralAmount,
+          collateralShares,
+          collateralTicker,
+          healthFactor: loan.health_factor,
+          unpaidInterest: loan.unpaid_interest,
+        };
+      });
+      setLoans(mappedLoans);
     } catch (err) {
       console.error('Error fetching user loan:', err);
       setLoans([]);
     }
-  }, [wallet]);
+  }, [wallet, pools]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: We want to synchronise loans & wallet
   useEffect(() => {

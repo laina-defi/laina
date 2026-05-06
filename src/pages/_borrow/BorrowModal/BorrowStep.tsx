@@ -55,7 +55,7 @@ export const BorrowStep = ({ onClose, currency }: BorrowStepProps) => {
   const collateralAmountCents = collateralPrice ? toCents(collateralPrice, collateralAmount) : undefined;
 
   const healthFactor =
-    loanAmountCents && loanAmountCents > 0n ? Number(collateralAmountCents) / Number(loanAmountCents) : 0;
+    loanAmountCents && loanAmountCents > 0n ? (Number(collateralAmountCents) * 0.8) / Number(loanAmountCents) : 0; //Magic 0.8 threshold shoud be fetched from pool context.
 
   const handleClose = () => {
     setLoanAmount(0n);

@@ -21,7 +21,7 @@ const { title, description } = Astro.props;
     <meta name="generator" content={Astro.generator} />
     <title>{title}</title>
   </head>
-  <body class="font-sans bg-white">
+  <body class="font-sans bg-white overflow-x-hidden">
     <slot />
   </body>
   <style is:global>
@@ -29,15 +29,7 @@ const { title, description } = Astro.props;
       font-family: system-ui, sans-serif;
       background: #ffffff;
       background-size: 224px;
-    }
-    main {
-      margin: auto;
-      padding: 1rem;
-      width: 800px;
-      max-width: 100vw;
-      color: rgb(0, 0, 0);
-      font-size: 18px;
-      line-height: 1.6;
+      overflow-x: hidden;
     }
     code {
       font-family:

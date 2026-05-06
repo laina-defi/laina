@@ -2,10 +2,12 @@ import { FREIGHTER_ID, StellarWalletsKit, WalletNetwork, allowAllModules } from 
 import type * as StellarSdk from '@stellar/stellar-sdk';
 import { type PropsWithChildren, createContext, useCallback, useContext, useEffect, useState } from 'react';
 
+import { contractClient as faucetClient } from '@contracts/faucet';
 import { contractClient as loanManagerClient } from '@contracts/loan_manager';
 import { getBalances } from '@lib/horizon';
 import { CURRENCIES, type SupportedCurrency } from 'currencies';
 import { CURRENCY_BINDINGS_ARR } from '../currency-bindings';
+import { CURRENCY_BINDINGS_ARR as INSURANCE_BINDINGS_ARR } from '../insurance-bindings';
 
 const WALLET_TIMEOUT_DAYS = 3;
 
@@ -26,11 +28,25 @@ export type BalanceRecord = {
 export type Positions = {
   receivable_shares: bigint;
   liabilities: bigint;
-  collateral: bigint;
+  collateral_shares: bigint;
 };
 
 export type PositionsRecord = {
   [K in SupportedCurrency]?: Positions;
+};
+
+export type InsurancePositionsRecord = {
+  [K in SupportedCurrency]?: bigint;
+};
+
+export type InsuranceQueueEntry = {
+  queued_shares: bigint;
+  queued_at_ledger: number;
+  queued_at_timestamp: bigint;
+};
+
+export type InsuranceQueuesRecord = {
+  [K in SupportedCurrency]?: InsuranceQueueEntry | null;
 };
 
 export type PriceRecord = {
@@ -41,6 +57,9 @@ export type WalletContext = {
   wallet: Wallet | null;
   walletBalances: BalanceRecord | null;
   positions: PositionsRecord;
+  insurancePositions: InsurancePositionsRecord;
+  insuranceQueues: InsuranceQueuesRecord;
+  pendingLai: bigint | null;
   openConnectWalletModal: () => void;
   disconnectWallet: () => void;
   refetchBalances: () => void;
@@ -65,6 +84,9 @@ const Context = createContext<WalletContext>({
   wallet: null,
   walletBalances: null,
   positions: {},
+  insurancePositions: {},
+  insuranceQueues: {},
+  pendingLai: null,
   openConnectWalletModal: () => {},
   disconnectWallet: () => {},
   refetchBalances: () => {},
@@ -91,6 +113,37 @@ const fetchAllPositions = async (user: string): Promise<PositionsRecord> => {
     ]),
   );
   return Object.fromEntries(positionsArr);
+};
+
+const fetchAllInsurancePositions = async (user: string): Promise<InsurancePositionsRecord> => {
+  const results = await Promise.all(
+    INSURANCE_BINDINGS_ARR.map(async ({ contractClient, ticker }) => {
+      const { result } = await contractClient.get_balance({ user });
+      return [ticker, result.isOk() ? result.unwrap() : 0n] as const;
+    }),
+  );
+  return Object.fromEntries(results);
+};
+
+const fetchPendingLai = async (user: string): Promise<bigint> => {
+  try {
+    const tx = await loanManagerClient.claim_lai_rewards({ user });
+    const result = tx.result;
+    return result.isOk() ? result.unwrap() : 0n;
+  } catch {
+    return 0n;
+  }
+};
+
+const fetchAllInsuranceQueues = async (user: string): Promise<InsuranceQueuesRecord> => {
+  const results = await Promise.all(
+    INSURANCE_BINDINGS_ARR.map(async ({ contractClient, ticker }) => {
+      const { result } = await contractClient.get_queue({ user });
+      // get_queue returns Option<WithdrawQueueEntry>, not Result — result is the value or undefined
+      return [ticker, result ?? null] as const;
+    }),
+  );
+  return Object.fromEntries(results);
 };
 
 const isSupportedCurrency = (assetCode: string, issuer: string): boolean => {
@@ -148,20 +201,37 @@ export const WalletProvider = ({ children }: PropsWithChildren) => {
   const [wallet, setWallet] = useState<Wallet | null>(null);
   const [walletBalances, setWalletBalances] = useState<BalanceRecord | null>(null);
   const [positions, setPositions] = useState<PositionsRecord>({});
+  const [insurancePositions, setInsurancePositions] = useState<InsurancePositionsRecord>({});
+  const [insuranceQueues, setInsuranceQueues] = useState<InsuranceQueuesRecord>({});
+  const [pendingLai, setPendingLai] = useState<bigint | null>(null);
 
   const loadWallet = useCallback(async (name: string) => {
     try {
       const { address } = await kit.getAddress();
+
+      // Update publicKey on all contract clients immediately so transactions
+      // are built with the correct source account even if later fetches fail.
+      for (const { contractClient } of CURRENCY_BINDINGS_ARR) {
+        contractClient.options.publicKey = address;
+      }
+      for (const { contractClient } of INSURANCE_BINDINGS_ARR) {
+        contractClient.options.publicKey = address;
+      }
+      loanManagerClient.options.publicKey = address;
+      faucetClient.options.publicKey = address;
+
       setWallet(createWalletObj(name, address));
       const balances = await getBalances(address);
       setWalletBalances(createBalanceRecord(balances));
       setPositions(await fetchAllPositions(address));
-
-      // use the user's wallet for all of our contract clients.
-      for (const { contractClient } of CURRENCY_BINDINGS_ARR) {
-        contractClient.options.publicKey = address;
-      }
-      loanManagerClient.options.publicKey = address;
+      const [insurPos, insurQueues, lai] = await Promise.all([
+        fetchAllInsurancePositions(address),
+        fetchAllInsuranceQueues(address),
+        fetchPendingLai(address),
+      ]);
+      setInsurancePositions(insurPos);
+      setInsuranceQueues(insurQueues);
+      setPendingLai(lai);
 
       const timeout = new Date();
       timeout.setDate(timeout.getDate() + WALLET_TIMEOUT_DAYS);
@@ -197,6 +267,9 @@ export const WalletProvider = ({ children }: PropsWithChildren) => {
     setWallet(null);
     setWalletBalances(null);
     setPositions({});
+    setInsurancePositions({});
+    setInsuranceQueues({});
+    setPendingLai(null);
     deleteWalletState();
   };
 
@@ -206,8 +279,16 @@ export const WalletProvider = ({ children }: PropsWithChildren) => {
     try {
       const balances = await getBalances(wallet.address);
       setWalletBalances(createBalanceRecord(balances));
-      const positions = await fetchAllPositions(wallet.address);
+      const [positions, insurancePositions, insuranceQueues, lai] = await Promise.all([
+        fetchAllPositions(wallet.address),
+        fetchAllInsurancePositions(wallet.address),
+        fetchAllInsuranceQueues(wallet.address),
+        fetchPendingLai(wallet.address),
+      ]);
       setPositions(positions);
+      setInsurancePositions(insurancePositions);
+      setInsuranceQueues(insuranceQueues);
+      setPendingLai(lai);
     } catch (err) {
       console.error('Error fetching balances', err);
     }
@@ -219,6 +300,9 @@ export const WalletProvider = ({ children }: PropsWithChildren) => {
         wallet,
         walletBalances,
         positions,
+        insurancePositions,
+        insuranceQueues,
+        pendingLai,
         openConnectWalletModal,
         disconnectWallet,
         refetchBalances,
