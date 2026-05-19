@@ -14,4 +14,5 @@ pub enum InsurancePoolError {
     QueuePeriodNotElapsed = 8,
     NoWithdrawQueue = 9,
     WithdrawQueueAlreadyExists = 10,
+    AlreadyInitialized = 11,
 }

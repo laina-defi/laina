@@ -65,6 +65,12 @@ pub fn read_loan_manager_address(e: &Env) -> Option<Address> {
     }
 }
 
+pub fn loan_manager_exists(e: &Env) -> bool {
+    e.storage()
+        .persistent()
+        .has(&InsurancePoolDataKey::LoanManagerAddress)
+}
+
 pub fn write_loan_pool_address(e: &Env, address: Address) {
     let key = InsurancePoolDataKey::LoanPoolAddress;
     e.storage().persistent().set(&key, &address);

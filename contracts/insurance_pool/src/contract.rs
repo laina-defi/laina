@@ -26,6 +26,10 @@ impl InsurancePool {
         share_token_addr: Address,
         loan_manager_addr: Address,
     ) -> Result<(), InsurancePoolError> {
+        if storage::loan_manager_exists(&e) {
+            return Err(InsurancePoolError::AlreadyInitialized);
+        }
+
         storage::write_loan_pool_address(&e, loan_pool_addr);
         storage::write_share_token_address(&e, share_token_addr);
         storage::write_loan_manager_address(&e, loan_manager_addr);
