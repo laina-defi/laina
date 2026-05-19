@@ -55,14 +55,11 @@ pub fn write_loan_manager_address(e: &Env, address: Address) {
     extend_persistent(e, &key);
 }
 
-pub fn read_loan_manager_address(e: &Env) -> Option<Address> {
-    let key = InsurancePoolDataKey::LoanManagerAddress;
-    if let Some(addr) = e.storage().persistent().get(&key) {
-        extend_persistent(e, &key);
-        Some(addr)
-    } else {
-        None
-    }
+pub fn read_loan_manager_address(e: &Env) -> Result<Address, InsurancePoolError> {
+    e.storage()
+        .persistent()
+        .get(&InsurancePoolDataKey::LoanManagerAddress)
+        .ok_or(InsurancePoolError::ManagerAddressNotFound)
 }
 
 pub fn loan_manager_exists(e: &Env) -> bool {

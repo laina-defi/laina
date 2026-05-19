@@ -12,6 +12,10 @@ mod loan_pool {
     soroban_sdk::contractimport!(file = "../../target/wasm32v1-none/release/loan_pool.wasm");
 }
 
+mod insurance_pool {
+    soroban_sdk::contractimport!(file = "../../target/wasm32v1-none/release/insurance_pool.wasm");
+}
+
 #[contract]
 struct LoanManager;
 
@@ -88,17 +92,23 @@ impl LoanManager {
         Ok(deployed_address)
     }
 
-    /// Upgrade deployed loan pools and the loan manager WASM.
+    /// Upgrade deployed loan pools, their insurance pools, and the loan manager WASM.
     pub fn upgrade(
         e: Env,
         new_manager_wasm_hash: BytesN<32>,
         new_pool_wasm_hash: BytesN<32>,
+        new_insurance_pool_wasm_hash: BytesN<32>,
     ) -> Result<(), LoanManagerError> {
         storage::read_admin(&e)?.require_auth();
 
         storage::read_pool_addresses(&e).iter().for_each(|pool| {
             let pool_client = loan_pool::Client::new(&e, &pool);
             pool_client.upgrade(&new_pool_wasm_hash);
+        });
+
+        storage::read_insurance_pool_addresses(&e)?.iter().for_each(|ins_pool| {
+            let ins_client = insurance_pool::Client::new(&e, &ins_pool);
+            ins_client.upgrade(&new_insurance_pool_wasm_hash);
         });
 
         e.deployer()
@@ -719,6 +729,7 @@ impl LoanManager {
         loan_pool::Client::new(&e, &pool_addr).set_insurance_pool(&insurance_pool_addr);
 
         storage::write_lai_insurance_pool_for_pool(&e, &pool_addr, &insurance_pool_addr);
+        storage::append_insurance_pool_address(&e, insurance_pool_addr.clone());
 
         if let Some(config) = storage::read_lai_config(&e) {
             if storage::read_lai_insurer_pool_state(&e, &insurance_pool_addr).is_none() {
@@ -1261,12 +1272,22 @@ mod tests {
         let e = Env::default();
         e.mock_all_auths();
 
-        let TestEnv { manager_client, .. } = setup_test_env(&e);
+        let TestEnv {
+            manager_client,
+            pool_usdc_addr,
+            ..
+        } = setup_test_env(&e);
+
+        let mock_ins_pool_addr =
+            e.register(mock_insurance_pool_bad_debt::MockInsurancePoolBadDebt, ());
+        manager_client.set_insurance_pool(&pool_usdc_addr, &mock_ins_pool_addr);
+
         let manager_wasm_hash = e.deployer().upload_contract_wasm(loan_pool::WASM);
         let pool_wasm_hash = e.deployer().upload_contract_wasm(loan_pool::WASM);
+        let insurance_pool_wasm_hash = e.deployer().upload_contract_wasm(loan_pool::WASM);
 
         // ACT
-        manager_client.upgrade(&manager_wasm_hash, &pool_wasm_hash);
+        manager_client.upgrade(&manager_wasm_hash, &pool_wasm_hash, &insurance_pool_wasm_hash);
     }
 
     #[test]
@@ -2167,7 +2188,7 @@ mod tests {
     }
 
     mod mock_insurance_pool_bad_debt {
-        use soroban_sdk::{contract, contractimpl, contracttype, Env};
+        use soroban_sdk::{contract, contractimpl, contracttype, BytesN, Env};
 
         #[contracttype]
         pub struct InsurancePoolState {
@@ -2188,6 +2209,8 @@ mod tests {
             }
 
             pub fn cover_bad_debt(_e: Env, _ltoken_amount: i128) {}
+
+            pub fn upgrade(_e: Env, _new_wasm_hash: BytesN<32>) {}
         }
     }
 

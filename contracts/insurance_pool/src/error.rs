@@ -15,4 +15,5 @@ pub enum InsurancePoolError {
     NoWithdrawQueue = 9,
     WithdrawQueueAlreadyExists = 10,
     AlreadyInitialized = 11,
+    ManagerAddressNotFound = 12,
 }

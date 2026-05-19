@@ -1,4 +1,6 @@
-use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, IntoVal, Symbol, Val};
+use soroban_sdk::{
+    contract, contractimpl, contracttype, Address, BytesN, Env, IntoVal, Symbol, Val,
+};
 
 use crate::{error::InsurancePoolError, storage, storage::WithdrawQueueEntry};
 
@@ -36,6 +38,17 @@ impl InsurancePool {
         Ok(())
     }
 
+    pub fn upgrade(
+        e: Env,
+        new_insurance_pool_wasm_hash: BytesN<32>,
+    ) -> Result<(), InsurancePoolError> {
+        storage::read_loan_manager_address(&e)?.require_auth();
+
+        e.deployer()
+            .update_current_contract_wasm(new_insurance_pool_wasm_hash);
+
+        Ok(())
+    }
     /// Deposit share tokens (lXLM/lUSDC/lEURC) into the insurance pool.
     /// The user receives internal insurance shares proportional to their deposit.
     /// Returns the number of insurance shares issued.
@@ -47,6 +60,7 @@ impl InsurancePool {
         }
 
         let share_token_addr = storage::read_share_token_address(&e)?;
+        let manager_addr = storage::read_loan_manager_address(&e)?;
         let share_token_client = share_token::Client::new(&e, &share_token_addr);
 
         let total_tokens = storage::read_total_insurance_tokens(&e);
@@ -69,19 +83,17 @@ impl InsurancePool {
 
         // Checkpoint LAI insurer rewards before changing the user's share position.
         let old_user_shares = storage::read_insurance_positions(&e, &user).insurance_shares;
-        if let Some(manager_addr) = storage::read_loan_manager_address(&e) {
-            let new_user_shares = old_user_shares + insurance_shares_issued;
-            let func = Symbol::new(&e, "checkpoint_insurer_reward");
-            let args: soroban_sdk::Vec<Val> = (
-                e.current_contract_address(),
-                user.clone(),
-                old_user_shares,
-                new_user_shares,
-                total_shares,
-            )
-                .into_val(&e);
-            let _: () = e.invoke_contract(&manager_addr, &func, args);
-        }
+        let new_user_shares = old_user_shares + insurance_shares_issued;
+        let func = Symbol::new(&e, "checkpoint_insurer_reward");
+        let args: soroban_sdk::Vec<Val> = (
+            e.current_contract_address(),
+            user.clone(),
+            old_user_shares,
+            new_user_shares,
+            total_shares,
+        )
+            .into_val(&e);
+        let _: () = e.invoke_contract(&manager_addr, &func, args);
 
         // Update user's insurance positions
         let positions = storage::read_insurance_positions(&e, &user);
@@ -225,19 +237,18 @@ impl InsurancePool {
         }
 
         // Checkpoint LAI insurer rewards before reducing the user's share position.
-        if let Some(manager_addr) = storage::read_loan_manager_address(&e) {
-            let new_shares = positions.insurance_shares - entry.queued_shares;
-            let func = Symbol::new(&e, "checkpoint_insurer_reward");
-            let args: soroban_sdk::Vec<Val> = (
-                e.current_contract_address(),
-                user.clone(),
-                positions.insurance_shares,
-                new_shares,
-                total_shares,
-            )
-                .into_val(&e);
-            let _: () = e.invoke_contract(&manager_addr, &func, args);
-        }
+        let manager_addr = storage::read_loan_manager_address(&e)?;
+        let new_shares = positions.insurance_shares - entry.queued_shares;
+        let func = Symbol::new(&e, "checkpoint_insurer_reward");
+        let args: soroban_sdk::Vec<Val> = (
+            e.current_contract_address(),
+            user.clone(),
+            positions.insurance_shares,
+            new_shares,
+            total_shares,
+        )
+            .into_val(&e);
+        let _: () = e.invoke_contract(&manager_addr, &func, args);
 
         // Update user's insurance positions
         let new_shares = positions
