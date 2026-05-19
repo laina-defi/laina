@@ -40,8 +40,13 @@ export const GENESIS_ACCOUNT = GENESIS_ACCOUNTS[network as keyof typeof GENESIS_
 
 export const loadAccount = () => {
   // Remove first so re-runs don't fail on "key already exists".
-  exe(`stellar keys rm ${process.env.SOROBAN_ACCOUNT} 2>/dev/null || true`);
-  exe(`stellar keys add ${process.env.SOROBAN_ACCOUNT}`);
+  exe(`stellar keys rm ${process.env.SOROBAN_ACCOUNT} --force 2>/dev/null || true`);
+  // --secret-key reads the key from stdin in stellar CLI v26+
+  console.log(`stellar keys add ${process.env.SOROBAN_ACCOUNT} --secret-key`);
+  execSync(`stellar keys add ${process.env.SOROBAN_ACCOUNT} --secret-key`, {
+    input: process.env.SOROBAN_SECRET_KEY,
+    stdio: ['pipe', 'inherit', 'inherit'],
+  });
 };
 
 // Function to execute and log shell commands
