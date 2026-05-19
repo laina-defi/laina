@@ -979,18 +979,21 @@ impl LoanManager {
         for pool in pool_addresses.iter() {
             // --- Borrower side ---
             if let Some(mut pool_state) = storage::read_lai_borrower_pool_state(&e, &pool) {
-                // Compute current liabilities from loan records
+                let borrow_pool_client = loan_pool::Client::new(&e, &pool);
+                pool_state.last_known_total =
+                    borrow_pool_client.get_pool_state().total_liabilities_tokens;
+
                 let user_liabilities: i128 = user_loans
                     .iter()
                     .filter(|l| l.borrowed_from == pool)
                     .map(|l| l.borrowed_amount)
                     .sum();
 
-                // Advance accumulator using last known total
                 Self::advance_accumulator(&e, &config, &mut pool_state, LAI_BORROWER_BPS);
 
                 let user_state = storage::read_lai_borrower_user_state(&e, &pool, &user);
-                let earned = user_liabilities
+                let earned = user_state
+                    .position
                     .checked_mul(pool_state.acc_per_share)
                     .unwrap_or(0)
                     / LAI_PRECISION
