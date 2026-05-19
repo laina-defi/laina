@@ -833,7 +833,8 @@ impl LoanManager {
             // Therefore, f(0) = borrowed_amount, f(AUCTION_DURATION) = 0.
             let time_based_reduction = (ledgers_since_start as i128)
                 .cmul(borrowed_amount)?
-                .cdiv(AUCTION_DURATION as i128)?;
+                .cdiv(AUCTION_DURATION as i128)?
+                .min(borrowed_amount);
 
             let amount_to_pay = borrowed_amount - time_based_reduction;
 
