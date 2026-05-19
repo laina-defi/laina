@@ -615,6 +615,11 @@ impl LoanManager {
         );
 
         let new_borrowed_amount = borrowed_amount.csub(amount)?;
+        let new_unpaid_interest = if amount < unpaid_interest {
+            unpaid_interest.csub(amount)?
+        } else {
+            0
+        };
         let new_collateral_shares = collateral_shares.csub(bonus_shares)?;
 
         let new_collateral_tokens = collateral_pool_client.shares_to_tokens(&new_collateral_shares);
@@ -638,7 +643,7 @@ impl LoanManager {
             collateral_from,
             collateral_shares: new_collateral_shares,
             health_factor: new_health_factor,
-            unpaid_interest, // Temp
+            unpaid_interest: new_unpaid_interest,
             last_accrual,
         };
 
