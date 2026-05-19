@@ -230,10 +230,9 @@ impl LoanPoolContract {
         Self::add_interest_to_accrual(e.clone())?;
 
         let balance = storage::read_available_balance(&e)?;
-        assert!(
-            amount < balance,
-            "Borrowed amount has to be less than available balance!"
-        );
+        if amount > balance {
+            return Err(LoanPoolError::InsufficientLiquidity);
+        }
 
         storage::adjust_available_balance(
             &e,
