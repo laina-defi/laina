@@ -106,10 +106,12 @@ impl LoanManager {
             pool_client.upgrade(&new_pool_wasm_hash);
         });
 
-        storage::read_insurance_pool_addresses(&e)?.iter().for_each(|ins_pool| {
-            let ins_client = insurance_pool::Client::new(&e, &ins_pool);
-            ins_client.upgrade(&new_insurance_pool_wasm_hash);
-        });
+        storage::read_insurance_pool_addresses(&e)?
+            .iter()
+            .for_each(|ins_pool| {
+                let ins_client = insurance_pool::Client::new(&e, &ins_pool);
+                ins_client.upgrade(&new_insurance_pool_wasm_hash);
+            });
 
         e.deployer()
             .update_current_contract_wasm(new_manager_wasm_hash);
@@ -1300,7 +1302,11 @@ mod tests {
         let insurance_pool_wasm_hash = e.deployer().upload_contract_wasm(loan_pool::WASM);
 
         // ACT
-        manager_client.upgrade(&manager_wasm_hash, &pool_wasm_hash, &insurance_pool_wasm_hash);
+        manager_client.upgrade(
+            &manager_wasm_hash,
+            &pool_wasm_hash,
+            &insurance_pool_wasm_hash,
+        );
     }
 
     #[test]

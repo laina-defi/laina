@@ -257,6 +257,11 @@ impl LoanPoolContract {
         user.require_auth();
         assert!(amount > 0, "Amount must be positive!");
 
+        let pool_status = storage::read_pool_status(&e)?;
+        if pool_status == PoolStatus::Restricted || pool_status == PoolStatus::Frozen {
+            return Err(LoanPoolError::WrongStatus);
+        }
+
         Self::add_interest_to_accrual(e.clone())?;
 
         let total_shares = Self::get_total_balance_shares(e.clone())?;
@@ -804,7 +809,9 @@ impl LoanPoolContract {
         let total_shares = storage::read_total_shares(&e)?;
         let total_tokens = storage::read_total_balance(&e)?;
 
-        let shares_to_burn = liabilities_to_decrease.cmul(total_shares)?.cdiv(total_tokens)?;
+        let shares_to_burn = liabilities_to_decrease
+            .cmul(total_shares)?
+            .cdiv(total_tokens)?;
 
         if shares_to_burn > 0 {
             let insurance_pool_addr = storage::read_insurance_pool_address(&e)?;
@@ -1351,7 +1358,7 @@ mod test {
         let state = contract_client.get_pool_state();
         assert_eq!(state.available_balance_tokens, 695); // 500 + 195
         assert_eq!(state.total_liabilities_tokens, 300); // 500 - 200
-        // Admin fee (5) left the pool, so depositor value drops: 1000 - 5 = 995
+                                                         // Admin fee (5) left the pool, so depositor value drops: 1000 - 5 = 995
         assert_eq!(state.total_balance_tokens, 995);
         assert_eq!(
             state.total_balance_tokens,

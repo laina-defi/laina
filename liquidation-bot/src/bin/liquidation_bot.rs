@@ -919,10 +919,10 @@ mod tests {
 
     #[test]
     fn test_event_topic_matching() {
-        let topics_loan_created = vec!["loan".to_string(), "created".to_string()];
-        let topics_loan_updated = vec!["loan".to_string(), "updated".to_string()];
-        let topics_loan_deleted = vec!["loan".to_string(), "deleted".to_string()];
-        let topics_other = vec!["pool".to_string(), "created".to_string()];
+        let topics_loan_created = ["loan".to_string(), "created".to_string()];
+        let topics_loan_updated = ["loan".to_string(), "updated".to_string()];
+        let topics_loan_deleted = ["loan".to_string(), "deleted".to_string()];
+        let topics_other = ["pool".to_string(), "created".to_string()];
 
         // Test loan created/updated matching
         let topics_lower: Vec<String> = topics_loan_created
