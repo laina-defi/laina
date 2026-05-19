@@ -798,10 +798,13 @@ impl LoanPoolContract {
 
         Self::add_interest_to_accrual(e.clone())?;
 
+        let current_liabilities = storage::read_stored_positions(&e, &borrower).liabilities;
+        let liabilities_to_decrease = bad_debt_tokens.min(current_liabilities);
+
         let total_shares = storage::read_total_shares(&e)?;
         let total_tokens = storage::read_total_balance(&e)?;
 
-        let shares_to_burn = bad_debt_tokens.cmul(total_shares)?.cdiv(total_tokens)?;
+        let shares_to_burn = liabilities_to_decrease.cmul(total_shares)?.cdiv(total_tokens)?;
 
         if shares_to_burn > 0 {
             let insurance_pool_addr = storage::read_insurance_pool_address(&e)?;
@@ -812,8 +815,6 @@ impl LoanPoolContract {
                 .map_err(|_| LoanPoolError::InsufficientInsuranceCoverage)?;
         }
 
-        let current_liabilities = storage::read_stored_positions(&e, &borrower).liabilities;
-        let liabilities_to_decrease = bad_debt_tokens.min(current_liabilities);
         positions::decrease_positions(&e, borrower, liabilities_to_decrease, 0)?;
         storage::adjust_total_liabilities(
             &e,
@@ -824,7 +825,7 @@ impl LoanPoolContract {
 
         storage::adjust_total_balance(
             &e,
-            bad_debt_tokens
+            liabilities_to_decrease
                 .checked_neg()
                 .ok_or(LoanPoolError::OverOrUnderFlow)?,
         )?;
