@@ -779,6 +779,10 @@ impl LoanManager {
             return Err(LoanManagerError::NotBadDebt);
         }
 
+        if storage::read_bad_debt_auction(&e, loan_id.clone()).is_ok() {
+            return Err(LoanManagerError::AuctionAlreadyExists);
+        }
+
         const AUCTION_DURATION: u32 = 17280; // roughly 24h in ledgers.
 
         let start_ledger = e.ledger().sequence();
