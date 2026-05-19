@@ -317,6 +317,9 @@ impl InsurancePool {
             .checked_sub(ltoken_amount)
             .ok_or(InsurancePoolError::OverOrUnderFlow)?;
         storage::write_total_insurance_tokens(&e, new_total_tokens);
+        if new_total_tokens == 0 {
+            storage::write_total_insurance_shares(&e, 0);
+        }
 
         Ok(())
     }
