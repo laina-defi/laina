@@ -13,10 +13,11 @@ import {
 
 console.log('######################Updating contracts ########################');
 
-// Invoke the upgrade-action of loan manager. It will upgrade its pools as well.
+// Invoke the upgrade-action of loan manager. It will upgrade its pools and insurance pools as well.
 const upgradeContracts = () => {
   const managerWasmHash = readTextFile('./.stellar/contract-wasm-hash/loan_manager.txt');
   const poolWasmHash = readTextFile('./.stellar/contract-wasm-hash/loan_pool.txt');
+  const insurancePoolWasmHash = readTextFile('./.stellar/contract-wasm-hash/insurance_pool.txt');
 
   exe(`stellar contract invoke \
 --id ${loanManagerAddress()} \
@@ -25,7 +26,8 @@ const upgradeContracts = () => {
 -- \
 upgrade \
 --new_manager_wasm_hash ${managerWasmHash} \
---new_pool_wasm_hash ${poolWasmHash}`);
+--new_pool_wasm_hash ${poolWasmHash} \
+--new_insurance_pool_wasm_hash ${insurancePoolWasmHash}`);
 };
 
 loadAccount();

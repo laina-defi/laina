@@ -230,10 +230,9 @@ impl LoanPoolContract {
         Self::add_interest_to_accrual(e.clone())?;
 
         let balance = storage::read_available_balance(&e)?;
-        assert!(
-            amount < balance,
-            "Borrowed amount has to be less than available balance!"
-        );
+        if amount > balance {
+            return Err(LoanPoolError::InsufficientLiquidity);
+        }
 
         storage::adjust_available_balance(
             &e,
@@ -256,6 +255,11 @@ impl LoanPoolContract {
     pub fn deposit_collateral(e: Env, user: Address, amount: i128) -> Result<i128, LoanPoolError> {
         user.require_auth();
         assert!(amount > 0, "Amount must be positive!");
+
+        let pool_status = storage::read_pool_status(&e)?;
+        if pool_status == PoolStatus::Restricted || pool_status == PoolStatus::Frozen {
+            return Err(LoanPoolError::WrongStatus);
+        }
 
         Self::add_interest_to_accrual(e.clone())?;
 
@@ -624,6 +628,12 @@ impl LoanPoolContract {
             amount.checked_neg().ok_or(LoanPoolError::OverOrUnderFlow)?,
         )?;
         storage::adjust_available_balance(&e, amount_to_storage)?;
+        storage::adjust_total_balance(
+            &e,
+            amount_to_admin
+                .checked_neg()
+                .ok_or(LoanPoolError::OverOrUnderFlow)?,
+        )?;
         Ok(())
     }
 
@@ -792,10 +802,15 @@ impl LoanPoolContract {
 
         Self::add_interest_to_accrual(e.clone())?;
 
+        let current_liabilities = storage::read_stored_positions(&e, &borrower).liabilities;
+        let liabilities_to_decrease = bad_debt_tokens.min(current_liabilities);
+
         let total_shares = storage::read_total_shares(&e)?;
         let total_tokens = storage::read_total_balance(&e)?;
 
-        let shares_to_burn = bad_debt_tokens.cmul(total_shares)?.cdiv(total_tokens)?;
+        let shares_to_burn = liabilities_to_decrease
+            .cmul(total_shares)?
+            .cdiv(total_tokens)?;
 
         if shares_to_burn > 0 {
             let insurance_pool_addr = storage::read_insurance_pool_address(&e)?;
@@ -806,8 +821,6 @@ impl LoanPoolContract {
                 .map_err(|_| LoanPoolError::InsufficientInsuranceCoverage)?;
         }
 
-        let current_liabilities = storage::read_stored_positions(&e, &borrower).liabilities;
-        let liabilities_to_decrease = bad_debt_tokens.min(current_liabilities);
         positions::decrease_positions(&e, borrower, liabilities_to_decrease, 0)?;
         storage::adjust_total_liabilities(
             &e,
@@ -818,7 +831,7 @@ impl LoanPoolContract {
 
         storage::adjust_total_balance(
             &e,
-            bad_debt_tokens
+            liabilities_to_decrease
                 .checked_neg()
                 .ok_or(LoanPoolError::OverOrUnderFlow)?,
         )?;
@@ -1290,5 +1303,66 @@ mod test {
 
         contract_client.add_interest_to_accrual();
         assert_eq!(10_644_440, contract_client.get_accrual());
+    }
+
+    #[test]
+    fn liquidate_maintains_pool_invariant() {
+        // Verify: total_balance = available_balance + total_liabilities after liquidation.
+        // The admin fee exits the pool, so total_balance must decrease by amount_to_admin
+        // to maintain the invariant.
+        let e = Env::default();
+        e.mock_all_auths_allowing_non_root_auth();
+
+        let admin = Address::generate(&e);
+        let loan_manager = Address::generate(&e);
+        let token = e.register_stellar_asset_contract_v2(admin.clone());
+        let stellar_asset = StellarAssetClient::new(&e, &token.address());
+        let currency = Currency {
+            token_address: token.address(),
+            ticker: Symbol::new(&e, "XLM"),
+        };
+
+        let depositor = Address::generate(&e);
+        stellar_asset.mint(&depositor, &1000);
+
+        let borrower = Address::generate(&e);
+        let liquidator = Address::generate(&e);
+        stellar_asset.mint(&liquidator, &200);
+
+        let contract_id = e.register(LoanPoolContract, ());
+        let contract_client = LoanPoolContractClient::new(&e, &contract_id);
+        let share_token_addr = create_share_token(&e, &contract_id);
+
+        contract_client.initialize(
+            &loan_manager,
+            &currency,
+            &TEST_LIQUIDATION_THRESHOLD,
+            &share_token_addr,
+        );
+
+        let mock_ins_pool = e.register(mock_insurance_pool::MockInsurancePool, ());
+        contract_client.set_insurance_pool(&mock_ins_pool);
+
+        contract_client.deposit(&depositor, &1000);
+        contract_client.borrow(&borrower, &500);
+
+        let state = contract_client.get_pool_state();
+        assert_eq!(state.total_balance_tokens, 1000);
+        assert_eq!(state.available_balance_tokens, 500);
+        assert_eq!(state.total_liabilities_tokens, 500);
+
+        // Liquidator pays 200 principal; unpaid_interest=50 → amount_to_admin=5, amount_to_storage=195
+        contract_client.liquidate(&liquidator, &200, &50, &borrower);
+
+        let state = contract_client.get_pool_state();
+        assert_eq!(state.available_balance_tokens, 695); // 500 + 195
+        assert_eq!(state.total_liabilities_tokens, 300); // 500 - 200
+                                                         // Admin fee (5) left the pool, so depositor value drops: 1000 - 5 = 995
+        assert_eq!(state.total_balance_tokens, 995);
+        assert_eq!(
+            state.total_balance_tokens,
+            state.available_balance_tokens + state.total_liabilities_tokens,
+            "pool invariant violated after liquidation"
+        );
     }
 }

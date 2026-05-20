@@ -28,4 +28,5 @@ pub enum LoanPoolError {
     InterestRateAtPanic = 22,
     PanicRatesThreshold = 23,
     AlreadyInitialized = 24,
+    InsufficientLiquidity = 25,
 }

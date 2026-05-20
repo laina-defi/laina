@@ -24,6 +24,7 @@ pub enum LoanManagerDataKey {
     LaiBorrowerUserState(Address, Address), // (pool, user) → LaiUserState
     LaiInsurerUserState(Address, Address),  // (ins_pool, user) → LaiUserState
     LaiInsurancePoolForPool(Address),       // loan_pool → insurance_pool
+    InsurancePoolAddresses,
     BadDebtAuction(LoanId),
 }
 
@@ -499,6 +500,20 @@ pub fn write_lai_insurance_pool_for_pool(e: &Env, pool: &Address, ins_pool: &Add
     e.storage()
         .persistent()
         .extend_ttl(&key, POSITIONS_LIFETIME_THRESHOLD, POSITIONS_BUMP_AMOUNT);
+}
+
+pub fn append_insurance_pool_address(e: &Env, ins_pool: Address) {
+    let key = LoanManagerDataKey::InsurancePoolAddresses;
+    let mut addresses: Vec<Address> = e.storage().persistent().get(&key).unwrap_or(vec![&e]);
+    addresses.push_back(ins_pool);
+    e.storage().persistent().set(&key, &addresses);
+}
+
+pub fn read_insurance_pool_addresses(e: &Env) -> Result<Vec<Address>, LoanManagerError> {
+    e.storage()
+        .persistent()
+        .get(&LoanManagerDataKey::InsurancePoolAddresses)
+        .ok_or(LoanManagerError::InsurancePoolAddressesNotFound)
 }
 
 pub fn read_lai_insurance_pool_for_pool(e: &Env, pool: &Address) -> Option<Address> {

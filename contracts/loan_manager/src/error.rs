@@ -21,4 +21,6 @@ pub enum LoanManagerError {
     BadDebtAuction = 15,
     AuctionHasHealthyDebt = 16,
     BadDebtClaimAmountTooLow = 17,
+    InsurancePoolAddressesNotFound = 18,
+    AuctionAlreadyExists = 19,
 }

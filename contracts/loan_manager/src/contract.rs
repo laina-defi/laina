@@ -12,6 +12,10 @@ mod loan_pool {
     soroban_sdk::contractimport!(file = "../../target/wasm32v1-none/release/loan_pool.wasm");
 }
 
+mod insurance_pool {
+    soroban_sdk::contractimport!(file = "../../target/wasm32v1-none/release/insurance_pool.wasm");
+}
+
 #[contract]
 struct LoanManager;
 
@@ -88,11 +92,12 @@ impl LoanManager {
         Ok(deployed_address)
     }
 
-    /// Upgrade deployed loan pools and the loan manager WASM.
+    /// Upgrade deployed loan pools, their insurance pools, and the loan manager WASM.
     pub fn upgrade(
         e: Env,
         new_manager_wasm_hash: BytesN<32>,
         new_pool_wasm_hash: BytesN<32>,
+        new_insurance_pool_wasm_hash: BytesN<32>,
     ) -> Result<(), LoanManagerError> {
         storage::read_admin(&e)?.require_auth();
 
@@ -100,6 +105,13 @@ impl LoanManager {
             let pool_client = loan_pool::Client::new(&e, &pool);
             pool_client.upgrade(&new_pool_wasm_hash);
         });
+
+        storage::read_insurance_pool_addresses(&e)?
+            .iter()
+            .for_each(|ins_pool| {
+                let ins_client = insurance_pool::Client::new(&e, &ins_pool);
+                ins_client.upgrade(&new_insurance_pool_wasm_hash);
+            });
 
         e.deployer()
             .update_current_contract_wasm(new_manager_wasm_hash);
@@ -605,6 +617,11 @@ impl LoanManager {
         );
 
         let new_borrowed_amount = borrowed_amount.csub(amount)?;
+        let new_unpaid_interest = if amount < unpaid_interest {
+            unpaid_interest.csub(amount)?
+        } else {
+            0
+        };
         let new_collateral_shares = collateral_shares.csub(bonus_shares)?;
 
         let new_collateral_tokens = collateral_pool_client.shares_to_tokens(&new_collateral_shares);
@@ -628,7 +645,7 @@ impl LoanManager {
             collateral_from,
             collateral_shares: new_collateral_shares,
             health_factor: new_health_factor,
-            unpaid_interest, // Temp
+            unpaid_interest: new_unpaid_interest,
             last_accrual,
         };
 
@@ -719,6 +736,7 @@ impl LoanManager {
         loan_pool::Client::new(&e, &pool_addr).set_insurance_pool(&insurance_pool_addr);
 
         storage::write_lai_insurance_pool_for_pool(&e, &pool_addr, &insurance_pool_addr);
+        storage::append_insurance_pool_address(&e, insurance_pool_addr.clone());
 
         if let Some(config) = storage::read_lai_config(&e) {
             if storage::read_lai_insurer_pool_state(&e, &insurance_pool_addr).is_none() {
@@ -761,6 +779,10 @@ impl LoanManager {
 
         if health_factor >= collateral_pool_client.get_collateral_factor() {
             return Err(LoanManagerError::NotBadDebt);
+        }
+
+        if storage::read_bad_debt_auction(&e, loan_id.clone()).is_ok() {
+            return Err(LoanManagerError::AuctionAlreadyExists);
         }
 
         const AUCTION_DURATION: u32 = 17280; // roughly 24h in ledgers.
@@ -822,7 +844,8 @@ impl LoanManager {
             // Therefore, f(0) = borrowed_amount, f(AUCTION_DURATION) = 0.
             let time_based_reduction = (ledgers_since_start as i128)
                 .cmul(borrowed_amount)?
-                .cdiv(AUCTION_DURATION as i128)?;
+                .cdiv(AUCTION_DURATION as i128)?
+                .min(borrowed_amount);
 
             let amount_to_pay = borrowed_amount - time_based_reduction;
 
@@ -958,18 +981,21 @@ impl LoanManager {
         for pool in pool_addresses.iter() {
             // --- Borrower side ---
             if let Some(mut pool_state) = storage::read_lai_borrower_pool_state(&e, &pool) {
-                // Compute current liabilities from loan records
+                let borrow_pool_client = loan_pool::Client::new(&e, &pool);
+                pool_state.last_known_total =
+                    borrow_pool_client.get_pool_state().total_liabilities_tokens;
+
                 let user_liabilities: i128 = user_loans
                     .iter()
                     .filter(|l| l.borrowed_from == pool)
                     .map(|l| l.borrowed_amount)
                     .sum();
 
-                // Advance accumulator using last known total
                 Self::advance_accumulator(&e, &config, &mut pool_state, LAI_BORROWER_BPS);
 
                 let user_state = storage::read_lai_borrower_user_state(&e, &pool, &user);
-                let earned = user_liabilities
+                let earned = user_state
+                    .position
                     .checked_mul(pool_state.acc_per_share)
                     .unwrap_or(0)
                     / LAI_PRECISION
@@ -1261,12 +1287,26 @@ mod tests {
         let e = Env::default();
         e.mock_all_auths();
 
-        let TestEnv { manager_client, .. } = setup_test_env(&e);
+        let TestEnv {
+            manager_client,
+            pool_usdc_addr,
+            ..
+        } = setup_test_env(&e);
+
+        let mock_ins_pool_addr =
+            e.register(mock_insurance_pool_bad_debt::MockInsurancePoolBadDebt, ());
+        manager_client.set_insurance_pool(&pool_usdc_addr, &mock_ins_pool_addr);
+
         let manager_wasm_hash = e.deployer().upload_contract_wasm(loan_pool::WASM);
         let pool_wasm_hash = e.deployer().upload_contract_wasm(loan_pool::WASM);
+        let insurance_pool_wasm_hash = e.deployer().upload_contract_wasm(loan_pool::WASM);
 
         // ACT
-        manager_client.upgrade(&manager_wasm_hash, &pool_wasm_hash);
+        manager_client.upgrade(
+            &manager_wasm_hash,
+            &pool_wasm_hash,
+            &insurance_pool_wasm_hash,
+        );
     }
 
     #[test]
@@ -2167,7 +2207,7 @@ mod tests {
     }
 
     mod mock_insurance_pool_bad_debt {
-        use soroban_sdk::{contract, contractimpl, contracttype, Env};
+        use soroban_sdk::{contract, contractimpl, contracttype, BytesN, Env};
 
         #[contracttype]
         pub struct InsurancePoolState {
@@ -2188,6 +2228,8 @@ mod tests {
             }
 
             pub fn cover_bad_debt(_e: Env, _ltoken_amount: i128) {}
+
+            pub fn upgrade(_e: Env, _new_wasm_hash: BytesN<32>) {}
         }
     }
 

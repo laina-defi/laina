@@ -504,65 +504,65 @@ mod tests {
         let loan_id_map = ScMap(loan_id_entries.try_into().unwrap());
 
         // Create loan map
-        let mut loan_entries = Vec::new();
-        loan_entries.push(ScMapEntry {
-            key: ScVal::Symbol(ScSymbol(StringM::from_str("borrowed_amount").unwrap())),
-            val: ScVal::I128(Int128Parts {
-                hi: 0,
-                lo: 282333967,
-            }),
-        });
-        loan_entries.push(ScMapEntry {
-            key: ScVal::Symbol(ScSymbol(StringM::from_str("borrowed_from").unwrap())),
-            val: ScVal::Address(
-                ScAddress::from_str("CAXTXTUCA6ILFHCPIN34TWWVL4YL2QDDHYI65MVVQCEMDANFZLXVIEIK")
-                    .unwrap(),
-            ),
-        });
-        loan_entries.push(ScMapEntry {
-            key: ScVal::Symbol(ScSymbol(StringM::from_str("collateral_amount").unwrap())),
-            val: ScVal::I128(Int128Parts {
-                hi: 0,
-                lo: 136658653,
-            }),
-        });
-        loan_entries.push(ScMapEntry {
-            key: ScVal::Symbol(ScSymbol(StringM::from_str("collateral_from").unwrap())),
-            val: ScVal::Address(
-                ScAddress::from_str("CDUFMIS6ZH3JM5MPNTWMDLBXPNQYV5FBPBGCFT2WWG4EXKGEPOCBNGCZ")
-                    .unwrap(),
-            ),
-        });
-        loan_entries.push(ScMapEntry {
-            key: ScVal::Symbol(ScSymbol(StringM::from_str("health_factor").unwrap())),
-            val: ScVal::I128(Int128Parts {
-                hi: 0,
-                lo: 11922149,
-            }),
-        });
-        loan_entries.push(ScMapEntry {
-            key: ScVal::Symbol(ScSymbol(StringM::from_str("last_accrual").unwrap())),
-            val: ScVal::I128(Int128Parts {
-                hi: 0,
-                lo: 10003568,
-            }),
-        });
-        loan_entries.push(ScMapEntry {
-            key: ScVal::Symbol(ScSymbol(StringM::from_str("loan_id").unwrap())),
-            val: ScVal::Map(Some(loan_id_map)),
-        });
-        loan_entries.push(ScMapEntry {
-            key: ScVal::Symbol(ScSymbol(StringM::from_str("unpaid_interest").unwrap())),
-            val: ScVal::I128(Int128Parts { hi: 0, lo: 0 }),
-        });
+        let loan_entries = vec![
+            ScMapEntry {
+                key: ScVal::Symbol(ScSymbol(StringM::from_str("borrowed_amount").unwrap())),
+                val: ScVal::I128(Int128Parts {
+                    hi: 0,
+                    lo: 282333967,
+                }),
+            },
+            ScMapEntry {
+                key: ScVal::Symbol(ScSymbol(StringM::from_str("borrowed_from").unwrap())),
+                val: ScVal::Address(
+                    ScAddress::from_str("CAXTXTUCA6ILFHCPIN34TWWVL4YL2QDDHYI65MVVQCEMDANFZLXVIEIK")
+                        .unwrap(),
+                ),
+            },
+            ScMapEntry {
+                key: ScVal::Symbol(ScSymbol(StringM::from_str("collateral_amount").unwrap())),
+                val: ScVal::I128(Int128Parts {
+                    hi: 0,
+                    lo: 136658653,
+                }),
+            },
+            ScMapEntry {
+                key: ScVal::Symbol(ScSymbol(StringM::from_str("collateral_from").unwrap())),
+                val: ScVal::Address(
+                    ScAddress::from_str("CDUFMIS6ZH3JM5MPNTWMDLBXPNQYV5FBPBGCFT2WWG4EXKGEPOCBNGCZ")
+                        .unwrap(),
+                ),
+            },
+            ScMapEntry {
+                key: ScVal::Symbol(ScSymbol(StringM::from_str("health_factor").unwrap())),
+                val: ScVal::I128(Int128Parts {
+                    hi: 0,
+                    lo: 11922149,
+                }),
+            },
+            ScMapEntry {
+                key: ScVal::Symbol(ScSymbol(StringM::from_str("last_accrual").unwrap())),
+                val: ScVal::I128(Int128Parts {
+                    hi: 0,
+                    lo: 10003568,
+                }),
+            },
+            ScMapEntry {
+                key: ScVal::Symbol(ScSymbol(StringM::from_str("loan_id").unwrap())),
+                val: ScVal::Map(Some(loan_id_map)),
+            },
+            ScMapEntry {
+                key: ScVal::Symbol(ScSymbol(StringM::from_str("unpaid_interest").unwrap())),
+                val: ScVal::I128(Int128Parts { hi: 0, lo: 0 }),
+            },
+        ];
         let loan_map = ScMap(loan_entries.try_into().unwrap());
 
         // Create outer map
-        let mut outer_entries = Vec::new();
-        outer_entries.push(ScMapEntry {
+        let outer_entries = vec![ScMapEntry {
             key: ScVal::Symbol(ScSymbol(StringM::from_str("loan").unwrap())),
             val: ScVal::Map(Some(loan_map)),
-        });
+        }];
         let outer_map = ScMap(outer_entries.try_into().unwrap());
         let event_value = ScVal::Map(Some(outer_map));
 
@@ -588,11 +588,10 @@ mod tests {
 
     #[test]
     fn parse_loan_from_rpc_event_missing_loan_key() {
-        let mut outer_entries = Vec::new();
-        outer_entries.push(ScMapEntry {
+        let outer_entries = vec![ScMapEntry {
             key: ScVal::Symbol(ScSymbol(StringM::from_str("other_key").unwrap())),
             val: ScVal::U32(100),
-        });
+        }];
         let outer_map = ScMap(outer_entries.try_into().unwrap());
         let event_value = ScVal::Map(Some(outer_map));
 
@@ -606,18 +605,16 @@ mod tests {
 
     #[test]
     fn parse_loan_from_rpc_event_missing_loan_id() {
-        let mut loan_entries = Vec::new();
-        loan_entries.push(ScMapEntry {
+        let loan_entries = vec![ScMapEntry {
             key: ScVal::Symbol(ScSymbol(StringM::from_str("borrowed_amount").unwrap())),
             val: ScVal::I128(Int128Parts { hi: 0, lo: 1000 }),
-        });
+        }];
         let loan_map = ScMap(loan_entries.try_into().unwrap());
 
-        let mut outer_entries = Vec::new();
-        outer_entries.push(ScMapEntry {
+        let outer_entries = vec![ScMapEntry {
             key: ScVal::Symbol(ScSymbol(StringM::from_str("loan").unwrap())),
             val: ScVal::Map(Some(loan_map)),
-        });
+        }];
         let outer_map = ScMap(outer_entries.try_into().unwrap());
         let event_value = ScVal::Map(Some(outer_map));
 
@@ -631,25 +628,22 @@ mod tests {
 
     #[test]
     fn parse_loan_from_rpc_event_missing_borrower_address() {
-        let mut loan_id_entries = Vec::new();
-        loan_id_entries.push(ScMapEntry {
+        let loan_id_entries = vec![ScMapEntry {
             key: ScVal::Symbol(ScSymbol(StringM::from_str("nonce").unwrap())),
             val: ScVal::U64(3),
-        });
+        }];
         let loan_id_map = ScMap(loan_id_entries.try_into().unwrap());
 
-        let mut loan_entries = Vec::new();
-        loan_entries.push(ScMapEntry {
+        let loan_entries = vec![ScMapEntry {
             key: ScVal::Symbol(ScSymbol(StringM::from_str("loan_id").unwrap())),
             val: ScVal::Map(Some(loan_id_map)),
-        });
+        }];
         let loan_map = ScMap(loan_entries.try_into().unwrap());
 
-        let mut outer_entries = Vec::new();
-        outer_entries.push(ScMapEntry {
+        let outer_entries = vec![ScMapEntry {
             key: ScVal::Symbol(ScSymbol(StringM::from_str("loan").unwrap())),
             val: ScVal::Map(Some(loan_map)),
-        });
+        }];
         let outer_map = ScMap(outer_entries.try_into().unwrap());
         let event_value = ScVal::Map(Some(outer_map));
 
