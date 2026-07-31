@@ -27,7 +27,7 @@
     "@vitejs/plugin-basic-ssl": "^1.2.0",
     "daisyui": "^4.12.23",
     "dotenv": "^16.4.7",
-    "postcss": "^8.5.1",
+    "postcss": "^8.5.25",
     "prettier": "^3.4.2",
     "prettier-plugin-astro": "^0.14.1",
     "tsx": "^4.20.3",
